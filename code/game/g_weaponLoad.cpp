@@ -235,6 +235,10 @@ void WPN_SplashRadius(const char **holdBuf);
 void WPN_AltSplashDamage(const char **holdBuf);
 void WPN_AltSplashRadius(const char **holdBuf);
 
+void WPN_FiringType(const char **holdBuf);
+void WPN_ShotsPerBurst(const char **holdBuf);
+void WPN_BurstFireDelay(const char **holdBuf);
+
 // Legacy weapons.dat force fields
 void WPN_FuncSkip(const char **holdBuf);
 
@@ -596,6 +600,10 @@ wpnParms_t WpnParms[] =
 	{ "splashRadius",		WPN_SplashRadius },
 	{ "altSplashDamage",	WPN_AltSplashDamage },
 	{ "altSplashRadius",	WPN_AltSplashRadius },
+	
+	{ "firingType",			WPN_FiringType },
+	{ "shotsPerBurst",		WPN_ShotsPerBurst },
+	{ "burstFireDelay",		WPN_BurstFireDelay },
 
 	// Old legacy files contain these, so we skip them to shut up warnings
 	{ "firingforce",		WPN_FuncSkip },
@@ -1609,6 +1617,63 @@ void WPN_AltSplashRadius(const char **holdBuf)
 	}
 
 	weaponData[wpnParms.weaponNum].altSplashRadius = tokenFlt;
+}
+
+//--------------------------------------------
+void WPN_FiringType(const char **holdBuf)
+{
+    int        tokenInt;
+
+    if ( COM_ParseInt(holdBuf,&tokenInt))
+    {
+        SkipRestOfLine(holdBuf);
+        return;
+    }
+
+    if ((tokenInt < FT_AUTOMATIC) || (tokenInt > FT_BURST ))
+    {
+        gi.Printf(S_COLOR_YELLOW"WARNING: bad firingType in external weapon data '%d'\n", tokenInt);
+        return;
+    }
+    weaponData[wpnParms.weaponNum].firingType = tokenInt;
+}
+
+//--------------------------------------------
+void WPN_ShotsPerBurst(const char **holdBuf)
+{
+    int        tokenInt;
+
+    if ( COM_ParseInt(holdBuf,&tokenInt))
+    {
+        SkipRestOfLine(holdBuf);
+        return;
+    }
+
+    if ((tokenInt < 0) || (tokenInt > 10000 ))
+    {
+        gi.Printf(S_COLOR_YELLOW"WARNING: bad shotsPerBurst in external weapon data '%d'\n", tokenInt);
+        return;
+    }
+    weaponData[wpnParms.weaponNum].shotsPerBurst = tokenInt;
+}
+
+//--------------------------------------------
+void WPN_BurstFireDelay(const char **holdBuf)
+{
+    int        tokenInt;
+
+    if ( COM_ParseInt(holdBuf,&tokenInt))
+    {
+        SkipRestOfLine(holdBuf);
+        return;
+    }
+
+    if ((tokenInt < 0) || (tokenInt > 10000 ))
+    {
+        gi.Printf(S_COLOR_YELLOW"WARNING: bad burstFireDelay in external weapon data '%d'\n", tokenInt);
+        return;
+    }
+    weaponData[wpnParms.weaponNum].burstFireDelay = tokenInt;
 }
 
 //--------------------------------------------

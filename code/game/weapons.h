@@ -169,6 +169,10 @@ typedef struct weaponData_s
 	float	splashRadius;
 	float	altSplashRadius;
 
+	int		firingType;
+	int		shotsPerBurst;
+	int		burstFireDelay;
+
 } weaponData_t;
 
 
@@ -177,6 +181,14 @@ typedef struct ammoData_s
 	char	icon[64];	// Name of ammo icon file
 	int		max;		// Max amount player can hold of ammo
 } ammoData_t;
+
+
+enum FiringType
+{
+	FT_AUTOMATIC = 1,
+	FT_SEMI,
+	FT_BURST
+};
 
 // Bryar Pistol
 //--------
@@ -483,6 +495,10 @@ typedef struct ammoData_s
 #define TUSKEN_RIFLE_DAMAGE_EASY	20		// damaging
 #define TUSKEN_RIFLE_DAMAGE_MEDIUM	30		// very damaging
 #define TUSKEN_RIFLE_DAMAGE_HARD	50		// extremely damaging
+
+// Firing Types
+//--------------
+#define BURST_ENERGY_SHOT				4
 
 
 #endif//#ifndef __WEAPONS_H__
