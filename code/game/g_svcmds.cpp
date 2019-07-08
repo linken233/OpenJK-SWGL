@@ -369,10 +369,24 @@ void Svcmd_SaberAttackCycle_f( void )
 	}
 
 	gentity_t *self = G_GetSelfForPlayerCmd();
-	if ( self->s.weapon != WP_SABER )
-	{// saberAttackCycle button also switches to saber
-		gi.SendConsoleCommand("weapon 1" );
-		return;
+	// if ( self->s.weapon != WP_SABER )
+	// {// saberAttackCycle button also switches to saber
+	// 	gi.SendConsoleCommand("weapon 1" );
+	// 	return;
+	// }
+
+	if (weaponData[self->s.weapon].firingType >= FT_AUTOMATIC)
+	{
+		if (self->client->ps.firingMode == 1)
+		{
+			self->client->ps.firingMode = 0;
+		}
+		else
+		{
+			self->client->ps.firingMode = 1;
+		}
+
+		G_Sound( self, G_SoundIndex( "sound/vehicles/common/linkweaps.wav" ));
 	}
 
 	if ( self->client->ps.dualSabers )
@@ -402,7 +416,10 @@ void Svcmd_SaberAttackCycle_f( void )
 					if ( !skipThisBlade )
 					{
 						self->client->ps.saber[1].BladeActivate( bladeNum, qfalse );
-						G_SoundIndexOnEnt( self, CHAN_WEAPON, self->client->ps.saber[1].soundOff );
+						if ( self->s.weapon == WP_SABER )
+						{
+							G_SoundIndexOnEnt( self, CHAN_WEAPON, self->client->ps.saber[1].soundOff );
+						}
 					}
 				}
 			}
@@ -470,7 +487,10 @@ void Svcmd_SaberAttackCycle_f( void )
 					self->client->ps.saber[0].BladeActivate( bladeNum, qfalse );
 					if ( !playedSound )
 					{
-						G_SoundIndexOnEnt( self, CHAN_WEAPON, self->client->ps.saber[0].soundOff );
+						if ( self->s.weapon == WP_SABER )
+						{
+							G_SoundIndexOnEnt( self, CHAN_WEAPON, self->client->ps.saber[0].soundOff );
+						}
 						playedSound = qtrue;
 					}
 				}

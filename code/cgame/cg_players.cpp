@@ -8402,7 +8402,28 @@ extern vmCvar_t	cg_thirdPersonAlpha;
 				// Try and get a default muzzle so we have one to fall back on
 				if ( wData->mMuzzleEffect[0] )
 				{
-					effect = &wData->mMuzzleEffect[0];
+					if (cent->gent->client->ps.shotsRemaining & ~SHOTS_TOGGLEBIT)
+					{
+						effect = &wData->mAltMuzzleEffect[0];
+						cent->checkFiringMode = true;
+					}
+					else if (wData->firingType != FT_BURST && cent->gent->client->ps.firingMode == 1)
+					{
+						effect = &wData->mAltMuzzleEffect[0];
+						cent->checkFiringMode = false;
+					}
+					else
+					{
+						if (cent->checkFiringMode == true)
+						{
+							effect = &wData->mAltMuzzleEffect[0];
+							cent->checkFiringMode = false;
+						}
+						else
+						{
+							effect = &wData->mMuzzleEffect[0];
+						}
+					}
 				}
 
 				if ( cent->altFire )

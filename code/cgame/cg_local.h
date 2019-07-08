@@ -187,6 +187,8 @@ struct centity_s
 
 	int				snapShotTime;
 
+	bool			checkFiringMode;
+
 	//Pointer to corresponding gentity
 	gentity_t		*gent;
 };

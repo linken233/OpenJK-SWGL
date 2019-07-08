@@ -1909,6 +1909,9 @@ public:
 #endif // !JK2_MODE
 	int			shotsRemaining;
 
+	bool		firingMode;
+	bool		checkWeaponChange;
+
 
 	void sg_export(
 		ojk::SavedGameHelper& saved_game) const
@@ -2079,6 +2082,8 @@ public:
 		saved_game.write<int32_t>(electrifyTime);
 #endif // !JK2_MODE
 		saved_game.write<int32_t>(shotsRemaining);
+		saved_game.write<int8_t>(firingMode);
+		saved_game.write<int8_t>(checkWeaponChange);
 	}
 
 	void sg_import(
@@ -2250,6 +2255,8 @@ public:
 		saved_game.read<int32_t>(electrifyTime);
 #endif // !JK2_MODE
 		saved_game.read<int32_t>(shotsRemaining);
+		saved_game.read<int8_t>(firingMode);
+		saved_game.read<int8_t>(checkWeaponChange);
 	}
 }; // PlayerStateBase
 

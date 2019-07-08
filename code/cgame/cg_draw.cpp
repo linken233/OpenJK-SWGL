@@ -547,7 +547,14 @@ static void CG_DrawAmmo(const centity_t	*cent,const int xPos,const int yPos)
 			}
 			else
 			{
-				memcpy(calcColor, otherHUDBits[OHB_AMMOAMOUNT].color, sizeof(vec4_t));
+				if (cent->gent->client->ps.firingMode == 1)
+				{
+					memcpy(calcColor, colorTable[CT_RED], sizeof(vec4_t));
+				}
+				else
+				{
+					memcpy(calcColor, otherHUDBits[OHB_AMMOAMOUNT].color, sizeof(vec4_t));
+				}
 			}
 		}
 		else

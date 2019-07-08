@@ -510,6 +510,7 @@ enum ScopeType
 // Firing Types
 //--------------
 #define BURST_ENERGY_SHOT				4
+#define BURST_ENERGY_SHOT_SCOPED		5
 
 // Scope Types
 //--------------
