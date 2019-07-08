@@ -146,6 +146,7 @@ extern cvar_t	*g_debugMelee;
 extern cvar_t	*g_saberNewControlScheme;
 extern cvar_t	*g_stepSlideFix;
 extern cvar_t	*g_saberAutoBlocking;
+extern int defaultDamageCopy[WP_NUM_WEAPONS];
 
 static void PM_SetWaterLevelAtPoint( vec3_t org, int *waterlevel, int *watertype );
 
@@ -14073,6 +14074,10 @@ static void PM_Weapon( void )
 		{
 			amount = BURST_ENERGY_SHOT;
 		}
+		else if (weaponData[pm->ps->weapon].firingType == FT_HIGH_POWERED && pm->ps->firingMode == 1)
+		{
+			amount = HIGH_POWERED_ENERGY_SHOT;
+		}
 		else if (cg.zoomMode >= ST_A280)
 		{
 			amount = weaponData[pm->ps->weapon].altEnergyPerShot;
@@ -14227,7 +14232,20 @@ static void PM_Weapon( void )
 						pm->ps->shotsRemaining = (pm->ps->shotsRemaining - 1) & ~SHOTS_TOGGLEBIT;
 					}
 					break;
+				case FT_HIGH_POWERED:
+					for (int i = 0; i < WP_NUM_WEAPONS; i++)
+					{
+						weaponData[i].damage = HIGH_POWERED_DAMAGE;
+					}
+					break;
 			}
+		}
+	}
+	else
+	{
+		for (int i = 0; i < WP_NUM_WEAPONS; i++)
+		{
+			weaponData[i].damage = defaultDamageCopy[i];
 		}
 	}
 
@@ -14913,6 +14931,10 @@ void PM_AdjustAttackStates( pmove_t *pm )
 			if (pm->cmd.buttons & BUTTON_ATTACK && cg.zoomMode >= ST_A280)
 			{
 			}
+			else if (pm->cmd.buttons & BUTTON_ATTACK && cg.zoomMode < ST_A280 && weaponData[pm->ps->weapon].firingType == FT_HIGH_POWERED && pm->ps->firingMode == 1)
+			{
+				pm->cmd.buttons &= ~BUTTON_ATTACK;
+			}
 			else
 			{
 				pm->cmd.buttons &= ~BUTTON_ALT_ATTACK;
@@ -14920,6 +14942,11 @@ void PM_AdjustAttackStates( pmove_t *pm )
 		}
 		else if (weaponData[pm->ps->weapon].scopeType < ST_A280 && weaponData[pm->ps->weapon].firingType >= FT_AUTOMATIC)
 		{
+			if (weaponData[pm->ps->weapon].firingType == FT_HIGH_POWERED && pm->ps->firingMode == 1)
+			{
+				pm->cmd.buttons &= ~BUTTON_ATTACK;
+			}
+
 			pm->cmd.buttons &= ~BUTTON_ALT_ATTACK;
 		}
 	}
