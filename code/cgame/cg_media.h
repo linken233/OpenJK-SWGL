@@ -239,6 +239,10 @@ typedef struct {
 	qhandle_t	laGogglesBracket;
 	qhandle_t	laGogglesArrow;
 
+	// Scope Types graphics
+	qhandle_t	scopeTypeMask;
+	qhandle_t	scopeTypeInsert;
+
 	// wall mark shaders
 	qhandle_t	scavMarkShader;
 	qhandle_t	rivetMarkShader;

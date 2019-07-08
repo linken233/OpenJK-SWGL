@@ -173,6 +173,8 @@ typedef struct weaponData_s
 	int		shotsPerBurst;
 	int		burstFireDelay;
 
+	int 	scopeType;
+
 } weaponData_t;
 
 
@@ -188,6 +190,15 @@ enum FiringType
 	FT_AUTOMATIC = 1,
 	FT_SEMI,
 	FT_BURST
+};
+
+
+enum ScopeType
+{
+	ST_A280 = 4,
+	ST_WESTAR_M5,
+	ST_BOWCASTER,
+	ST_DLT_20A
 };
 
 // Bryar Pistol
@@ -499,6 +510,10 @@ enum FiringType
 // Firing Types
 //--------------
 #define BURST_ENERGY_SHOT				4
+
+// Scope Types
+//--------------
+#define SCOPE_SPREAD					0.01f
 
 
 #endif//#ifndef __WEAPONS_H__

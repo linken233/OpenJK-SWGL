@@ -1385,7 +1385,7 @@ static qboolean	CG_CalcFov( void ) {
 			}
 		}
 	}
-	else if ( (!cg.zoomMode || cg.zoomMode > 2) && (cg.snap->ps.forcePowersActive&(1<<FP_SPEED)) && player->client->ps.forcePowerDuration[FP_SPEED] )//cg.renderingThirdPerson &&
+	else if ( (!cg.zoomMode || cg.zoomMode == 3) && (cg.snap->ps.forcePowersActive&(1<<FP_SPEED)) && player->client->ps.forcePowerDuration[FP_SPEED] )//cg.renderingThirdPerson &&
 	{
 		fov_x = CG_ForceSpeedFOV();
 	} else {
@@ -1405,7 +1405,7 @@ static qboolean	CG_CalcFov( void ) {
 		}
 
 		// Disable zooming when in third person
-		if ( cg.zoomMode && cg.zoomMode < 3 )//&& !cg.renderingThirdPerson ) // light amp goggles do none of the zoom silliness
+		if ( ( cg.zoomMode && cg.zoomMode < 3 ) || cg.zoomMode >= ST_A280 )//&& !cg.renderingThirdPerson ) // light amp goggles do none of the zoom silliness
 		{
 			if ( !cg.zoomLocked )
 			{
@@ -1413,6 +1413,9 @@ static qboolean	CG_CalcFov( void ) {
 				{
 					// binoculars zooming either in or out
 					cg_zoomFov += cg.zoomDir * cg.frametime * 0.05f;
+				}
+				else if ( cg.zoomMode >= ST_A280 )
+				{
 				}
 				else
 				{
@@ -1430,7 +1433,7 @@ static qboolean	CG_CalcFov( void ) {
 				{
 					cg_zoomFov = actualFOV;
 				}
-				else
+				else if ( cg.zoomMode < ST_A280 )
 				{//still zooming
 					static int zoomSoundTime = 0;
 

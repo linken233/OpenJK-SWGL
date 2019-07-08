@@ -2912,6 +2912,36 @@ static void CG_DrawZoomMask( void )
 
 		CG_DrawPic( 0, 0, 640, 480, cgs.media.laGogglesMask );
 	}
+	//-----------
+	// Scope Types
+	//--------------------------------
+	else if ( cg.zoomMode >= ST_A280 )
+	{
+		level = (float)(80.0f - cg_zoomFov) / 80.0f;
+
+		switch ( weaponData[cent->currentState.weapon].scopeType )
+		{
+			case ST_A280:
+				cgs.media.scopeTypeMask = cgi_R_RegisterShader( "gfx/2d/a280cropcircle2" );
+				cgs.media.scopeTypeInsert = cgi_R_RegisterShader( "gfx/2d/a280cropcircle" );
+				break;
+			case ST_WESTAR_M5:
+				cgs.media.scopeTypeMask = cgi_R_RegisterShader( "gfx/2d/arcMask" );
+				cgs.media.scopeTypeInsert = cgi_R_RegisterShader( "gfx/2d/arcInsert" );
+				break;
+			case ST_BOWCASTER:
+				cgs.media.scopeTypeMask = cgi_R_RegisterShader( "gfx/2d/bowMask" );
+				cgs.media.scopeTypeInsert = cgi_R_RegisterShader( "gfx/2d/bowInsert" );
+				break;
+			case ST_DLT_20A:
+				cgs.media.scopeTypeMask = cgi_R_RegisterShader( "gfx/2d/projInsert" );
+				cgs.media.scopeTypeInsert = cgi_R_RegisterShader( "gfx/2d/projMask" );
+				break;
+		}
+
+		CG_DrawPic( 0, 0, 640, 480, cgs.media.scopeTypeMask ); 
+		CG_DrawRotatePic2( 320, 240, 640, 480, -level, cgs.media.scopeTypeInsert );
+	}
 }
 
 /*
@@ -3134,7 +3164,7 @@ static void CG_DrawCrosshair( vec3_t worldPoint )
 		return;
 	}
 
-	if ( cg.zoomMode > 0 && cg.zoomMode < 3 )
+	if ( ( cg.zoomMode > 0 && cg.zoomMode < 3 ) || cg.zoomMode >= ST_A280 )
 	{
 		//not while scoped
 		return;
@@ -4575,7 +4605,7 @@ static void CG_Draw2D( void )
 
 		CG_DrawWeaponSelect();
 
-		if ( cg.zoomMode == 0 )
+		if ( cg.zoomMode == 0 || cg.zoomMode >= ST_A280 )
 		{
 			CG_DrawStats();
 		}

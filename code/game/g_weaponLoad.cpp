@@ -239,6 +239,8 @@ void WPN_FiringType(const char **holdBuf);
 void WPN_ShotsPerBurst(const char **holdBuf);
 void WPN_BurstFireDelay(const char **holdBuf);
 
+void WPN_ScopeType(const char **holdBuf);
+
 // Legacy weapons.dat force fields
 void WPN_FuncSkip(const char **holdBuf);
 
@@ -604,6 +606,8 @@ wpnParms_t WpnParms[] =
 	{ "firingType",			WPN_FiringType },
 	{ "shotsPerBurst",		WPN_ShotsPerBurst },
 	{ "burstFireDelay",		WPN_BurstFireDelay },
+
+	{ "scopeType",			WPN_ScopeType },
 
 	// Old legacy files contain these, so we skip them to shut up warnings
 	{ "firingforce",		WPN_FuncSkip },
@@ -1674,6 +1678,25 @@ void WPN_BurstFireDelay(const char **holdBuf)
         return;
     }
     weaponData[wpnParms.weaponNum].burstFireDelay = tokenInt;
+}
+
+//--------------------------------------------
+void WPN_ScopeType(const char **holdBuf)
+{
+    int        tokenInt;
+
+    if ( COM_ParseInt(holdBuf,&tokenInt))
+    {
+        SkipRestOfLine(holdBuf);
+        return;
+    }
+
+    if ((tokenInt < ST_A280) || (tokenInt > ST_DLT_20A ))
+    {
+        gi.Printf(S_COLOR_YELLOW"WARNING: bad scopeType in external weapon data '%d'\n", tokenInt);
+        return;
+    }
+    weaponData[wpnParms.weaponNum].scopeType = tokenInt;
 }
 
 //--------------------------------------------

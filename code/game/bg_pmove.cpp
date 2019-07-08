@@ -8928,6 +8928,10 @@ static void PM_BeginWeaponChange( int weapon ) {
 			cg.zoomMode = 0;
 			cg.zoomTime = cg.time;
 		}
+		else if ( cg.zoomMode >= ST_A280 )
+		{
+			cg.zoomMode = 0;
+		} 
 	}
 
 	if ( pm->gent
@@ -14040,6 +14044,10 @@ static void PM_Weapon( void )
 		{
 			amount = BURST_ENERGY_SHOT;
 		}
+		else if (cg.zoomMode >= ST_A280)
+		{
+			amount = weaponData[pm->ps->weapon].altEnergyPerShot;
+		}
 		else
 		{
 			amount = weaponData[pm->ps->weapon].energyPerShot;
@@ -14706,13 +14714,42 @@ void PM_AdjustAttackStates( pmove_t *pm )
 
 	}
 
-	if (cg.renderingThirdPerson == false && cg_checkModelChange.integer == 1)
+
+	if ( pm->ps->weapon != WP_DISRUPTOR && pm->gent && (pm->gent->s.number<MAX_CLIENTS||G_ControlledByPlayer(pm->gent)) && pm->ps->weaponstate != WEAPON_DROPPING && weaponData[pm->ps->weapon].scopeType >= ST_A280 )
 	{
-		cg_drawHUD.integer = 2;
-	}
-	else
-	{
-		cg_drawHUD.integer = 1;
+		if ( !(pm->ps->eFlags & EF_ALT_FIRING) && (pm->cmd.buttons & BUTTON_ALT_ATTACK) )
+		{
+			if ( cg.zoomMode == 0 && !(pm->ps->eFlags & EF_FIRING) )
+			{
+				switch ( weaponData[pm->ps->weapon].scopeType )
+				{
+					case ST_A280:
+						cg.zoomMode = ST_A280;
+						cg_zoomFov = 15.0f;
+						break;
+					case ST_WESTAR_M5:
+						cg.zoomMode = ST_WESTAR_M5;
+						cg_zoomFov = 20.0f;
+						break;
+					case ST_BOWCASTER:
+						cg.zoomMode = ST_BOWCASTER;
+						cg_zoomFov = 25.0f;
+						break;
+					case ST_DLT_20A:
+						cg.zoomMode = ST_DLT_20A;
+						cg_zoomFov = 10.0f;
+						break;
+				}
+			}
+			else if ( cg.zoomMode >= ST_A280 )
+			{
+				cg.zoomMode = 0;
+			}
+		}
+		else if (pm->ps->eFlags & EF_ALT_FIRING && !(pm->ps->shotsRemaining & ~SHOTS_TOGGLEBIT))
+		{
+			pm->cmd.buttons &= ~BUTTON_ATTACK;
+		}
 	}
 
 	// Check for binocular specific mode
@@ -14823,6 +14860,26 @@ void PM_AdjustAttackStates( pmove_t *pm )
 			// don't let an alt-fire through
 			pm->cmd.buttons &= ~BUTTON_ALT_ATTACK;
 		}
+	}
+
+	if (pm->ps->weapon != WP_DISRUPTOR && pm->gent && (pm->gent->s.number<MAX_CLIENTS||G_ControlledByPlayer(pm->gent)) && weaponData[pm->ps->weapon].scopeType >= ST_A280)
+	{
+		if (pm->cmd.buttons & BUTTON_ATTACK && cg.zoomMode >= ST_A280)
+		{
+		}
+		else
+		{
+			pm->cmd.buttons &= ~BUTTON_ALT_ATTACK;
+		}
+	}
+
+	if (cg.renderingThirdPerson == false && cg_checkModelChange.integer == 1)
+	{
+		cg_drawHUD.integer = 2;
+	}
+	else
+	{
+		cg_drawHUD.integer = 1;
 	}
 }
 
