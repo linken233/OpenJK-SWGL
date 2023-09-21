@@ -3421,7 +3421,7 @@ void G_SetWeapon( gentity_t *self, int wp )
 	}
 	else
 	{
-		G_CreateG2AttachedWeaponModel( self, weaponData[wp].weaponMdl, self->handRBolt, 0 );
+		G_CreateG2AttachedWeaponModel( self, CG_GetCurrentWeaponModel(self), self->handRBolt, 0 );
 	}
 }
 
@@ -3445,7 +3445,7 @@ static void Q3_SetWeapon (int entID, const char *wp_name)
 	if (wp == -1 && dynWpnNum >= 0)
 	{
 		wp = CG_GetBaseWpnFromDynWpn(dynWpnNum);
-		NPC->client->ps.dynWpnVals[wp] = CG_GetDynWpnValue(wp, dynWpnNum);
+		self->client->ps.dynWpnVals[wp] = CG_GetDynWpnValue(wp, dynWpnNum);
 	}
 
 	if ( !self )
