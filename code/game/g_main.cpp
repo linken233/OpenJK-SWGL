@@ -1637,6 +1637,11 @@ qboolean G_RagDoll(gentity_t *ent, vec3_t forcedAngles)
 	//int ragVar = gi.Cvar_VariableIntegerValue("broadsword");
 	int ragVar = g_broadsword->integer;
 
+	if (ent->client->NPC_class == CLASS_DROIDEKA)
+	{
+		return qfalse;
+	}
+
 	if (!ragVar)
 	{
 		return qfalse;

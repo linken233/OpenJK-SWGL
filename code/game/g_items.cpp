@@ -755,6 +755,13 @@ void Touch_Item (gentity_t *ent, gentity_t *other, trace_t *trace) {
 	if (other->health < 1)
 		return;		// dead people can't pickup
 
+	// Droidekas have no hands, or do they? Idk
+	if (other->client->NPC_class == CLASS_DROIDEKA && (ent->item->giType == IT_WEAPON || ent->item->giType == IT_HOLDABLE))
+	{
+		return;
+	}
+
+
 	if ( other->client->ps.pm_time > 0 )
 	{//cant pick up when out of control
 		return;

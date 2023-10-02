@@ -3059,6 +3059,7 @@ qboolean CG_IsWeaponDynamic(int weaponNum)
 		case WP_BLASTER:
 		case WP_THEFIRSTORDER:
 		case WP_CLONECARBINE:
+		case WP_SBD:
 			return qtrue;
 		default:
 			return qfalse;
@@ -3082,6 +3083,8 @@ int CG_GetDynWpnNum(int weaponNum, int dynWpnVal)
 			return dynWpnVal + DYN_WP_LAST_SEMIORAUTO;
 		case WP_CLONECARBINE:
 			return dynWpnVal + DYN_WP_LAST_SCOPE;
+		case WP_SBD:
+			return dynWpnVal + DYN_WP_LAST_CLONE;
 		default:
 			return 0;
 	}
@@ -3115,6 +3118,8 @@ int CG_GetMaxDynWpn(int weaponNum)
 			return DYN_WP_NUM_SCOPES;
 		case WP_CLONECARBINE:
 			return DYN_WP_NUM_CLONES;
+		case WP_SBD:
+			return DYN_WP_NUM_SBD;
 		default:
 			return 0;
 	}
@@ -3232,6 +3237,11 @@ int CG_GetBaseWpnFromDynWpn(int dynWpnNum)
 	{
 		return WP_CLONECARBINE;
 	}
+	if (dynWpnNum >= DYN_WP_FIRST_SBD
+		&& dynWpnNum <= DYN_WP_LAST_SBD)
+	{
+		return WP_SBD;
+	}
 
 	return WP_NONE;
 }
@@ -3275,6 +3285,8 @@ int CG_GetDynWpnValue(int weaponNum, int dynWpnNum)
 			return dynWpnNum - DYN_WP_LAST_SEMIORAUTO;
 		case WP_CLONECARBINE:
 			return dynWpnNum - DYN_WP_LAST_SCOPE;
+		case WP_SBD:
+			return dynWpnNum - DYN_WP_LAST_CLONE;
 		default:
 			return 0;
 	}

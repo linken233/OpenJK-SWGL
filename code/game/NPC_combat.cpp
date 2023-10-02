@@ -36,6 +36,7 @@ extern void NPC_Jedi_RateNewEnemy( gentity_t *self, gentity_t *enemy );
 extern qboolean PM_DroidMelee( int npc_class );
 extern int delayedShutDown;
 extern qboolean G_ValidEnemy( gentity_t *self, gentity_t *enemy );
+extern qboolean PM_RunningAnim(int anim);
 
 void ChangeWeapon( gentity_t *ent, int newWeapon );
 
@@ -569,7 +570,7 @@ void G_SetEnemy( gentity_t *self, gentity_t *enemy )
 
 		if ( self->s.weapon == WP_BLASTER || self->s.weapon == WP_REPEATER ||
 			self->s.weapon == WP_THERMAL || self->s.weapon == WP_BLASTER_PISTOL
-			|| self->s.weapon == WP_BOWCASTER )
+			|| self->s.weapon == WP_BOWCASTER || self->s.weapon == WP_SBD)
 		{//Hmm, how about sniper and bowcaster?
 			//When first get mad, aim is bad
 			//Hmm, base on game difficulty, too?  Rank?
@@ -1239,6 +1240,12 @@ void WeaponThink( qboolean inCombat )
 
 	// can't shoot while shield is up
 	if (NPC->flags&FL_SHIELDED && NPC->client->NPC_class==CLASS_ASSASSIN_DROID)
+	{
+		return;
+	}
+
+	// Droidekas can't shoot while rolling (yes, clone wars showed them obviously doing that, but this model can't)
+	if (NPC->client->NPC_class == CLASS_DROIDEKA && PM_RunningAnim(NPC->client->ps.torsoAnim))
 	{
 		return;
 	}

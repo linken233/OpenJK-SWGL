@@ -225,6 +225,7 @@ void G_ClassSetDontFlee(gentity_t *self)
 	case CLASS_JANGO:
 	case CLASS_SABER_DROID:
 	case CLASS_ASSASSIN_DROID:
+	case CLASS_DROIDEKA:
 	case CLASS_PLAYER:
 	case CLASS_VEHICLE:
 		self->NPC->scriptFlags |= SCF_DONT_FLEE;
@@ -439,6 +440,18 @@ void NPC_SetMiscDefaultData(gentity_t *ent)
 		}
 		ent->flags |= (FL_NO_KNOCKBACK);
 	}
+	else if (ent->client->NPC_class == CLASS_DROIDEKA)
+	{
+		ent->client->ps.stats[STAT_ARMOR] = 250;
+		ent->client->ps.powerups[PW_GALAK_SHIELD] = Q3_INFINITE;
+
+		// Droidekas have two guns, so let's use them
+		G_CreateG2AttachedWeaponModel(ent, CG_GetCurrentWeaponModel(ent), ent->handLBolt, 1);
+	
+		ent->flags |= FL_NO_KNOCKBACK;
+		//ent->NPC->scriptFlags = SCF_CHASE_ENEMIES | SCF_LOOK_FOR_ENEMIES | SCF_DONT_FLEE;
+		
+	}
 
 	if (ent->spawnflags & 4096)
 	{
@@ -629,6 +642,7 @@ void NPC_SetMiscDefaultData(gentity_t *ent)
 					break;
 				case WP_THERMAL:
 				case WP_BLASTER:
+				case WP_SBD:
 					//FIXME: health in NPCs.cfg, and not all blaster users are stormtroopers
 					//ent->health = 25;
 					//FIXME: not necc. a ST
@@ -1022,6 +1036,10 @@ int NPC_WeaponsForTeam(team_t team, int spawnflags, const char *NPC_type)
 		if (Q_stricmp("howler", NPC_type) == 0)
 		{
 			return ((1 << WP_MELEE));
+		}
+		if (Q_stricmp("droideka", NPC_type) == 0)
+		{
+			return (1 << WP_SBD);
 		}
 		//Stormtroopers, etc.
 		return (1 << WP_BLASTER);

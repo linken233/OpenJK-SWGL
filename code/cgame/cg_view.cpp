@@ -2116,7 +2116,7 @@ void CG_DrawActiveFrame( int serverTime, stereoFrame_t stereoView ) {
 		cg_thirdPerson.integer
 		|| (cg.snap->ps.stats[STAT_HEALTH] <= 0)
 		|| (cg.snap->ps.eFlags&EF_HELD_BY_SAND_CREATURE)
-		|| ((g_entities[0].client&&g_entities[0].client->NPC_class==CLASS_ATST)
+		|| ((g_entities[0].client&&g_entities[0].client->NPC_class==CLASS_ATST) || (g_entities[0].client && g_entities[0].client->NPC_class == CLASS_DROIDEKA)
 		|| ((cg.snap->ps.weapon == WP_SABER || cg.snap->ps.weapon == WP_MELEE) && !cg_fpls.integer) ));
 
 	if (cg_fpls.integer && cg_trueinvertsaber.integer == 2 && (cg.snap->ps.weapon == WP_SABER || cg.snap->ps.weapon == WP_MELEE))

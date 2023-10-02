@@ -119,6 +119,7 @@ extern qboolean G_TryingJumpForwardAttack( gentity_t *self, usercmd_t *cmd );
 extern void WP_SaberSwingSound( gentity_t *ent, int saberNum, swingType_t swingType );
 extern qboolean WP_UseFirstValidSaberStyle( gentity_t *ent, int *saberAnimLevel );
 extern qboolean WP_SaberStyleValidForSaber( gentity_t *ent, int saberAnimLevel );
+extern void DekaShield_TurnOff(void);
 
 extern qboolean PlayerAffectedByStasis(void);
 
@@ -5710,7 +5711,7 @@ static void PM_CheckDuck (void)
 		}
 
 		if ( pm->ps->clientNum < MAX_CLIENTS
-			&& (pm->gent->client->NPC_class == CLASS_ATST ||pm->gent->client->NPC_class == CLASS_RANCOR)
+			&& (pm->gent->client->NPC_class == CLASS_ATST ||pm->gent->client->NPC_class == CLASS_RANCOR || pm->gent->client->NPC_class == CLASS_DROIDEKA)
 			&& !BG_AllowThirdPersonSpecialMove( pm->ps ) )
 		{
 			standheight = crouchheight = 128;
@@ -8181,11 +8182,17 @@ static void PM_Footsteps( void )
 	// if not trying to move
 	if ( !pm->cmd.forwardmove && !pm->cmd.rightmove )
 	{
-		if ( pm->gent && pm->gent->client && pm->gent->client->NPC_class == CLASS_ATST )
+		if ( pm->gent && pm->gent->client && (pm->gent->client->NPC_class == CLASS_ATST || pm->gent->client->NPC_class == CLASS_DROIDEKA))
 		{
 			if ( !PM_AdjustStandAnimForSlope() )
 			{
 				PM_SetAnim(pm,SETANIM_LEGS,BOTH_STAND1,SETANIM_FLAG_NORMAL);
+				if (pm->gent->client->ps.stats[STAT_ARMOR] > 100 && !PM_RunningAnim(pm->gent->client->ps.legsAnim))
+				{
+					pm->gent->flags |= FL_SHIELDED;
+					pm->gent->client->ps.powerups[PW_GALAK_SHIELD] = Q3_INFINITE;
+					gi.G2API_SetSurfaceOnOff(&pm->gent->ghoul2[pm->gent->playerModel], "force_shield", 0x00000001);
+				}
 			}
 		}
 		else if ( pm->ps->pm_flags & PMF_DUCKED )
@@ -8453,6 +8460,51 @@ static void PM_Footsteps( void )
 			{//no run anim
 				PM_SetAnim(pm,SETANIM_LEGS,BOTH_WALKBACK1,setAnimFlags);
 			}
+			else if (pm->gent && pm->gent->client && pm->gent->client->NPC_class == CLASS_ATST)
+			{
+				if (pm->ps->legsAnim != BOTH_RUNBACK1)
+				{
+					if (pm->ps->legsAnim != BOTH_RUN1START)
+					{
+						//Hmm, he should really start slow and have to accelerate... also need to do this for stopping
+						PM_SetAnim(pm, SETANIM_LEGS, BOTH_RUN1START, setAnimFlags | SETANIM_FLAG_HOLD);
+					}
+					else if (!pm->ps->legsAnimTimer)
+					{
+						PM_SetAnim(pm, SETANIM_LEGS, BOTH_RUNBACK1, setAnimFlags);
+					}
+				}
+				else
+				{
+					PM_SetAnim(pm, SETANIM_LEGS, BOTH_RUNBACK1, setAnimFlags);
+				}
+			}
+			else if (!in_camera && pm->gent && pm->gent->client && pm->gent->client->NPC_class == CLASS_DROIDEKA)
+			{
+				if (pm->ps->legsAnim != BOTH_RUNBACK1)
+				{
+					if (pm->ps->legsAnim != BOTH_RUN1START)
+					{
+						//Hmm, he should really start slow and have to accelerate... also need to do this for stopping
+						PM_SetAnim(pm, SETANIM_LEGS, BOTH_RUN1START, setAnimFlags | SETANIM_FLAG_HOLD);
+						if (pm->ps->powerups[PW_GALAK_SHIELD] || pm->gent->flags & FL_SHIELDED)
+						{
+							pm->gent->flags &= ~FL_SHIELDED;
+							pm->gent->client->ps.powerups[PW_GALAK_SHIELD] = 0;
+							gi.G2API_SetSurfaceOnOff(&pm->gent->ghoul2[pm->gent->playerModel], "force_shield", 0x00000002);
+						}
+
+					}
+					else if (!pm->ps->legsAnimTimer)
+					{
+						PM_SetAnim(pm, SETANIM_LEGS, BOTH_RUNBACK1, setAnimFlags);
+					}
+				}
+				else
+				{
+					PM_SetAnim(pm, SETANIM_LEGS, BOTH_RUNBACK1, setAnimFlags);
+				}
+			}
 			else
 			{
 				PM_SetAnim(pm,SETANIM_LEGS,BOTH_RUNBACK1,setAnimFlags);
@@ -8555,6 +8607,31 @@ static void PM_Footsteps( void )
 							PM_SetAnim( pm, SETANIM_LEGS, BOTH_RUN1, setAnimFlags );
 						}
 					}
+					else if (!in_camera && pm->gent && pm->gent->client && pm->gent->client->NPC_class == CLASS_DROIDEKA)
+					{
+						if (pm->ps->legsAnim != BOTH_RUN1)
+						{
+							if (pm->ps->legsAnim != BOTH_RUN1START)
+							{
+								//Hmm, he should really start slow and have to accelerate... also need to do this for stopping
+								PM_SetAnim(pm, SETANIM_LEGS, BOTH_RUN1START, setAnimFlags | SETANIM_FLAG_HOLD);
+								if (pm->ps->powerups[PW_GALAK_SHIELD] || pm->gent->flags & FL_SHIELDED)
+								{
+									pm->gent->flags &= ~FL_SHIELDED;
+									pm->gent->client->ps.powerups[PW_GALAK_SHIELD] = 0;
+									gi.G2API_SetSurfaceOnOff(&pm->gent->ghoul2[pm->gent->playerModel], "force_shield", 0x00000002);
+								}
+							}
+							else if (!pm->ps->legsAnimTimer)
+							{
+								PM_SetAnim(pm, SETANIM_LEGS, BOTH_RUN1, setAnimFlags);
+							}
+						}
+						else
+						{
+							PM_SetAnim(pm, SETANIM_LEGS, BOTH_RUN1, setAnimFlags);
+						}
+					}
 					else if ( pm->gent && pm->gent->client && pm->gent->client->NPC_class == CLASS_WAMPA )
 					{
 						if ( pm->gent->NPC && pm->gent->NPC->stats.runSpeed == 300 )
@@ -8569,6 +8646,10 @@ static void PM_Footsteps( void )
 					else if ( pm->gent && pm->gent->client && pm->gent->client->NPC_class == CLASS_RANCOR )
 					{//no run anim
 						PM_SetAnim( pm, SETANIM_LEGS, BOTH_WALK1, setAnimFlags );
+					}
+					else if (pm->gent && pm->gent->client && pm->gent->client->NPC_class == CLASS_DROIDEKA)
+					{
+						PM_SetAnim(pm, SETANIM_LEGS, BOTH_RUN1, setAnimFlags);
 					}
 					else
 					{
@@ -8596,6 +8677,31 @@ static void PM_Footsteps( void )
 							PM_SetAnim(pm, SETANIM_LEGS, BOTH_WALK1, setAnimFlags);
 						else
 							PM_SetAnim(pm,SETANIM_LEGS,BOTH_WALK2,setAnimFlags);
+					}
+				}
+				else if (!in_camera && pm->gent && pm->gent->client && pm->gent->client->NPC_class == CLASS_DROIDEKA)
+				{
+					if (pm->ps->legsAnim != BOTH_WALK1 && pm->cmd.forwardmove > 0)
+					{
+						if (pm->ps->legsAnim != BOTH_RUN1STOP && pm->ps->legsAnim == BOTH_RUN1)
+						{
+							//Hmm, he should really start slow and have to accelerate... also need to do this for stopping
+							PM_SetAnim(pm, SETANIM_LEGS, BOTH_RUN1STOP, setAnimFlags | SETANIM_FLAG_HOLD);
+						}
+						else if (!pm->ps->legsAnimTimer)
+						{
+							PM_SetAnim(pm, SETANIM_LEGS, BOTH_WALK1, setAnimFlags);
+						}
+					}
+					else
+					{
+						PM_SetAnim(pm, SETANIM_LEGS, BOTH_WALK1, setAnimFlags);
+						if (pm->gent->client->ps.stats[STAT_ARMOR] > 100 && !PM_RunningAnim(pm->gent->client->ps.legsAnim))
+						{
+							pm->gent->flags |= FL_SHIELDED;
+							pm->gent->client->ps.powerups[PW_GALAK_SHIELD] = Q3_INFINITE;
+							gi.G2API_SetSurfaceOnOff(&pm->gent->ghoul2[pm->gent->playerModel], "force_shield", 0x00000001);
+						}
 					}
 				}
 				else if ( pm->gent && pm->gent->client && pm->gent->client->NPC_class == CLASS_WAMPA )
@@ -9007,7 +9113,7 @@ static void PM_BeginWeaponChange( int weapon ) {
 
 	if ( pm->gent
 		&& pm->gent->client
-		&& (pm->gent->client->NPC_class == CLASS_ATST||pm->gent->client->NPC_class == CLASS_RANCOR) )
+		&& (pm->gent->client->NPC_class == CLASS_ATST||pm->gent->client->NPC_class == CLASS_RANCOR || pm->gent->client->NPC_class == CLASS_DROIDEKA) )
 	{
 		if ( pm->ps->clientNum < MAX_CLIENTS )
 		{
@@ -9086,7 +9192,7 @@ static void PM_FinishWeaponChange( void ) {
 	pm->ps->weaponstate = WEAPON_RAISING;
 	pm->ps->weaponTime += 250;
 
-	if ( pm->gent && pm->gent->client && pm->gent->client->NPC_class == CLASS_ATST )
+	if ( pm->gent && pm->gent->client && pm->gent->client->NPC_class == CLASS_ATST || pm->gent && pm->gent->client && pm->gent->client->NPC_class == CLASS_DROIDEKA)
 	{//do nothing
 	}
 	else if ( weapon == WP_SABER )
@@ -9153,6 +9259,11 @@ static void PM_FinishWeaponChange( void ) {
 			if (weaponData[weapon].weaponMdl[0]) {	//might be NONE, so check if it has a model
 				G_CreateG2AttachedWeaponModel( pm->gent, CG_GetCurrentWeaponModel(pm->gent), pm->gent->handRBolt, 0 );
 			}
+		}
+
+		if (weapon == WP_SBD && pm->gent->client->NPC_class == CLASS_DROIDEKA)
+		{
+			G_CreateG2AttachedWeaponModel(pm->gent, weaponData[WP_SBD].weaponMdl, pm->gent->handLBolt, 1);
 		}
 
 		if (pm->gent && pm->gent->client && pm->gent->client->NPC_class == CLASS_GALAKMECH)
@@ -13886,6 +13997,11 @@ static void PM_Weapon( void )
 			{
 				PM_SetAnim(pm,SETANIM_TORSO,BOTH_ATTACK1,SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_RESTART|SETANIM_FLAG_HOLD);
 			}
+		}
+
+		else if (pm->gent && pm->gent->client && pm->gent->client->NPC_class == CLASS_DROIDEKA)
+		{
+			PM_SetAnim(pm, SETANIM_TORSO, BOTH_ATTACK1, SETANIM_FLAG_OVERRIDE | SETANIM_FLAG_RESTART | SETANIM_FLAG_HOLD);
 		}
 
 		else if (pm->gent && pm->gent->client && pm->gent->client->NPC_class == CLASS_ROCKETTROOPER)

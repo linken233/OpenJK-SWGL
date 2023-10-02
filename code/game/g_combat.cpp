@@ -152,7 +152,8 @@ gentity_t *TossClientItems( gentity_t *self )
 		|| self->client->NPC_class == CLASS_REMOTE
 		|| self->client->NPC_class == CLASS_SABER_DROID
 		|| self->client->NPC_class == CLASS_VEHICLE
-		|| self->client->NPC_class == CLASS_ATST)
+		|| self->client->NPC_class == CLASS_ATST
+		|| self->client->NPC_class == CLASS_DROIDEKA)
 	{
 		// these things are so small that they shouldn't bother throwing anything
 		return NULL;
@@ -792,6 +793,12 @@ void DeathFX( gentity_t *ent )
 		G_PlayEffect( "env/med_explode", effectPos );
 		break;
 
+	case CLASS_DROIDEKA:
+		G_SoundOnEnt(ent, CHAN_AUTO, "sound/chars/sentry/misc/sentry_explo");
+		VectorCopy(ent->currentOrigin, effectPos);
+		G_PlayEffect("env/med_explode", effectPos);
+		break;
+
 	default:
 		break;
 
@@ -964,7 +971,8 @@ qboolean G_GetHitLocFromSurfName( gentity_t *ent, const char *surfName, int *hit
 			|| ent->client->NPC_class == CLASS_MOUSE
 			|| ent->client->NPC_class == CLASS_SENTRY
 			|| ent->client->NPC_class == CLASS_INTERROGATOR
-			|| ent->client->NPC_class == CLASS_PROBE ) )
+			|| ent->client->NPC_class == CLASS_PROBE
+			|| ent->client->NPC_class == CLASS_DROIDEKA) )
 	{//we don't care about per-surface hit-locations or dismemberment for these guys
 		return qfalse;
 	}
@@ -1293,6 +1301,10 @@ qboolean G_GetHitLocFromSurfName( gentity_t *ent, const char *surfName, int *hit
 		dismember = qtrue;
 	}
 	else if ( ent->client && ent->client->NPC_class == CLASS_ASSASSIN_DROID )
+	{
+		dismember = qtrue;
+	}
+	else if (ent->client && ent->client->NPC_class == CLASS_DROIDEKA)
 	{
 		dismember = qtrue;
 	}
@@ -3829,6 +3841,15 @@ void player_die( gentity_t *self, gentity_t *inflictor, gentity_t *attacker, int
 			self->client->ps.powerups[PW_GALAK_SHIELD] = 0;
 			gi.G2API_SetSurfaceOnOff( &self->ghoul2[self->playerModel], "force_shield", TURN_OFF );
 		}
+		// Remove The Shield From The Droideka
+		if (self->client && self->client->NPC_class == CLASS_DROIDEKA && (self->flags & FL_SHIELDED))
+		{
+			self->flags &= ~FL_SHIELDED;
+			self->client->ps.stats[STAT_ARMOR] = 0;
+			self->client->ps.powerups[PW_GALAK_SHIELD] = 0;
+			// Few difference surfaces on the model
+			gi.G2API_SetSurfaceOnOff(&self->ghoul2[self->playerModel], "force_shield", TURN_OFF);
+		}
 
 		if (self->client && self->client->NPC_class==CLASS_HOWLER)
 		{
@@ -4272,6 +4293,14 @@ extern void RunEmplacedWeapon( gentity_t *ent, usercmd_t **ucmd );
 		if ( anim != -1 )
 		{
 			NPC_SetAnim( self, SETANIM_BOTH, anim, SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD );
+		}
+	}
+	else if (self->client->NPC_class == CLASS_DROIDEKA)
+	{
+		anim = PM_PickAnim(self, BOTH_DEATH1, BOTH_DEATH2); //initialize to good data
+		if (anim != -1)
+		{
+			NPC_SetAnim(self, SETANIM_BOTH, anim, SETANIM_FLAG_OVERRIDE | SETANIM_FLAG_HOLD);
 		}
 	}
 	else if ( self->s.number && self->message && meansOfDeath != MOD_SNIPER && meansOfDeath != MOD_HIGH_POWERED_SHOT )
@@ -4925,7 +4954,42 @@ int CheckArmor (gentity_t *ent, int damage, int dflags, int mod)
 		}
 	}
 
-	if (client->NPC_class==CLASS_ASSASSIN_DROID)
+	// Droideka damage rules
+	if (client->NPC_class == CLASS_DROIDEKA)
+	{
+		// Droideka isn't affected by some things, regardless if they have the shield or not
+		if (mod==MOD_GAS ||	mod==MOD_IMPACT || mod==MOD_LAVA || mod==MOD_SLIME || mod==MOD_WATER ||
+			mod == MOD_FORCE_GRIP || mod == MOD_FORCE_DRAIN || mod == MOD_SEEKER || mod == MOD_MELEE)
+		{
+			return damage;
+		}
+
+		// The Demp and Force Lightning Completely Destroy The Shield
+		//-----------------------------------------
+		if (mod == MOD_DEMP2 || mod == MOD_DEMP2_ALT || mod == MOD_FORCE_LIGHTNING)
+		{
+			client->ps.stats[STAT_ARMOR] = 0;
+			return 0;
+		}
+		
+		// No shield, no protection
+		if (!(ent->flags & FL_SHIELDED))
+		{
+			return 0;
+		}
+
+		// Otherwise, The Shield Absorbs As Much Damage As Possible
+		//----------------------------------------------------------
+		int	previousArmor = client->ps.stats[STAT_ARMOR];
+		client->ps.stats[STAT_ARMOR] -= damage;
+		if (client->ps.stats[STAT_ARMOR] < 0)
+		{
+			client->ps.stats[STAT_ARMOR] = 0;
+		}
+		return (previousArmor - client->ps.stats[STAT_ARMOR]);
+	}
+
+	if (client->NPC_class == CLASS_ASSASSIN_DROID)
 	{
 		// The Assassin Always Completely Ignores These Damage Types
 		//-----------------------------------------------------------
@@ -4982,8 +5046,6 @@ int CheckArmor (gentity_t *ent, int damage, int dflags, int mod)
 		}
 		return (previousArmor - client->ps.stats[STAT_ARMOR]);
 	}
-
-
 
 	if ( client->NPC_class == CLASS_GALAKMECH)
 	{//special case
@@ -5545,7 +5607,8 @@ qboolean G_ImmuneToGas( gentity_t *ent )
 		|| ent->client->NPC_class == CLASS_SABER_DROID
 		|| ent->client->NPC_class == CLASS_ASSASSIN_DROID
 		|| ent->client->NPC_class == CLASS_HAZARD_TROOPER
-		|| ent->client->NPC_class == CLASS_VEHICLE )
+		|| ent->client->NPC_class == CLASS_VEHICLE
+		|| ent->client->NPC_class == CLASS_DROIDEKA)
 	{
 		return qtrue;
 	}
@@ -5762,6 +5825,12 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker, const
 	}
 	if ( dflags&DAMAGE_NO_DAMAGE )
 	{
+		// Droideka shields don't last forever and can take a beating from most weapons. But should offer a good bit of protection.
+		if (targ && targ->client && targ->client->NPC_class == CLASS_DROIDEKA)
+		{
+			targ->client->ps.stats[STAT_ARMOR] -= 6 - g_spskill->integer;
+		}
+
 		damage = 0;
 	}
 
@@ -5824,7 +5893,8 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker, const
 			client->NPC_class == CLASS_R2D2 ||
 			client->NPC_class == CLASS_R5D2 ||
 			client->NPC_class == CLASS_SEEKER ||
-			client->NPC_class == CLASS_INTERROGATOR
+			client->NPC_class == CLASS_INTERROGATOR ||
+			client->NPC_class == CLASS_DROIDEKA
 		)
 	   )
 	{

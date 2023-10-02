@@ -710,6 +710,7 @@ void CG_EntityEvent( centity_t *cent, vec3_t position ) {
 							npc_class != CLASS_MARK2 && npc_class != CLASS_MOUSE &&
 							npc_class != CLASS_PROBE && npc_class != CLASS_PROTOCOL &&
 							npc_class != CLASS_R2D2 && npc_class != CLASS_R5D2 &&
+							npc_class != CLASS_DROIDEKA &&
 							npc_class != CLASS_SEEKER && npc_class != CLASS_SENTRY)
 						{//Only the humanoids scream
 							cgi_S_StartSound ( NULL, cent->gent->owner->s.number, CHAN_VOICE, disintSound1 );

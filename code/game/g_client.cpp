@@ -1056,7 +1056,11 @@ qboolean G_StandardHumanoid( gentity_t *self )
 		{//rockettrooper duplicates many of these
 			return qtrue;
 		}
-		if ( !Q_stricmp( "models/players/wampa/wampa", GLAName ) )
+		if (!Q_stricmp("models/players/wampa/wampa", GLAName))
+		{//rockettrooper duplicates many of these
+			return qtrue;
+		}
+		if (!Q_stricmp("models/players/droideka/droideka", GLAName))
 		{//rockettrooper duplicates many of these
 			return qtrue;
 		}
@@ -1156,6 +1160,10 @@ qboolean G_StandardHumanoid(const char* GLAName)
 		{//only _humanoid skeleton is expected to have these
 			return qtrue;
 		}
+		if (!Q_stricmp("droideka", GLAName))
+		{//only _humanoid skeleton is expected to have these
+			return qtrue;
+		}
 	}
 	return qfalse;
 }
@@ -1169,6 +1177,7 @@ qboolean G_ClassHasBadBones( int NPC_class )
 	case CLASS_SABER_DROID:
 	case CLASS_HAZARD_TROOPER:
 	case CLASS_ASSASSIN_DROID:
+	case CLASS_DROIDEKA:
 	case CLASS_RANCOR:
 		return qtrue;
 	}
@@ -1330,6 +1339,20 @@ void G_BoneOrientationsForClass( int NPC_class, const char *boneName, Eorientati
 			*oFwd = POSITIVE_Z;
 		}
 		break;
+	case CLASS_DROIDEKA:
+		if (Q_stricmp("pelvis", boneName) == 0
+			|| Q_stricmp("lower_lumbar", boneName) == 0
+			|| Q_stricmp("upper_lumbar", boneName) == 0)
+		{
+			//only these 3 bones on them are wrong
+			//*oUp = POSITIVE_X;
+			//*oRt = POSITIVE_Y;
+			//*oFwd = POSITIVE_Z;
+			*oUp = NEGATIVE_X;
+			*oRt = POSITIVE_Y;
+			*oFwd = POSITIVE_Z;
+		}
+		break;
 	}
 }
 
@@ -1427,11 +1450,24 @@ qboolean G_SetG2PlayerModelInfo( gentity_t *ent, const char *modelName, const ch
 				}
 
 			}
+			
 			if (ent->client->NPC_class == CLASS_BOBAFETT || ent->client->NPC_class == CLASS_MANDALORIAN || ent->client->NPC_class == CLASS_JANGO)
 			{//get the flamethrower bolt
 				ent->genericBolt3 = gi.G2API_AddBolt(&ent->ghoul2[ent->playerModel], "*flamethrower");
 				if(ent->genericBolt3 == -1)
 					ent->genericBolt3 = gi.G2API_AddBolt(&ent->ghoul2[ent->playerModel], "*l_hand");
+			}
+
+			if (!Q_stricmp("droideka", modelName))
+			{
+				ent->torsoBolt = gi.G2API_AddBolt(&ent->ghoul2[ent->playerModel], "*torso");
+				ent->crotchBolt = gi.G2API_AddBolt(&ent->ghoul2[ent->playerModel], "*crotch");
+				ent->elbowLBolt = gi.G2API_AddBolt(&ent->ghoul2[ent->playerModel], "*lshoulder");
+				ent->elbowRBolt = gi.G2API_AddBolt(&ent->ghoul2[ent->playerModel], "*rshoulder");
+				ent->kneeLBolt = gi.G2API_AddBolt(&ent->ghoul2[ent->playerModel], "leg02");
+				ent->kneeRBolt = gi.G2API_AddBolt(&ent->ghoul2[ent->playerModel], "leg01");
+				ent->footLBolt = gi.G2API_AddBolt(&ent->ghoul2[ent->playerModel], "*lleg");
+				ent->footRBolt = gi.G2API_AddBolt(&ent->ghoul2[ent->playerModel], "*rleg");
 			}
 		}
 		else
@@ -1822,49 +1858,93 @@ qboolean G_SetG2PlayerModelInfo( gentity_t *ent, const char *modelName, const ch
 		else if ( !Q_stricmp( "rockettrooper", modelName )
 			|| !Q_stricmp( "hazardtrooper", modelName )
 			|| !Q_stricmp( "saber_droid", modelName )
-			|| !Q_stricmp( "assassin_droid", modelName ) )
+			|| !Q_stricmp( "assassin_droid", modelName )
+			|| !Q_stricmp( "droideka", modelName))
 		{
 			Eorientations oUp, oRt, oFwd;
-			if ( Q_stricmp( "saber_droid", modelName ) )
-			{//saber droid doesn't use these lower bones
-				//regular bones we need
-				ent->upperLumbarBone = gi.G2API_GetBoneIndex( &ent->ghoul2[ent->playerModel], "upper_lumbar", qtrue );
-				if (ent->upperLumbarBone>=0)
+			if (!Q_stricmp("droideka", modelName))
+			{
+				/*ent->upperLumbarBone = gi.G2API_GetBoneIndex(&ent->ghoul2[ent->playerModel], "spinebone03", qtrue);
+				if (ent->upperLumbarBone >= 0)
 				{
-					G_BoneOrientationsForClass( ent->client->NPC_class, "upper_lumbar", &oUp, &oRt, &oFwd );
-					gi.G2API_SetBoneAnglesIndex( &ent->ghoul2[ent->playerModel], ent->upperLumbarBone, angles, BONE_ANGLES_POSTMULT, oUp, oRt, oFwd, NULL, 0, 0 );
+					G_BoneOrientationsForClass(ent->client->NPC_class, "spinebone03", &oUp, &oRt, &oFwd);
+					gi.G2API_SetBoneAnglesIndex(&ent->ghoul2[ent->playerModel], ent->upperLumbarBone, angles, BONE_ANGLES_POSTMULT, oUp, oRt, oFwd, NULL, 0, 0);
 				}
-				ent->lowerLumbarBone = gi.G2API_GetBoneIndex( &ent->ghoul2[ent->playerModel], "lower_lumbar", qtrue );
-				if (ent->lowerLumbarBone>=0)
+				ent->lowerLumbarBone = gi.G2API_GetBoneIndex(&ent->ghoul2[ent->playerModel], "spinebone02", qtrue);
+				if (ent->lowerLumbarBone >= 0)
 				{
-					G_BoneOrientationsForClass( ent->client->NPC_class, "lower_lumbar", &oUp, &oRt, &oFwd );
-					gi.G2API_SetBoneAnglesIndex( &ent->ghoul2[ent->playerModel], ent->lowerLumbarBone, angles, BONE_ANGLES_POSTMULT, oUp, oRt, oFwd, NULL, 0, 0 );
+					G_BoneOrientationsForClass(ent->client->NPC_class, "spinebone02", &oUp, &oRt, &oFwd);
+					gi.G2API_SetBoneAnglesIndex(&ent->ghoul2[ent->playerModel], ent->lowerLumbarBone, angles, BONE_ANGLES_POSTMULT, oUp, oRt, oFwd, NULL, 0, 0);
 				}
+				ent->thoracicBone = gi.G2API_GetBoneIndex(&ent->ghoul2[ent->playerModel], "spinebone04", qtrue);
+				if (ent->thoracicBone >= 0)
+				{
+					G_BoneOrientationsForClass(ent->client->NPC_class, "spinebone04", &oUp, &oRt, &oFwd);
+					gi.G2API_SetBoneAnglesIndex(&ent->ghoul2[ent->playerModel], ent->thoracicBone, angles, BONE_ANGLES_POSTMULT, oUp, oRt, oFwd, NULL, 0, 0);
+				}
+				ent->cervicalBone = gi.G2API_GetBoneIndex(&ent->ghoul2[ent->playerModel], "spinebone05", qtrue);
+				if (ent->cervicalBone >= 0)
+				{
+					G_BoneOrientationsForClass(ent->client->NPC_class, "spinebone05", &oUp, &oRt, &oFwd);
+					gi.G2API_SetBoneAnglesIndex(&ent->ghoul2[ent->playerModel], ent->cervicalBone, angles, BONE_ANGLES_POSTMULT, oUp, oRt, oFwd, NULL, 0, 0);
+				}
+				ent->craniumBone = gi.G2API_GetBoneIndex(&ent->ghoul2[ent->playerModel], "headbone01", qtrue);
+				if (ent->craniumBone >= 0)
+				{
+					G_BoneOrientationsForClass(ent->client->NPC_class, "headbone01", &oUp, &oRt, &oFwd);
+					gi.G2API_SetBoneAnglesIndex(&ent->ghoul2[ent->playerModel], ent->craniumBone, angles, BONE_ANGLES_POSTMULT, oUp, oRt, oFwd, NULL, 0, 0);
+				}
+				ent->motionBone = gi.G2API_GetBoneIndex(&ent->ghoul2[ent->playerModel], "spinebone01", qtrue);
+				if (ent->motionBone >= 0)
+				{
+					gi.G2API_SetBoneAnglesIndex(&ent->ghoul2[ent->playerModel], ent->motionBone, angles, BONE_ANGLES_POSTMULT, POSITIVE_Z, NEGATIVE_X, NEGATIVE_Y, NULL, 0, 0);
+				}
+				ent->motionBolt = gi.G2API_AddBolt(&ent->ghoul2[ent->playerModel], "spinebone01");*/
 			}
-			if ( Q_stricmp( "hazardtrooper", modelName ) )
-			{//hazard trooper doesn't have these upper bones
-				if ( Q_stricmp( "saber_droid", modelName ) )
-				{//saber droid doesn't use thoracic bone
-					ent->thoracicBone = gi.G2API_GetBoneIndex( &ent->ghoul2[ent->playerModel], "thoracic", qtrue );
-					if (ent->thoracicBone>=0)
+			else
+			{
+				if (Q_stricmp("saber_droid", modelName))
+				{//saber droid doesn't use these lower bones
+					//regular bones we need
+					ent->upperLumbarBone = gi.G2API_GetBoneIndex(&ent->ghoul2[ent->playerModel], "upper_lumbar", qtrue);
+					if (ent->upperLumbarBone >= 0)
 					{
-						G_BoneOrientationsForClass( ent->client->NPC_class, "thoracic", &oUp, &oRt, &oFwd );
-						gi.G2API_SetBoneAnglesIndex( &ent->ghoul2[ent->playerModel], ent->thoracicBone, angles, BONE_ANGLES_POSTMULT, oUp, oRt, oFwd, NULL, 0, 0 );
+						G_BoneOrientationsForClass(ent->client->NPC_class, "upper_lumbar", &oUp, &oRt, &oFwd);
+						gi.G2API_SetBoneAnglesIndex(&ent->ghoul2[ent->playerModel], ent->upperLumbarBone, angles, BONE_ANGLES_POSTMULT, oUp, oRt, oFwd, NULL, 0, 0);
+					}
+					ent->lowerLumbarBone = gi.G2API_GetBoneIndex(&ent->ghoul2[ent->playerModel], "lower_lumbar", qtrue);
+					if (ent->lowerLumbarBone >= 0)
+					{
+						G_BoneOrientationsForClass(ent->client->NPC_class, "lower_lumbar", &oUp, &oRt, &oFwd);
+						gi.G2API_SetBoneAnglesIndex(&ent->ghoul2[ent->playerModel], ent->lowerLumbarBone, angles, BONE_ANGLES_POSTMULT, oUp, oRt, oFwd, NULL, 0, 0);
 					}
 				}
-				ent->cervicalBone = gi.G2API_GetBoneIndex( &ent->ghoul2[ent->playerModel], "cervical", qtrue );
-				if (ent->cervicalBone>=0)
-				{
-					G_BoneOrientationsForClass( ent->client->NPC_class, "cervical", &oUp, &oRt, &oFwd );
-					gi.G2API_SetBoneAnglesIndex( &ent->ghoul2[ent->playerModel], ent->cervicalBone, angles, BONE_ANGLES_POSTMULT, oUp, oRt, oFwd, NULL, 0, 0 );
-				}
-				ent->craniumBone = gi.G2API_GetBoneIndex( &ent->ghoul2[ent->playerModel], "cranium", qtrue );
-				if (ent->craniumBone>=0)
-				{
-					G_BoneOrientationsForClass( ent->client->NPC_class, "cranium", &oUp, &oRt, &oFwd );
-					gi.G2API_SetBoneAnglesIndex( &ent->ghoul2[ent->playerModel], ent->craniumBone, angles, BONE_ANGLES_POSTMULT, oUp, oRt, oFwd, NULL, 0, 0 );
+				if (Q_stricmp("hazardtrooper", modelName))
+				{//hazard trooper doesn't have these upper bones
+					if (Q_stricmp("saber_droid", modelName))
+					{//saber droid doesn't use thoracic bone
+						ent->thoracicBone = gi.G2API_GetBoneIndex(&ent->ghoul2[ent->playerModel], "thoracic", qtrue);
+						if (ent->thoracicBone >= 0)
+						{
+							G_BoneOrientationsForClass(ent->client->NPC_class, "thoracic", &oUp, &oRt, &oFwd);
+							gi.G2API_SetBoneAnglesIndex(&ent->ghoul2[ent->playerModel], ent->thoracicBone, angles, BONE_ANGLES_POSTMULT, oUp, oRt, oFwd, NULL, 0, 0);
+						}
+					}
+					ent->cervicalBone = gi.G2API_GetBoneIndex(&ent->ghoul2[ent->playerModel], "cervical", qtrue);
+					if (ent->cervicalBone >= 0)
+					{
+						G_BoneOrientationsForClass(ent->client->NPC_class, "cervical", &oUp, &oRt, &oFwd);
+						gi.G2API_SetBoneAnglesIndex(&ent->ghoul2[ent->playerModel], ent->cervicalBone, angles, BONE_ANGLES_POSTMULT, oUp, oRt, oFwd, NULL, 0, 0);
+					}
+					ent->craniumBone = gi.G2API_GetBoneIndex(&ent->ghoul2[ent->playerModel], "cranium", qtrue);
+					if (ent->craniumBone >= 0)
+					{
+						G_BoneOrientationsForClass(ent->client->NPC_class, "cranium", &oUp, &oRt, &oFwd);
+						gi.G2API_SetBoneAnglesIndex(&ent->ghoul2[ent->playerModel], ent->craniumBone, angles, BONE_ANGLES_POSTMULT, oUp, oRt, oFwd, NULL, 0, 0);
+					}
 				}
 			}
+
 		}
 		else
 		{
@@ -1932,6 +2012,10 @@ qboolean G_SetG2PlayerModelInfo( gentity_t *ent, const char *modelName, const ch
 		{
 			ent->s.radius = 150;
 		}
+	}
+	else if (ent->client->NPC_class == CLASS_DROIDEKA)
+	{
+		ent->s.radius = 40;
 	}
 	else if ( ent->s.radius <= 0 )//radius cannot be negative or zero
 	{//set the radius to be the largest axial distance on the entity
@@ -2319,13 +2403,18 @@ void G_ChangePlayerModel( gentity_t *ent, const char *newModel )
 		return;
 	}
 
+	if (ent->client->ps.weapon == WP_SBD && ent->client->NPC_class == CLASS_DROIDEKA)
+	{
+		G_CreateG2AttachedWeaponModel(ent, weaponData[ent->client->ps.weapon].weaponMdl, ent->handLBolt, 1);
+	}
+
 	G_RemovePlayerModel( ent );
 	if ( Q_stricmp( "player", newModel ) == 0 )
 	{
 		G_InitPlayerFromCvars( ent );
 		return;
 	}
-	if (Q_stricmp(PHASMA, newModel) == 0)
+	if (Q_stricmp(PHASMA, newModel) == 0 || Q_stricmp(DROIDEKA, newModel) == 0)
 	{
 		ent->flags |= FL_SHIELDED;
 	}

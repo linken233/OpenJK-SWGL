@@ -4725,7 +4725,7 @@ void	ClientAlterSpeed(gentity_t *ent, usercmd_t *ucmd, qboolean	controlledByPlay
 			}
 		}
 	}
-	if ( client->NPC_class == CLASS_ATST && client->ps.legsAnim == BOTH_RUN1START )
+	if ((client->NPC_class == CLASS_ATST || client->NPC_class == CLASS_DROIDEKA) && (client->ps.legsAnim == BOTH_RUN1START || client->ps.legsAnim == BOTH_RUN1STOP))
 	{//HACK: when starting to move as atst, ramp up speed
 		//float animLength = PM_AnimLength( client->clientInfo.animFileIndex, (animNumber_t)client->ps.legsAnim);
 		//client->ps.speed *= ( animLength - client->ps.legsAnimTimer)/animLength;

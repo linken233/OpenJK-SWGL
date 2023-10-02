@@ -234,6 +234,7 @@ qboolean NPC_IsGunner(gentity_t* self)
 	case CLASS_MANDALORIAN:
 	case CLASS_JANGO:
 	case CLASS_TUSKEN:
+	case CLASS_DROIDEKA:
 		return qtrue;
 		break;
 	default:
@@ -2123,7 +2124,7 @@ void ST_Commander( void )
 
 		// Check To See If The Enemy Is Too Close For Comfort
 		//----------------------------------------------------
-		if (NPC->client->NPC_class!=CLASS_ASSASSIN_DROID)
+		if (NPC->client->NPC_class!=CLASS_ASSASSIN_DROID && NPC->client->NPC_class != CLASS_DROIDEKA)
 		{
 			if (TIMER_Done(NPC, "checkEnemyTooCloseDebouncer"))
 			{
@@ -2607,7 +2608,7 @@ void NPC_BSST_Attack( void )
 
 	if ( !doMove )
 	{
-		if (NPC->client->NPC_class != CLASS_ASSASSIN_DROID)
+		if (NPC->client->NPC_class != CLASS_ASSASSIN_DROID && NPC->client->NPC_class != CLASS_DROIDEKA)
 		{
 			if ( !TIMER_Done( NPC, "duck" ) )
 			{

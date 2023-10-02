@@ -9482,6 +9482,7 @@ void ForceThrow( gentity_t *self, qboolean pull, qboolean fake )
 				}
 				int modPowerLevel = WP_AbsorbConversion( push_list[x], push_list[x]->client->ps.forcePowerLevel[FP_ABSORB], self, powerUse, powerLevel, forcePowerNeeded[self->client->ps.forcePowerLevel[powerUse]] );
 				if (push_list[x]->client->NPC_class==CLASS_ASSASSIN_DROID ||
+					push_list[x]->client->NPC_class==CLASS_DROIDEKA ||
 					push_list[x]->client->NPC_class==CLASS_HAZARD_TROOPER)
 				{
 					modPowerLevel = 0;	// devides throw by 10
@@ -9657,9 +9658,11 @@ void ForceThrow( gentity_t *self, qboolean pull, qboolean fake )
 							&& push_list[x]->client->NPC_class != CLASS_TUSKEN
 							&& push_list[x]->client->NPC_class != CLASS_HAZARD_TROOPER
 							&& push_list[x]->client->NPC_class != CLASS_ASSASSIN_DROID
+							&& push_list[x]->client->NPC_class != CLASS_DROIDEKA
 							&& push_list[x]->s.weapon != WP_SABER
 							&& push_list[x]->s.weapon != WP_MELEE
 							&& push_list[x]->s.weapon != WP_THERMAL
+							&& push_list[x]->s.weapon != WP_SBD// Super Battle Droids can't lose their weapons
 							&& push_list[x]->s.weapon != WP_CONCUSSION// so rax can't drop his
 							&&!FalseEmperorMission() // Player shouldn't be disarmed in the False Emperor mission (because that would be very bad)
 							)
@@ -10559,6 +10562,7 @@ void ForceTelepathy( gentity_t *self )
 		case CLASS_REMOTE:
 		case CLASS_PROTOCOL:
 		case CLASS_ASSASSIN_DROID:
+		case CLASS_DROIDEKA:
 		case CLASS_SABER_DROID:
 		case CLASS_BOBAFETT:
 		case CLASS_MANDALORIAN:
@@ -10892,6 +10896,7 @@ void ForceGrip( gentity_t *self )
 			//not even combat droids?  (No animation for being gripped...)
 		case CLASS_SABER_DROID:
 		case CLASS_ASSASSIN_DROID:
+		case CLASS_DROIDEKA:
 			//*sigh*... in JK3, you'll be able to grab and move *anything*...
 			return;
 			break;
@@ -10990,11 +10995,13 @@ void ForceGrip( gentity_t *self )
 				&& traceEnt->client->NPC_class != CLASS_ROCKETTROOPER
 				&& traceEnt->client->NPC_class != CLASS_VEHICLE
 				&& traceEnt->client->NPC_class != CLASS_HAZARD_TROOPER
+				&& traceEnt->client->NPC_class != CLASS_DROIDEKA
 				&& traceEnt->client->NPC_class != CLASS_TUSKEN
 				&& traceEnt->client->NPC_class != CLASS_BOBAFETT
 				&& traceEnt->client->NPC_class != CLASS_MANDALORIAN
 				&& traceEnt->client->NPC_class != CLASS_JANGO
 				&& traceEnt->client->NPC_class != CLASS_ASSASSIN_DROID
+				&& traceEnt->s.weapon != WP_SBD	
 				&& traceEnt->s.weapon != WP_CONCUSSION	// so rax can't drop his
 				&& !FalseEmperorMission() // Player shouldn't be disarmed in the False Emperor mission (because that would be very bad)
 				)
@@ -11373,10 +11380,12 @@ qboolean ToBeAffectedByStasis(gentity_t *self, gentity_t *traceEnt)
 
 	// Like it or not, some npcs should be immune
 	else if (traceEnt->client->NPC_class == CLASS_GALAKMECH
-			|| traceEnt->client->ps.weapon == WP_CONCUSSION
-			|| traceEnt->client->NPC_class == CLASS_SAND_CREATURE
+		|| traceEnt->client->ps.weapon == WP_CONCUSSION
+		|| traceEnt->client->NPC_class == CLASS_SAND_CREATURE
+		|| traceEnt->client->NPC_class == CLASS_DROIDEKA
 			|| traceEnt->client->NPC_class == CLASS_VEHICLE
-			|| traceEnt->client->NPC_class == CLASS_ASSASSIN_DROID
+		|| traceEnt->client->NPC_class == CLASS_ASSASSIN_DROID
+		|| traceEnt->client->NPC_class == CLASS_DROIDEKA			
 		|| traceEnt->client->NPC_class == CLASS_HAZARD_TROOPER
 		|| traceEnt->client->NPC_class == CLASS_INTERROGATOR
 		|| traceEnt->client->NPC_class == CLASS_ATST
@@ -11609,6 +11618,7 @@ void ForceGrasp(gentity_t *self)
 			//not even combat droids?  (No animation for being gripped...)
 		case CLASS_SABER_DROID:
 		case CLASS_ASSASSIN_DROID:
+		case CLASS_DROIDEKA:
 			//*sigh*... in JK3, you'll be able to grab and move *anything*...
 			return;
 			break;
@@ -11686,6 +11696,8 @@ void ForceGrasp(gentity_t *self)
 				&& traceEnt->client->NPC_class != CLASS_MANDALORIAN
 				&& traceEnt->client->NPC_class != CLASS_JANGO
 				&& traceEnt->client->NPC_class != CLASS_ASSASSIN_DROID
+				&& traceEnt->client->NPC_class != CLASS_DROIDEKA
+				&& traceEnt->s.weapon != WP_SBD
 				&& traceEnt->s.weapon != WP_CONCUSSION	// so rax can't drop his
 				&& traceEnt->client->playerTeam != self->client->playerTeam
 				)
@@ -12118,6 +12130,7 @@ void ForceFear(gentity_t *self)
 		case CLASS_REMOTE:
 		case CLASS_PROTOCOL:
 		case CLASS_ASSASSIN_DROID:
+		case CLASS_DROIDEKA:
 		case CLASS_SABER_DROID:
 		case CLASS_BOBAFETT:
 		case CLASS_MANDALORIAN:
@@ -12252,6 +12265,7 @@ qboolean CanBeFeared(gentity_t *self, gentity_t *traceEnt)
 		|| traceEnt->client->NPC_class == CLASS_SAND_CREATURE
 		|| traceEnt->client->NPC_class == CLASS_VEHICLE
 		|| traceEnt->client->NPC_class == CLASS_ASSASSIN_DROID
+		|| traceEnt->client->NPC_class == CLASS_DROIDEKA
 		|| traceEnt->client->NPC_class == CLASS_HAZARD_TROOPER
 		|| traceEnt->client->NPC_class == CLASS_INTERROGATOR
 		|| traceEnt->client->NPC_class == CLASS_ATST
@@ -12831,7 +12845,7 @@ void ForceLightningDamage( gentity_t *self, gentity_t *traceEnt, vec3_t dir, flo
 					dmg = 1;
 				}
 			}
-			if ( traceEnt && traceEnt->client && traceEnt->client->ps.powerups[PW_GALAK_SHIELD] )
+			if ( traceEnt && traceEnt->client && traceEnt->client->ps.powerups[PW_GALAK_SHIELD] && traceEnt->client->NPC_class != CLASS_DROIDEKA)
 			{
 				//has shield up
 				dmg = 0;
@@ -13200,6 +13214,7 @@ qboolean ForceDrain2( gentity_t *self )
 		case CLASS_PROTOCOL:
 		case CLASS_SABER_DROID:
 		case CLASS_ASSASSIN_DROID:
+		case CLASS_DROIDEKA:
 			return qfalse;
 			break;
 		case CLASS_PROBE:
@@ -13365,6 +13380,7 @@ qboolean FP_ForceDrainableEnt( gentity_t *victim )
 	case CLASS_SENTRY:
 	case CLASS_SABER_DROID:
 	case CLASS_ASSASSIN_DROID:
+	case CLASS_DROIDEKA:
 	case CLASS_VEHICLE:
 		return qfalse;
 	default:

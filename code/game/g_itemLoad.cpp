@@ -184,6 +184,8 @@ static void IT_Name(const char **holdBuf)
 		itemNum = ITM_CLONERIFLE_PICKUP;
 	else if (!Q_stricmp(tokenStr, "ITM_CLONEPISTOL_PICKUP"))
 		itemNum = ITM_CLONEPISTOL_PICKUP;
+	else if (!Q_stricmp(tokenStr, "ITM_DROIDEKA_PICKUP"))
+		itemNum = ITM_DROIDEKA_PICKUP;
 
 	//ammo
 	else if (!Q_stricmp(tokenStr,"ITM_AMMO_FORCE_PICKUP"))
@@ -444,8 +446,10 @@ static void IT_Tag(const char **holdBuf)
 		tag = DYN_WP_REBELBLASTER;
 	else if (!Q_stricmp(tokenStr,"DYN_WP_CLONERIFLE"))
 		tag = DYN_WP_CLONERIFLE;
-	else if (!Q_stricmp(tokenStr,"DYN_WP_CLONEPISTOL"))
+	else if (!Q_stricmp(tokenStr, "DYN_WP_CLONEPISTOL"))
 		tag = DYN_WP_CLONEPISTOL;
+	else if (!Q_stricmp(tokenStr, "DYN_WP_DROIDEKA"))
+		tag = DYN_WP_DROIDEKA;
 	else if (!Q_stricmp(tokenStr,"FP_HEAL"))
 	{
 		tag = FP_HEAL;

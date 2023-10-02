@@ -2168,6 +2168,22 @@ static void CG_G2ClientSpineAngles( centity_t *cent, vec3_t viewAngles, const ve
 		ulAngles[ROLL] = 0.0f;
 		llAngles[ROLL] = motionBoneCorrectAngles[ROLL];
 	}
+	else if (cent->gent->client->NPC_class == CLASS_DROIDEKA)
+	{
+		//each bone has only 1 axis of rotation!
+		//upper lumbar does not pitch
+		thoracicAngles[PITCH] = viewAngles[PITCH] * 0.40f;
+		ulAngles[PITCH] = 0.0f;
+		llAngles[PITCH] = viewAngles[PITCH] * 0.60f + motionBoneCorrectAngles[PITCH];
+		//only upper lumbar yaws
+		thoracicAngles[YAW] = 0.0f;
+		ulAngles[YAW] = viewAngles[YAW];
+		llAngles[YAW] = motionBoneCorrectAngles[YAW];
+		//no bone is capable of rolling
+		thoracicAngles[ROLL] = 0.0f;
+		ulAngles[ROLL] = 0.0f;
+		llAngles[ROLL] = motionBoneCorrectAngles[ROLL];
+	}
 	else
 	{//use all 3 bones
 		thoracicAngles[PITCH] = viewAngles[PITCH]*0.20f;
@@ -2298,6 +2314,30 @@ static void CG_G2ClientNeckAngles( centity_t *cent, const vec3_t lookAngles, vec
 		headAngles[YAW] = 0.0f;
 		headAngles[ROLL] = 0.0f;
 		//none of the bones roll
+	}
+	else if (cent->gent->client->NPC_class == CLASS_DROIDEKA)
+	{
+		//each bone has only 1 axis of rotation!
+		//thoracic only pitches, split with cervical
+		if (thoracicAngles[PITCH])
+		{
+			//already been set above, blend them
+			thoracicAngles[PITCH] = (thoracicAngles[PITCH] + lA[PITCH] * 0.5f) * 0.5f;
+		}
+		else
+		{
+			thoracicAngles[PITCH] = lA[PITCH] * 0.5f;
+		}
+		thoracicAngles[YAW] = thoracicAngles[ROLL] = 0.0f;
+		//cervical only pitches, split with thoracis
+		neckAngles[PITCH] = lA[PITCH] * 0.5f;
+		neckAngles[YAW] = 0.0f;
+		neckAngles[ROLL] = 0.0f;
+		//cranium only yaws
+		headAngles[PITCH] = 0.0f;
+		headAngles[YAW] = lA[YAW];
+		headAngles[ROLL] = 0.0f;
+		//no bones roll
 	}
 	else
 	{
@@ -8821,9 +8861,9 @@ SkipTrueView:
 					// figure out where the actual model muzzle is
 					if (es->weapon == WP_ATST_MAIN)
 					{
-						if ( !es->number )
+						if (!es->number)
 						{//player, just use left one, I guess
-							if ( cent->gent->alt_fire )
+							if (cent->gent->alt_fire)
 							{
 								bolt = cent->gent->handRBolt;
 							}
@@ -8845,7 +8885,7 @@ SkipTrueView:
 					}
 					else	// ATST SIDE weapons
 					{
-						if ( cent->gent->alt_fire)
+						if (cent->gent->alt_fire)
 						{
 							bolt = cent->gent->genericBolt2;
 						}
@@ -8855,22 +8895,22 @@ SkipTrueView:
 						}
 					}
 
-					gi.G2API_GetBoltMatrix( cent->gent->ghoul2, cent->gent->playerModel, bolt, &boltMatrix, tempAngles, ent.origin, cg.time, cgs.model_draw, cent->currentState.modelScale );
+					gi.G2API_GetBoltMatrix(cent->gent->ghoul2, cent->gent->playerModel, bolt, &boltMatrix, tempAngles, ent.origin, cg.time, cgs.model_draw, cent->currentState.modelScale);
 
 					// work the matrix axis stuff into the original axis and origins used.
-					gi.G2API_GiveMeVectorFromMatrix( boltMatrix, ORIGIN, cent->gent->client->renderInfo.muzzlePoint );
-					gi.G2API_GiveMeVectorFromMatrix( boltMatrix, NEGATIVE_Y, cent->gent->client->renderInfo.muzzleDir );
+					gi.G2API_GiveMeVectorFromMatrix(boltMatrix, ORIGIN, cent->gent->client->renderInfo.muzzlePoint);
+					gi.G2API_GiveMeVectorFromMatrix(boltMatrix, NEGATIVE_Y, cent->gent->client->renderInfo.muzzleDir);
 				}
-				else if ( cent->gent && cent->gent->client && (cent->gent->client->NPC_class == CLASS_GALAKMECH || cent->gent->client->ps.weapon == WP_SBD) )
+				else if (cent->gent && cent->gent->client && (cent->gent->client->NPC_class == CLASS_GALAKMECH || (cent->gent->client->ps.weapon == WP_SBD && cent->gent->client->NPC_class != CLASS_DROIDEKA)))
 				{
 					int bolt = -1;
-					if ( cent->gent->lockCount )
+					if (cent->gent->lockCount)
 					{//using the big laser beam
 						bolt = cent->gent->handLBolt;
 					}
 					else//repeater
 					{
-						if ( cent->gent->alt_fire )
+						if (cent->gent->alt_fire)
 						{//fire from the lower barrel (not that anyone will ever notice this, but...)
 							bolt = cent->gent->genericBolt3;
 						}
@@ -8880,36 +8920,36 @@ SkipTrueView:
 						}
 					}
 
-					if ( bolt == -1 )
+					if (bolt == -1)
 					{
-						VectorCopy( ent.origin, cent->gent->client->renderInfo.muzzlePoint );
-						AngleVectors( tempAngles, cent->gent->client->renderInfo.muzzleDir, NULL, NULL );
+						VectorCopy(ent.origin, cent->gent->client->renderInfo.muzzlePoint);
+						AngleVectors(tempAngles, cent->gent->client->renderInfo.muzzleDir, NULL, NULL);
 					}
 					else
 					{
-						gi.G2API_GetBoltMatrix( cent->gent->ghoul2, cent->gent->playerModel, bolt, &boltMatrix, tempAngles, ent.origin, cg.time, cgs.model_draw, cent->currentState.modelScale );
+						gi.G2API_GetBoltMatrix(cent->gent->ghoul2, cent->gent->playerModel, bolt, &boltMatrix, tempAngles, ent.origin, cg.time, cgs.model_draw, cent->currentState.modelScale);
 
 						// work the matrix axis stuff into the original axis and origins used.
-						gi.G2API_GiveMeVectorFromMatrix( boltMatrix, ORIGIN, cent->gent->client->renderInfo.muzzlePoint );
-						gi.G2API_GiveMeVectorFromMatrix( boltMatrix, NEGATIVE_Y, cent->gent->client->renderInfo.muzzleDir );
+						gi.G2API_GiveMeVectorFromMatrix(boltMatrix, ORIGIN, cent->gent->client->renderInfo.muzzlePoint);
+						gi.G2API_GiveMeVectorFromMatrix(boltMatrix, NEGATIVE_Y, cent->gent->client->renderInfo.muzzleDir);
 					}
 				}
 				// Set the Vehicle Muzzle Point and Direction.
-				else if ( cent->gent && cent->gent->client && cent->gent->client->NPC_class == CLASS_VEHICLE )
+				else if (cent->gent && cent->gent->client && cent->gent->client->NPC_class == CLASS_VEHICLE)
 				{
 					// Get the Position and Direction of the Tag and use that as our Muzzles Properties.
 					mdxaBone_t	boltMatrix;
 					vec3_t		velocity;
 					VectorCopy(cent->gent->client->ps.velocity, velocity);
 					velocity[2] = 0;
- 					for ( int i = 0; i < MAX_VEHICLE_MUZZLES; i++ )
+					for (int i = 0; i < MAX_VEHICLE_MUZZLES; i++)
 					{
- 						if ( cent->gent->m_pVehicle->m_iMuzzleTag[i] != -1 )
+						if (cent->gent->m_pVehicle->m_iMuzzleTag[i] != -1)
 						{
-							gi.G2API_GetBoltMatrix( cent->gent->ghoul2, cent->gent->playerModel, cent->gent->m_pVehicle->m_iMuzzleTag[i], &boltMatrix, cent->lerpAngles, ent.origin, cg.time, cgs.model_draw, cent->currentState.modelScale );
-							gi.G2API_GiveMeVectorFromMatrix( boltMatrix, ORIGIN, cent->gent->m_pVehicle->m_Muzzles[i].m_vMuzzlePos );
-							gi.G2API_GiveMeVectorFromMatrix( boltMatrix, NEGATIVE_Y, cent->gent->m_pVehicle->m_Muzzles[i].m_vMuzzleDir );
-  							VectorMA(cent->gent->m_pVehicle->m_Muzzles[i].m_vMuzzlePos, 0.075f, velocity, cent->gent->m_pVehicle->m_Muzzles[i].m_vMuzzlePos);
+							gi.G2API_GetBoltMatrix(cent->gent->ghoul2, cent->gent->playerModel, cent->gent->m_pVehicle->m_iMuzzleTag[i], &boltMatrix, cent->lerpAngles, ent.origin, cg.time, cgs.model_draw, cent->currentState.modelScale);
+							gi.G2API_GiveMeVectorFromMatrix(boltMatrix, ORIGIN, cent->gent->m_pVehicle->m_Muzzles[i].m_vMuzzlePos);
+							gi.G2API_GiveMeVectorFromMatrix(boltMatrix, NEGATIVE_Y, cent->gent->m_pVehicle->m_Muzzles[i].m_vMuzzleDir);
+							VectorMA(cent->gent->m_pVehicle->m_Muzzles[i].m_vMuzzlePos, 0.075f, velocity, cent->gent->m_pVehicle->m_Muzzles[i].m_vMuzzlePos);
 						}
 						else
 						{
@@ -8917,7 +8957,7 @@ SkipTrueView:
 						}
 					}
 				}
-				else if ( ((cent->gent->client && cent->gent->NPC) || cg_dualWielding.integer)//client NPC
+				else if ((cent->gent && cent->gent->client && cent->gent->client->NPC_class == CLASS_DROIDEKA) || ((cent->gent->client && cent->gent->NPC) || cg_dualWielding.integer)//client NPC
 					/*
 					&& cent->gent->client->NPC_class == CLASS_REBORN//cultist
 					&& cent->gent->NPC->rank >= RANK_LT_COMM//commando
@@ -8933,38 +8973,67 @@ SkipTrueView:
 						getBoth = qtrue;
 						oldOne = (cent->gent->count)?0:1;
 					}
-					if ( ( cent->gent->weaponModel[cent->gent->count] != -1)
+					if ((cent->gent->client->ps.weapon == WP_SBD) || ( ( cent->gent->weaponModel[cent->gent->count] != -1)
 						&& ( cent->gent->ghoul2.size() > cent->gent->weaponModel[cent->gent->count] )
-						&& ( cent->gent->ghoul2[cent->gent->weaponModel[cent->gent->count]].mModelindex != -1) )
+						&& ( cent->gent->ghoul2[cent->gent->weaponModel[cent->gent->count]].mModelindex != -1)) )
 					{//get whichever one we're using now
 						mdxaBone_t	boltMatrix;
 						// figure out where the actual model muzzle is
-						gi.G2API_GetBoltMatrix( cent->gent->ghoul2, cent->gent->weaponModel[cent->gent->count], 0, &boltMatrix, tempAngles, ent.origin, cg.time, cgs.model_draw, cent->currentState.modelScale );
+						if (cent->gent->client->ps.weapon == WP_SBD)
+						{
+							if(!cent->gent->count)
+								gi.G2API_GetBoltMatrix(cent->gent->ghoul2, cent->gent->playerModel, cent->gent->handRBolt, &boltMatrix, tempAngles, ent.origin, cg.time, cgs.model_draw, cent->currentState.modelScale);
+							else
+								gi.G2API_GetBoltMatrix(cent->gent->ghoul2, cent->gent->playerModel, cent->gent->handLBolt, &boltMatrix, tempAngles, ent.origin, cg.time, cgs.model_draw, cent->currentState.modelScale);
+						}
+						else
+						{
+							gi.G2API_GetBoltMatrix(cent->gent->ghoul2, cent->gent->weaponModel[cent->gent->count], 0, &boltMatrix, tempAngles, ent.origin, cg.time, cgs.model_draw, cent->currentState.modelScale);
+						}
 						// work the matrix axis stuff into the original axis and origins used.
 						gi.G2API_GiveMeVectorFromMatrix( boltMatrix, ORIGIN, cent->gent->client->renderInfo.muzzlePoint );
 						gi.G2API_GiveMeVectorFromMatrix( boltMatrix, NEGATIVE_Y, cent->gent->client->renderInfo.muzzleDir );
 					}
 					//get the old one too, if needbe, and store it in muzzle2
 					if ( getBoth
-						&& ( cent->gent->weaponModel[oldOne] != -1) //have a second weapon
+						&& (cent->gent->client->ps.weapon == WP_SBD
+						|| (( cent->gent->weaponModel[oldOne] != -1) //have a second weapon
 						&& ( cent->gent->ghoul2.size() > cent->gent->weaponModel[oldOne] ) //have a valid ghoul model index
-						&& ( cent->gent->ghoul2[cent->gent->weaponModel[oldOne]].mModelindex != -1) )//model exists and was loaded
+						&& ( cent->gent->ghoul2[cent->gent->weaponModel[oldOne]].mModelindex != -1))) )//model exists and was loaded
 					{//saboteur commando, toggle the muzzle point back and forth between the two pistols each time he fires
 						mdxaBone_t	boltMatrix;
 						// figure out where the actual model muzzle is
-						gi.G2API_GetBoltMatrix( cent->gent->ghoul2, cent->gent->weaponModel[oldOne], 0, &boltMatrix, tempAngles, ent.origin, cg.time, cgs.model_draw, cent->currentState.modelScale );
+						if (cent->gent->client->ps.weapon == WP_SBD)
+						{
+							if(!oldOne)
+								gi.G2API_GetBoltMatrix(cent->gent->ghoul2, cent->gent->playerModel, cent->gent->handRBolt, &boltMatrix, tempAngles, ent.origin, cg.time, cgs.model_draw, cent->currentState.modelScale);
+							else
+								gi.G2API_GetBoltMatrix(cent->gent->ghoul2, cent->gent->playerModel, cent->gent->handLBolt, &boltMatrix, tempAngles, ent.origin, cg.time, cgs.model_draw, cent->currentState.modelScale);
+						}
+						else
+						{
+							gi.G2API_GetBoltMatrix(cent->gent->ghoul2, cent->gent->weaponModel[oldOne], 0, &boltMatrix, tempAngles, ent.origin, cg.time, cgs.model_draw, cent->currentState.modelScale);
+						}
 						// work the matrix axis stuff into the original axis and origins used.
 						gi.G2API_GiveMeVectorFromMatrix( boltMatrix, ORIGIN, oldMP );
 						gi.G2API_GiveMeVectorFromMatrix( boltMatrix, NEGATIVE_Y, oldMD );
 					}
 				}
-				else if (( cent->gent->weaponModel[0] != -1) &&
+				else if (cent->gent->client->ps.weapon == WP_SBD || (( cent->gent->weaponModel[0] != -1) &&
 					( cent->gent->ghoul2.size() > cent->gent->weaponModel[0] ) &&
-					( cent->gent->ghoul2[cent->gent->weaponModel[0]].mModelindex != -1))
+					( cent->gent->ghoul2[cent->gent->weaponModel[0]].mModelindex != -1)))
 				{
+					
 					mdxaBone_t	boltMatrix;
-					// figure out where the actual model muzzle is
-					gi.G2API_GetBoltMatrix( cent->gent->ghoul2, cent->gent->weaponModel[0], 0, &boltMatrix, tempAngles, ent.origin, cg.time, cgs.model_draw, cent->currentState.modelScale );
+					if (cent->gent->client->ps.weapon == WP_SBD)
+					{
+						gi.G2API_GetBoltMatrix(cent->gent->ghoul2, cent->gent->playerModel, cent->gent->handRBolt, &boltMatrix, tempAngles, ent.origin, cg.time, cgs.model_draw, cent->currentState.modelScale);
+					}
+					else
+					{
+						// figure out where the actual model muzzle is
+						gi.G2API_GetBoltMatrix(cent->gent->ghoul2, cent->gent->weaponModel[0], 0, &boltMatrix, tempAngles, ent.origin, cg.time, cgs.model_draw, cent->currentState.modelScale);
+					}
 					// work the matrix axis stuff into the original axis and origins used.
 					gi.G2API_GiveMeVectorFromMatrix( boltMatrix, ORIGIN, cent->gent->client->renderInfo.muzzlePoint );
 					gi.G2API_GiveMeVectorFromMatrix( boltMatrix, NEGATIVE_Y, cent->gent->client->renderInfo.muzzleDir );

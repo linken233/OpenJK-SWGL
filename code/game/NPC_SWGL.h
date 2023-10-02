@@ -39,6 +39,7 @@
 // Separatists
 #define DOOKU "Count_Dooku"
 #define GRIEVOUS_FOUR "General_Grievous_FourArms"
+#define DROIDEKA "Destroyer_Droid"
 
 
 

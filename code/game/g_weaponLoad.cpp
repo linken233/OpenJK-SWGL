@@ -1833,8 +1833,10 @@ void DYN_WPN_WeaponType(const char **holdBuf)
 		weaponNum = DYN_WP_REBELBLASTER;
 	else if (!Q_stricmp(tokenStr,"DYN_WP_CLONERIFLE"))
 		weaponNum = DYN_WP_CLONERIFLE;
-	else if (!Q_stricmp(tokenStr,"DYN_WP_CLONEPISTOL"))
+	else if (!Q_stricmp(tokenStr, "DYN_WP_CLONEPISTOL"))
 		weaponNum = DYN_WP_CLONEPISTOL;
+	else if (!Q_stricmp(tokenStr, "DYN_WP_DROIDEKA"))
+		weaponNum = DYN_WP_DROIDEKA;
 	else
 	{
 		weaponNum = 0;

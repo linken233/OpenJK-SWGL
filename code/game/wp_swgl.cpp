@@ -899,6 +899,7 @@ void WP_FireBobaRifle( gentity_t *ent, qboolean alt_fire )
 //---------------
 void WP_FireSBD(gentity_t *ent)
 {
+	vec3_t	angs;
 	int velocity = SBD_VELOCITY;
 	int damage = SBD_DAMAGE;
 	float scalers[2] = {SBD_LEFT_SHOT, SBD_RIGHT_SHOT};
@@ -917,6 +918,17 @@ void WP_FireSBD(gentity_t *ent)
 	}
 
 	WP_TraceSetStart(ent, muzzle, vec3_origin, vec3_origin);
+	if (ent->client->NPC_class == CLASS_DROIDEKA)
+	{
+		vectoangles(forwardVec, angs);
+		if (ent->count)
+			angs[YAW] += -3;
+		else
+			angs[YAW] += 3;
+
+		AngleVectors(angs, forwardVec, NULL, NULL);
+
+	}
 
 	for (int i = 0; i < 2; i++)
 	{
@@ -950,6 +962,11 @@ void WP_FireSBD(gentity_t *ent)
 		missile->clipmask = MASK_SHOT | CONTENTS_LIGHTSABER;
 		missile->bounceCount = 8;
 	}
+	if (ent->client->NPC_class == CLASS_DROIDEKA)
+	{//dual pistols, toggle the muzzle point back and forth between the two cannons each time
+		ent->count = (ent->count) ? 0 : 1;
+	}
+	
 }
 
 
