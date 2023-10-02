@@ -5538,7 +5538,7 @@ static void NPC_Spawn_f(void)
 	NPCspawner->NPC_type = Q_strlwr(G_NewString(npc_type));
 
 	// Default values to prevent crashing
-	char* skin = "default";
+	char* skin = "";
 
 	char* team = "";
 
@@ -5616,10 +5616,7 @@ static void NPC_Spawn_f(void)
 
 	NPCspawner->NPC_skin = G_NewString(skin);
 
-	if (Q_stricmp("", team))
-	{
-		NPCspawner->NPC_team = G_NewString(team);
-	}
+	NPCspawner->NPC_team = G_NewString(team);	
 
 	if (!Q_stricmp(NPCspawner->NPC_type, DOOKU))
 	{
