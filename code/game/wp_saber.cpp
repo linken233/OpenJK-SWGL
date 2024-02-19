@@ -6794,6 +6794,9 @@ qboolean WP_SaberLaunch( gentity_t *self, gentity_t *saber, qboolean thrown, qbo
 	VectorClear( saber->s.pos.trDelta );
 	gi.linkentity( saber );
 
+	// Make sure saber model is the same as the player's current one.
+	WP_SetSaberEntModelSkin(self, saber);
+
 	//spin it
 	VectorClear( saber->s.apos.trBase );
 	saber->s.apos.trTime = level.time;
@@ -9665,6 +9668,7 @@ void ForceThrow( gentity_t *self, qboolean pull, qboolean fake )
 							&& push_list[x]->s.weapon != WP_SBD// Super Battle Droids can't lose their weapons
 							&& push_list[x]->s.weapon != WP_CONCUSSION// so rax can't drop his
 							&&!FalseEmperorMission() // Player shouldn't be disarmed in the False Emperor mission (because that would be very bad)
+							&& !(push_list[x]->attrFlags & ATTR_HERO) // Heroes can't be disarmed
 							)
 						{//yank the weapon - NOTE: level 1 just knocks them down, not take weapon
 							//FIXME: weapon yank anim if not a knockdown?
@@ -10604,7 +10608,8 @@ void ForceTelepathy( gentity_t *self )
 				traceEnt->NPC->controlledTime = level.time + 30000;
 			}
 			else if ( traceEnt->s.weapon != WP_SABER
-				&& traceEnt->client->NPC_class != CLASS_REBORN )
+				&& traceEnt->client->NPC_class != CLASS_REBORN 
+				&& !(traceEnt->attrFlags & ATTR_HERO))
 			{//haha!  Jedi aren't easily confused!
 				if ( self->client->ps.forcePowerLevel[FP_TELEPATHY] > FORCE_LEVEL_2
 					&& traceEnt->s.weapon != WP_NONE		//don't charm people who aren't capable of fighting... like ugnaughts and droids, just confuse them
@@ -11004,6 +11009,7 @@ void ForceGrip( gentity_t *self )
 				&& traceEnt->s.weapon != WP_SBD	
 				&& traceEnt->s.weapon != WP_CONCUSSION	// so rax can't drop his
 				&& !FalseEmperorMission() // Player shouldn't be disarmed in the False Emperor mission (because that would be very bad)
+				&& !(traceEnt->attrFlags & ATTR_HERO) // Heroes can't be disarmed
 				)
 			{
 				if (traceEnt->client->NPC_class == CLASS_BOBAFETT || traceEnt->client->NPC_class == CLASS_MANDALORIAN || traceEnt->client->NPC_class == CLASS_JANGO)
@@ -11700,6 +11706,7 @@ void ForceGrasp(gentity_t *self)
 				&& traceEnt->s.weapon != WP_SBD
 				&& traceEnt->s.weapon != WP_CONCUSSION	// so rax can't drop his
 				&& traceEnt->client->playerTeam != self->client->playerTeam
+				&& !(traceEnt->attrFlags & ATTR_HERO) // Heroes can't be disarmed
 				)
 			{
 				if (traceEnt->client->NPC_class == CLASS_BOBAFETT || traceEnt->client->NPC_class == CLASS_MANDALORIAN || traceEnt->client->NPC_class == CLASS_JANGO)
@@ -12289,7 +12296,8 @@ qboolean CanBeFeared(gentity_t *self, gentity_t *traceEnt)
 		|| traceEnt->client->NPC_class == CLASS_LUKE
 		|| traceEnt->client->NPC_class == CLASS_TAVION
 		|| traceEnt->client->NPC_class == CLASS_DESANN
-		|| traceEnt->client->NPC_class == CLASS_ALORA)
+		|| traceEnt->client->NPC_class == CLASS_ALORA
+		|| traceEnt->attrFlags & ATTR_HERO)
 	{
 		return qfalse;
 	}
@@ -12923,7 +12931,7 @@ void ForceShootLightning( gentity_t *self )
 	VectorNormalize( forward );
 
 	//FIXME: if lightning hits water, do water-only-flagged radius damage from that point
-	if ( self->client->ps.forcePowerLevel[FP_LIGHTNING] > FORCE_LEVEL_2 )
+	if ( self->client->ps.forcePowerLevel[FP_LIGHTNING] > FORCE_LEVEL_2 && !(self->attrFlags & ATTR_PRECISE_LIGHTNING))
 	{//arc
 		vec3_t	center, mins, maxs, dir, ent_org, size, v;
 		float	radius = 512, dot, dist;

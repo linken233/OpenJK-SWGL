@@ -4483,14 +4483,32 @@ void PM_SaberStartTransAnim( int saberAnimLevel, int anim, float *animSpeed, gen
 	{//using a scepter and dual style, slow down anims
 		if ( anim >= BOTH_A1_T__B_ && anim <= BOTH_H7_S7_BR )
 		{
-			*animSpeed *= 0.75;
+			if (gent
+				&& gent->client
+				&& gent->client->ps.forceUpperAnimSpeed)
+			{
+				*animSpeed *= gent->client->ps.forceUpperAnimSpeed;
+			}
+			else
+			{
+				*animSpeed *= 0.75;
+			}
 		}
 	}
 	if ( gent && gent->client && gent->client->ps.forceRageRecoveryTime > level.time )
 	{//rage recovery
 		if ( anim >= BOTH_A1_T__B_ && anim <= BOTH_H1_S1_BR )
 		{//animate slower
-			*animSpeed *= 0.75;
+			if (gent
+				&& gent->client
+				&& gent->client->ps.forceUpperAnimSpeed)
+			{
+				*animSpeed *= gent->client->ps.forceUpperAnimSpeed;
+			}
+			else
+			{
+				*animSpeed *= 0.75;
+			}
 		}
 	}
 	else if ( gent && gent->NPC && gent->NPC->rank == RANK_CIVILIAN )
@@ -4499,7 +4517,16 @@ void PM_SaberStartTransAnim( int saberAnimLevel, int anim, float *animSpeed, gen
 		{//his fast attacks are slower
 			if ( !PM_SpinningSaberAnim( anim ) )
 			{
-				*animSpeed *= 0.75;
+				if (gent
+					&& gent->client
+					&& gent->client->ps.forceUpperAnimSpeed)
+				{
+					*animSpeed *= gent->client->ps.forceUpperAnimSpeed;
+				}
+				else
+				{
+					*animSpeed *= 0.75;
+				}
 			}
 			return;
 		}
@@ -4512,7 +4539,16 @@ void PM_SaberStartTransAnim( int saberAnimLevel, int anim, float *animSpeed, gen
 			{//his fast attacks are slower
 				if ( !PM_SpinningSaberAnim( anim ) )
 				{
-					*animSpeed *= 0.75;
+					if (gent
+						&& gent->client
+						&& gent->client->ps.forceUpperAnimSpeed)
+					{
+						*animSpeed *= gent->client->ps.forceUpperAnimSpeed;
+					}
+					else
+					{
+						*animSpeed *= 0.75;
+					}
 				}
 				return;
 			}
@@ -4528,11 +4564,29 @@ void PM_SaberStartTransAnim( int saberAnimLevel, int anim, float *animSpeed, gen
 	{
 		if ( saberAnimLevel == FORCE_LEVEL_1 || saberAnimLevel == FORCE_LEVEL_5 )
 		{//FIXME: should not be necc for FORCE_LEVEL_1's
-			*animSpeed *= 1.5;
+			if (gent
+				&& gent->client
+				&& gent->client->ps.forceUpperAnimSpeed)
+			{
+				*animSpeed *= gent->client->ps.forceUpperAnimSpeed;
+			}
+			else
+			{
+				*animSpeed *= 1.5;
+			}
 		}
 		else if ( saberAnimLevel == FORCE_LEVEL_3 )
 		{
-			*animSpeed *= 0.75;
+			if (gent
+				&& gent->client
+				&& gent->client->ps.forceUpperAnimSpeed)
+			{
+				*animSpeed *= gent->client->ps.forceUpperAnimSpeed;
+			}
+			else
+			{
+				*animSpeed *= 0.75;
+			}
 		}
 	}
 }
@@ -4954,6 +5008,11 @@ void PM_SetAnimFinal(int *torsoAnim,int *legsAnim,
 			animCurrent = torsCurrent;
 		}
 
+		if (gent->client->ps.forceUpperAnimSpeed)
+		{
+			animSpeed *= gent->client->ps.forceUpperAnimSpeed;
+		}
+
 		gi.G2API_SetAnimIndex(&gent->ghoul2[gent->playerModel], curAnim.glaIndex);
 		gi.G2API_SetBoneAnimIndex(&gent->ghoul2[gent->playerModel], torsBone,
 			animStart,
@@ -4995,6 +5054,11 @@ void PM_SetAnimFinal(int *torsoAnim,int *legsAnim,
 		if (bodyOnAnimNow && !animRestart && !bodyMatchTorsFrame)
 		{
 			animCurrent = bodyCurrent;
+		}
+
+		if (gent->client->ps.forceLowerAnimSpeed)
+		{
+			animSpeed *= gent->client->ps.forceLowerAnimSpeed;
 		}
 
 		gi.G2API_SetAnimIndex(&gent->ghoul2[gent->playerModel], curAnim.glaIndex);

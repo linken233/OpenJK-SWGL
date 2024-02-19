@@ -13587,7 +13587,7 @@ void PM_WpnMdlChange(const char *currWeaponMdl, int weaponNum, playerState_t *ps
 	CG_RegisterWeapon(weaponNum);
 
 	// If the weapon you are currently holding needs to change.
-	if (weaponNum == ps->weapon)
+	if (pm && pm->gent && weaponNum == ps->weapon)
 	{
 		// Remove the weapon(s) you have currently with a different model.
 		G_RemoveWeaponModels(pm->gent);
@@ -15854,14 +15854,23 @@ void Pmove( pmove_t *pmove )
 	else // TEMPTEMPTEMPTEMPTEMPTEMPTEMPTEMPTEMPTEMPTEMPTEMPTEMP
 	{
 		// footstep events / legs animations
-		if (pm->ps->stasisTime < level.time) {
+		if (pm->ps->forceLowerAnimTimer > level.time)
+		{
+			PM_SetAnim(pm, SETANIM_LEGS, pm->ps->forceLowerAnim, SETANIM_FLAG_OVERRIDE);
+		}
+		else if (pm->ps->stasisTime < level.time) {
 			PM_Footsteps();
 		}
 	}
 	// torso animation
 	if ( !pVeh )
 	{//not riding a vehicle
-		if (pm->ps->stasisTime < level.time) {
+		//not riding a vehicle
+		if (pm->ps->forceUpperAnimTimer > level.time)
+		{
+			PM_SetAnim(pm, SETANIM_TORSO, pm->ps->forceUpperAnim, SETANIM_FLAG_OVERRIDE);
+		}
+		else if (pm->ps->stasisTime < level.time) {
 			PM_TorsoAnimation();
 		}
 	}

@@ -79,7 +79,8 @@ extern cvar_t *g_NPCsabertwocolor;
 extern cvar_t *g_NPChealth;
 extern cvar_t *g_NPCspawnscript;
 extern cvar_t *g_NPCfleescript;
-extern cvar_t *g_NPCdeathscript;
+extern cvar_t* g_NPCdeathscript;
+extern cvar_t* g_NPCmodel;
 
 /*
 ===================
@@ -915,6 +916,8 @@ static void Svcmd_Spawn_f(void)
 
 	NPCspawner->NPC_SaberOne = g_NPCsaber->string;
 
+	NPCspawner->NPC_model = g_NPCmodel->string;
+
 	if (Q_stricmp("", g_NPCsabertwo->string) 
 	&& Q_stricmp("empty", g_NPCsabertwo->string) 
 	&& Q_stricmp("null", g_NPCsabertwo->string))
@@ -1004,26 +1007,17 @@ static void Svcmd_Scale_f(void)
 		gi.Printf(S_COLOR_RED "USAGE: scale <30-150>" S_COLOR_WHITE "\n");
 	}
 	else if (gi.argc() == 2)
-	{
-		try
-		{
-			int value = std::stoi(gi.argv(1));
+	{		
+		int value = atoi((char*)gi.argv(1));
 
-			if (value < 30 || value > 150)
-			{
-				gi.Printf(S_COLOR_RED "ERROR: Scale must be between 30 and 150. You put %i." S_COLOR_WHITE "\n", value);
-			}
-			else
-			{
-				player->s.modelScale[0] = player->s.modelScale[1] = player->s.modelScale[2] = value / 100.0f;
-			}
-		}
-		catch (...)
+		if (value < 30 || value > 150)
 		{
-			gi.Printf(S_COLOR_RED "ERROR: You just tried to crash the game! Shame on you!" S_COLOR_WHITE "\n");
+			gi.Printf(S_COLOR_RED "ERROR: Scale must be between 30 and 150.\n");
 		}
-
-		
+		else
+		{
+			player->s.modelScale[0] = player->s.modelScale[1] = player->s.modelScale[2] = value / 100.0f;
+		}		
 	}
 }
 

@@ -2171,7 +2171,7 @@ void G_RemovePlayerModel( gentity_t *ent )
 
 void G_RemoveWeaponModels( gentity_t *ent )
 {
-	if ( ent->ghoul2.size() )
+	if ( ent && ent->ghoul2.size() )
 	{
 		if ( ent->weaponModel[0] > 0 )
 		{

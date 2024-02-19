@@ -60,6 +60,34 @@ extern stringID_table_t WPTable[];
 
 gentity_t* traya = NULL;
 
+stringID_table_t FPTable[] =
+{
+	ENUM2STRING(FP_HEAL),
+	ENUM2STRING(FP_LEVITATION),
+	ENUM2STRING(FP_SPEED),
+	ENUM2STRING(FP_PUSH),
+	ENUM2STRING(FP_PULL),
+	ENUM2STRING(FP_TELEPATHY),
+	ENUM2STRING(FP_GRIP),
+	ENUM2STRING(FP_LIGHTNING),
+	ENUM2STRING(FP_SABERTHROW),
+	ENUM2STRING(FP_SABER_DEFENSE),
+	ENUM2STRING(FP_SABER_OFFENSE),
+	//new Jedi Academy powers
+	ENUM2STRING(FP_RAGE),
+	ENUM2STRING(FP_PROTECT),
+	ENUM2STRING(FP_ABSORB),
+	ENUM2STRING(FP_DRAIN),
+	ENUM2STRING(FP_SEE),
+	ENUM2STRING(FP_STASIS),
+	ENUM2STRING(FP_BLAST),
+	ENUM2STRING(FP_GRASP),
+	ENUM2STRING(FP_DESTRUCTION),
+	ENUM2STRING(FP_FEAR),
+	ENUM2STRING(FP_LIGHTNING_STRIKE),
+	{ "",	-1 }
+};
+
 
 /*
 -------------------------
@@ -389,11 +417,11 @@ void NPC_SetMiscDefaultData(gentity_t *ent)
 		{
 			NPC_Inquisitor_ClearTimers(ent); // For them switching their sabers
 	}
-	else if (!Q_stricmp(SION, ent->NPC_type) || !Q_stricmp(SION_TFU, ent->NPC_type))
+	/*else if (!Q_stricmp(SION, ent->NPC_type) || !Q_stricmp(SION_TFU, ent->NPC_type))
 	{
 		NPC->flags |= FL_UNDYING; // Sion is the lord of pain, he won't die immediately
 		ent->client->dismembered = qfalse;
-	}
+	}*/
 	else if (ent->client->NPC_class == CLASS_ROCKETTROOPER)
 	{//set some stuff, precache
 		ent->client->ps.forcePowersKnown |= (1 << FP_LEVITATION);
@@ -1918,6 +1946,15 @@ gentity_t *NPC_Spawn_Do(gentity_t *ent, qboolean fullSpawnNow)
 
 	if(ent->NPC_team)
 		newent->NPC_team = G_NewString(ent->NPC_team);
+	if (ent->NPC_model)
+		newent->NPC_model = G_NewString(ent->NPC_model);
+	if (ent->soundSet)
+		newent->soundSet = G_NewString(ent->soundSet);
+	if (ent->NPC_FPLevel)
+	{
+		for(int i = FP_FIRST; i < NUM_FORCE_POWERS; i++)
+			newent->NPC_FPLevel[i] = ent->NPC_FPLevel[i];
+	}
 
 	VectorCopy(ent->s.origin, newent->s.origin);
 	VectorCopy(ent->s.origin, newent->client->ps.origin);
@@ -5609,6 +5646,32 @@ static void NPC_Spawn_f(void)
 		{
 			NPCspawner->NPC_LightningColor = gi.argv(++spawnCommand);
 		}
+		else if ((!Q_stricmp("playermodel", gi.argv(spawnCommand)) || !Q_stricmp("model", gi.argv(spawnCommand))) && gi.argv(spawnCommand + 1))
+		{
+			NPCspawner->NPC_model = gi.argv(++spawnCommand);
+		}
+		else
+		{
+			//force powers
+			int fp = GetIDForString(FPTable, gi.argv(spawnCommand));
+			int		n;
+			if (fp >= FP_FIRST && fp < NUM_FORCE_POWERS)
+			{
+				n = std::stoi(gi.argv(++spawnCommand));
+
+				if (n > 5)
+				{
+					n = 5;
+				}
+				else if (n < 0)
+				{
+					n = 0;
+				}
+				// We'll increment the value by one since we don't want to mess with any force powers that the player doesn't want changed. So 0 will mean don't change and 1 will mean set to 0 and so on.
+				NPCspawner->NPC_FPLevel[fp] = n+1;
+				continue;
+			}
+		}
 
 		spawnCommand++;
 
@@ -5877,10 +5940,10 @@ void NPC_Anim_f(void)
 	char* name;
 	char* anim;
 	char* part;
+	int length = 0;
 
 	name = gi.argv(2);
 	anim = gi.argv(3);
-	part = gi.argv(4);
 
 	int			animID = 0;
 
@@ -5889,7 +5952,7 @@ void NPC_Anim_f(void)
 	if (!*name || !name[0])
 	{
 		gi.Printf(S_COLOR_RED"Error, Expected:\n");
-		gi.Printf(S_COLOR_RED"NPC anim '[NPC targetname]' '[Animation]' '[Body Area] - sets anims on NPC with certain targetname\n");
+		gi.Printf(S_COLOR_RED"NPC anim '[NPC targetname]' '[Animation]' '[Time in milliseconds]' '[Body Area]' - sets anims on NPC with certain targetname\n");
 		gi.Printf(S_COLOR_RED"or\n");
 		gi.Printf(S_COLOR_RED"NPC anim '[NPC targetname]' remove - Sets animation back to default with the NPC\n");
 		return;
@@ -5897,11 +5960,28 @@ void NPC_Anim_f(void)
 
 	if (animID <= 0)
 	{
-		if (Q_stricmp(anim, "remove"))
+		if (Q_stricmp(anim, "remove") && Q_stricmp(anim, "none"))
 		{
 			gi.Printf(S_COLOR_RED"Error, Invalid Animation:%s\n", anim);
 			return;
 		}
+	}
+
+	// Allow for a little flexibility in the args, just in case the 4th or 5th args are switched by the players.
+	if (gi.argv(4))
+	{
+		if (atoi((char*)gi.argv(4)) != 0)
+			length = atoi((char*)gi.argv(4)); // We'll assume any number is what the player wants for length.
+		else
+			part = gi.argv(4); // Part could end up being any string, but since we check if the parts are upper or lower only, all other strings won't do anything.
+	}
+
+	if (gi.argv(5))
+	{
+		if (atoi((char*)gi.argv(5)) != 0)
+			length = atoi((char*)gi.argv(5));
+		else
+			part = gi.argv(5);
 	}
 
 	for (n = 1; n < ENTITYNUM_MAX_NORMAL; n++)
@@ -5926,13 +6006,15 @@ void NPC_Anim_f(void)
 				{
 					gi.Printf(S_COLOR_GREEN"Setting NPC %s named %s upper body animation to %s\n", ent->NPC_type, ent->targetname, anim);
 					NPC_SetAnim(ent, SETANIM_TORSO, animID, SETANIM_FLAG_RESTART | SETANIM_FLAG_HOLD | SETANIM_FLAG_OVERRIDE);
-					PM_SetTorsoAnimTimer(ent, &ent->client->ps.torsoAnimTimer, -1);
+					if(length != 0)
+						PM_SetTorsoAnimTimer(ent, &ent->client->ps.torsoAnimTimer, length);
 				}
 				else if (!Q_stricmp(part, "lower"))
 				{
 					gi.Printf(S_COLOR_GREEN"Setting NPC %s named %s lower body animation to %s\n", ent->NPC_type, ent->targetname, anim);
 					NPC_SetAnim(ent, SETANIM_LEGS, animID, SETANIM_FLAG_RESTART | SETANIM_FLAG_HOLD | SETANIM_FLAG_OVERRIDE);
-					PM_SetLegsAnimTimer(ent, &ent->client->ps.legsAnimTimer, -1);
+					if (length != 0)
+						PM_SetLegsAnimTimer(ent, &ent->client->ps.legsAnimTimer, length);
 				}
 				else
 				{
@@ -5940,11 +6022,18 @@ void NPC_Anim_f(void)
 					NPC_SetAnim(ent, SETANIM_TORSO | SETANIM_LEGS, animID, SETANIM_FLAG_RESTART | SETANIM_FLAG_HOLD | SETANIM_FLAG_OVERRIDE);
 					animation_t* animations = level.knownAnimFileSets[0].animations;
 
-					if (animations[animID].loopFrames >= 0)
+					if (length != 0)
 					{
+						PM_SetLegsAnimTimer(ent, &ent->client->ps.legsAnimTimer, length);
+						PM_SetTorsoAnimTimer(ent, &ent->client->ps.torsoAnimTimer, length);
+					}
+					else if (animations[animID].loopFrames >= 0)
+					{
+						// We'll loop the animations that have loops anyway.
 						PM_SetLegsAnimTimer(ent, &ent->client->ps.legsAnimTimer, -1);
 						PM_SetTorsoAnimTimer(ent, &ent->client->ps.torsoAnimTimer, -1);
 					}
+					
 				}
 
 			}

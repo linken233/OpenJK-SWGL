@@ -799,6 +799,7 @@ vmCvar_t	ui_npc_weapon;
 vmCvar_t	ui_npc_spawnscript;
 vmCvar_t	ui_npc_fleescript;
 vmCvar_t	ui_npc_deathscript;
+vmCvar_t	ui_npc_model;
 vmCvar_t	ui_npc_menu;
 vmCvar_t	ui_mission_topic;
 vmCvar_t	ui_mission;
@@ -920,6 +921,7 @@ static cvarTable_t cvarTable[] =
 	{ &ui_npc_spawnscript,		"ui_npc_spawnscript",	"spawnscripts/no_follow", NULL, CVAR_ARCHIVE},
 	{ &ui_npc_fleescript,		"ui_npc_fleescript",	"fleescripts/surrender", NULL, CVAR_ARCHIVE},
 	{ &ui_npc_deathscript,		"ui_npc_deathscript",	"deathscripts/losehead", NULL, CVAR_ARCHIVE},
+	{ &ui_npc_model,			"ui_npc_model",			"stormtrooper", NULL, CVAR_ARCHIVE},
 	{ &ui_saber_edit,			"ui_saber_edit",		"0", NULL},
 	{ &ui_char_model_angle, "ui_char_model_angle", "180", NULL, 0},
 	{ &ui_npc_menu, "ui_npc_menu", "0", NULL, 0},
@@ -5241,6 +5243,7 @@ static void UI_UpdateCharacterCvars ( void )
 static void UI_UpdateNPCCvars()
 {
 	Cvar_Set("g_NPCtype", Cvar_VariableString("ui_npc_type"));
+	Cvar_Set("g_NPCmodel", Cvar_VariableString("ui_char_model"));
 	Cvar_Set("g_NPChead", Cvar_VariableString("ui_char_skin_head"));
 	Cvar_Set("g_NPCtorso", Cvar_VariableString("ui_char_skin_torso"));
 	Cvar_Set("g_NPClegs", Cvar_VariableString("ui_char_skin_legs"));

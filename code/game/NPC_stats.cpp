@@ -41,6 +41,7 @@ extern vec3_t playerMins;
 extern vec3_t playerMaxs;
 extern stringID_table_t WPTable[];
 extern stringID_table_t DynWPTable[];
+extern stringID_table_t FPTable[];
 
 extern qboolean IsPlayingOperationKnightfall(void);
 
@@ -82,7 +83,7 @@ stringID_table_t footstepTypeTable[] =
 	{ NULL,-1 }
 };
 
-stringID_table_t FPTable[] =
+/*stringID_table_t FPTable[] =
 {
 	ENUM2STRING(FP_HEAL),
 	ENUM2STRING(FP_LEVITATION),
@@ -107,6 +108,14 @@ stringID_table_t FPTable[] =
 	ENUM2STRING(FP_DESTRUCTION),
 	ENUM2STRING(FP_FEAR),
 	ENUM2STRING(FP_LIGHTNING_STRIKE),
+	{ "",	-1 }
+};*/
+
+stringID_table_t attrTable[] =
+{
+	ENUM2STRING(ATTR_HELD_BY_HATRED),
+	ENUM2STRING(ATTR_HERO),
+	ENUM2STRING(ATTR_AQUATIC),
 	{ "",	-1 }
 };
 
@@ -1813,83 +1822,81 @@ void CG_NPC_Precache ( gentity_t *spawner )
 			playerTeam = (team_t)GetIDForString( TeamTable, token );
 			continue;
 		}
-
-
 		// snd
-		if ( !Q_stricmp( token, "snd" ) ) {
-			if ( COM_ParseString( &p, &value ) ) {
+		if (!Q_stricmp(token, "snd")) {
+			if (COM_ParseString(&p, &value)) {
 				continue;
 			}
-			if ( !(spawner->svFlags&SVF_NO_BASIC_SOUNDS) )
+			if (!(spawner->svFlags & SVF_NO_BASIC_SOUNDS))
 			{
 				//FIXME: store this in some sound field or parse in the soundTable like the animTable...
-				Q_strncpyz( sound, value, sizeof( sound ) );
-				patch = strstr( sound, "/" );
-				if ( patch )
+				Q_strncpyz(sound, value, sizeof(sound));
+				patch = strstr(sound, "/");
+				if (patch)
 				{
 					*patch = 0;
 				}
-				ci.customBasicSoundDir = G_NewString( sound );
+				ci.customBasicSoundDir = G_NewString(sound);
 			}
 			continue;
 		}
 
 		// sndcombat
-		if ( !Q_stricmp( token, "sndcombat" ) ) {
-			if ( COM_ParseString( &p, &value ) ) {
+		if (!Q_stricmp(token, "sndcombat")) {
+			if (COM_ParseString(&p, &value)) {
 				continue;
 			}
-			if ( !(spawner->svFlags&SVF_NO_COMBAT_SOUNDS) )
+			if (!(spawner->svFlags & SVF_NO_COMBAT_SOUNDS))
 			{
 				//FIXME: store this in some sound field or parse in the soundTable like the animTable...
-				Q_strncpyz( sound, value, sizeof( sound ) );
-				patch = strstr( sound, "/" );
-				if ( patch )
+				Q_strncpyz(sound, value, sizeof(sound));
+				patch = strstr(sound, "/");
+				if (patch)
 				{
 					*patch = 0;
 				}
-				ci.customCombatSoundDir = G_NewString( sound );
+				ci.customCombatSoundDir = G_NewString(sound);
 			}
 			continue;
 		}
 
 		// sndextra
-		if ( !Q_stricmp( token, "sndextra" ) ) {
-			if ( COM_ParseString( &p, &value ) ) {
+		if (!Q_stricmp(token, "sndextra")) {
+			if (COM_ParseString(&p, &value)) {
 				continue;
 			}
-			if ( !(spawner->svFlags&SVF_NO_EXTRA_SOUNDS) )
+			if (!(spawner->svFlags & SVF_NO_EXTRA_SOUNDS))
 			{
 				//FIXME: store this in some sound field or parse in the soundTable like the animTable...
-				Q_strncpyz( sound, value, sizeof( sound ) );
-				patch = strstr( sound, "/" );
-				if ( patch )
+				Q_strncpyz(sound, value, sizeof(sound));
+				patch = strstr(sound, "/");
+				if (patch)
 				{
 					*patch = 0;
 				}
-				ci.customExtraSoundDir = G_NewString( sound );
+				ci.customExtraSoundDir = G_NewString(sound);
 			}
 			continue;
 		}
 
 		// sndjedi
-		if ( !Q_stricmp( token, "sndjedi" ) ) {
-			if ( COM_ParseString( &p, &value ) ) {
+		if (!Q_stricmp(token, "sndjedi")) {
+			if (COM_ParseString(&p, &value)) {
 				continue;
 			}
-			if ( !(spawner->svFlags&SVF_NO_EXTRA_SOUNDS) )
+			if (!(spawner->svFlags & SVF_NO_EXTRA_SOUNDS))
 			{
 				//FIXME: store this in some sound field or parse in the soundTable like the animTable...
-				Q_strncpyz( sound, value, sizeof( sound ) );
-				patch = strstr( sound, "/" );
-				if ( patch )
+				Q_strncpyz(sound, value, sizeof(sound));
+				patch = strstr(sound, "/");
+				if (patch)
 				{
 					*patch = 0;
 				}
-				ci.customJediSoundDir = G_NewString( sound );
+				ci.customJediSoundDir = G_NewString(sound);
 			}
 			continue;
-		}
+		}		
 
 		//cache weapons
 		if ( !Q_stricmp( token, "weapon" ) )
@@ -2104,6 +2111,7 @@ qboolean NPC_ParseParms( const char *NPCName, gentity_t *NPC )
 
 		NPC->client->ps.dualSabers = qfalse;
 		NPC->client->ps.saberStylesKnown = 0;
+		NPC->attrFlags = 0;
 	}
 
 	//Set defaults
@@ -2635,6 +2643,10 @@ qboolean NPC_ParseParms( const char *NPCName, gentity_t *NPC )
 				{
 					continue;
 				}
+				// playermodels are guaranteed in all npc files, so we can do the NPC_model check here
+				if (NPC->NPC_model)
+					value = NPC->NPC_model;
+
 				Q_strncpyz( playerModel, value, sizeof(playerModel));
 				if (NPC == player)
 				{
@@ -3655,91 +3667,127 @@ qboolean NPC_ParseParms( const char *NPCName, gentity_t *NPC )
 				}
 			}
 
-			// snd
-			if ( !Q_stricmp( token, "snd" ) )
+			if (!NPC->soundSet)
 			{
-				if ( COM_ParseString( &p, &value ) )
+				// snd
+				if (!Q_stricmp(token, "snd"))
 				{
+					if (COM_ParseString(&p, &value))
+					{
+						continue;
+					}
+					if (!(NPC->svFlags & SVF_NO_BASIC_SOUNDS))
+					{
+						//FIXME: store this in some sound field or parse in the soundTable like the animTable...
+						Q_strncpyz(sound, value, sizeof(sound));
+						patch = strstr(sound, "/");
+						if (patch)
+						{
+							*patch = 0;
+						}
+						ci->customBasicSoundDir = G_NewString(sound);
+					}
+					if (NPC == player)
+					{
+						gi.cvar_set("snd", G_NewString(sound));
+					}
 					continue;
 				}
-				if ( !(NPC->svFlags&SVF_NO_BASIC_SOUNDS) )
+
+				// sndcombat
+				if (!Q_stricmp(token, "sndcombat"))
 				{
-					//FIXME: store this in some sound field or parse in the soundTable like the animTable...
-					Q_strncpyz( sound, value, sizeof( sound ) );
-					patch = strstr( sound, "/" );
-					if ( patch )
+					if (COM_ParseString(&p, &value))
 					{
-						*patch = 0;
+						continue;
 					}
-					ci->customBasicSoundDir = G_NewString( sound );
+					if (!(NPC->svFlags & SVF_NO_COMBAT_SOUNDS))
+					{
+						//FIXME: store this in some sound field or parse in the soundTable like the animTable...
+						Q_strncpyz(sound, value, sizeof(sound));
+						patch = strstr(sound, "/");
+						if (patch)
+						{
+							*patch = 0;
+						}
+						ci->customCombatSoundDir = G_NewString(sound);
+					}
+					continue;
 				}
-				if (NPC == player)
+
+				// sndextra
+				if (!Q_stricmp(token, "sndextra"))
 				{
-					gi.cvar_set("snd", G_NewString(sound));
+					if (COM_ParseString(&p, &value))
+					{
+						continue;
+					}
+					if (!(NPC->svFlags & SVF_NO_EXTRA_SOUNDS))
+					{
+						//FIXME: store this in some sound field or parse in the soundTable like the animTable...
+						Q_strncpyz(sound, value, sizeof(sound));
+						patch = strstr(sound, "/");
+						if (patch)
+						{
+							*patch = 0;
+						}
+						ci->customExtraSoundDir = G_NewString(sound);
+					}
+					continue;
 				}
-				continue;
+
+				// sndjedi
+				if (!Q_stricmp(token, "sndjedi"))
+				{
+					if (COM_ParseString(&p, &value))
+					{
+						continue;
+					}
+					if (!(NPC->svFlags & SVF_NO_EXTRA_SOUNDS))
+					{
+						//FIXME: store this in some sound field or parse in the soundTable like the animTable...
+						Q_strncpyz(sound, value, sizeof(sound));
+						patch = strstr(sound, "/");
+						if (patch)
+						{
+							*patch = 0;
+						}
+						ci->customJediSoundDir = G_NewString(sound);
+					}
+					continue;
+				}
+			}
+			else
+			{
+				ci->customBasicSoundDir = G_NewString(NPC->soundSet);
+				ci->customCombatSoundDir = G_NewString(NPC->soundSet);
+				ci->customExtraSoundDir = G_NewString(NPC->soundSet);
+				ci->customJediSoundDir = G_NewString(NPC->soundSet);
 			}
 
-			// sndcombat
-			if ( !Q_stricmp( token, "sndcombat" ) )
+			// NPC attributes
+			if (!Q_stricmp(token, "attribute"))
 			{
-				if ( COM_ParseString( &p, &value ) )
+				if (COM_ParseString(&p, &value))
 				{
 					continue;
 				}
-				if ( !(NPC->svFlags&SVF_NO_COMBAT_SOUNDS) )
-				{
-					//FIXME: store this in some sound field or parse in the soundTable like the animTable...
-					Q_strncpyz( sound, value, sizeof( sound ) );
-					patch = strstr( sound, "/" );
-					if ( patch )
-					{
-						*patch = 0;
-					}
-					ci->customCombatSoundDir = G_NewString( sound );
-				}
-				continue;
-			}
+				int attr = GetIDForString(attrTable, value);
+				if(attr != -1)
+					NPC->attrFlags |= attr;
 
-			// sndextra
-			if ( !Q_stricmp( token, "sndextra" ) )
-			{
-				if ( COM_ParseString( &p, &value ) )
+				// People held by hatred cannot be dismembered until they die.
+				if (NPC->attrFlags & ATTR_HELD_BY_HATRED)
 				{
-					continue;
+					NPC->flags |= FL_UNDYING;
+					NPC->client->dismembered = qfalse;
 				}
-				if ( !(NPC->svFlags&SVF_NO_EXTRA_SOUNDS) )
+				else
 				{
-					//FIXME: store this in some sound field or parse in the soundTable like the animTable...
-					Q_strncpyz( sound, value, sizeof( sound ) );
-					patch = strstr( sound, "/" );
-					if ( patch )
-					{
-						*patch = 0;
-					}
-					ci->customExtraSoundDir = G_NewString( sound );
+					NPC->flags &= ~FL_UNDYING;
+					NPC->client->dismembered = qtrue;
 				}
-				continue;
-			}
-
-			// sndjedi
-			if ( !Q_stricmp( token, "sndjedi" ) )
-			{
-				if ( COM_ParseString( &p, &value ) )
-				{
-					continue;
-				}
-				if ( !(NPC->svFlags&SVF_NO_EXTRA_SOUNDS) )
-				{
-					//FIXME: store this in some sound field or parse in the soundTable like the animTable...
-					Q_strncpyz( sound, value, sizeof( sound ) );
-					patch = strstr( sound, "/" );
-					if ( patch )
-					{
-						*patch = 0;
-					}
-					ci->customJediSoundDir = G_NewString( sound );
-				}
+				
 				continue;
 			}
 
@@ -3871,10 +3919,10 @@ qboolean NPC_ParseParms( const char *NPCName, gentity_t *NPC )
 				}
 				//Other unique behaviors/numbers that are currently hardcoded?
 			}
-
+			
 			//force powers
 			int fp = GetIDForString( FPTable, token );
-			if ( fp >= FP_FIRST && fp < NUM_FORCE_POWERS )
+			if ( fp >= FP_FIRST && fp < NUM_FORCE_POWERS)
 			{
 				if ( COM_ParseInt( &p, &n ) )
 				{
@@ -3899,6 +3947,7 @@ qboolean NPC_ParseParms( const char *NPCName, gentity_t *NPC )
 				{//clear
 					NPC->client->ps.forcePowersKnown &= ~( 1 << fp );
 				}
+				
 				NPC->client->ps.forcePowerLevel[fp] = n;
 				continue;
 			}
@@ -4485,6 +4534,29 @@ qboolean NPC_ParseParms( const char *NPCName, gentity_t *NPC )
 	}
 
 	ci->infoValid = qfalse;
+
+	// New force power assignments (just in case)
+	if (NPC->NPC_FPLevel)
+	{
+		for (int i = FP_FIRST; i < NUM_FORCE_POWERS; i++)
+		{
+			if (NPC->NPC_FPLevel[i] > 0)
+			{
+				// We'll start by letting the character know the power at first
+				NPC->client->ps.forcePowersKnown |= (1 << i);
+
+				// Subtracting by 1 since we increased it in earlier code. We only want force powers with actual values being affected.
+				// Default powers given to the NPC that the player didn't change shouldn't be touched. So 1 = 0 in this instance.
+				NPC->client->ps.forcePowerLevel[i] = NPC->NPC_FPLevel[i] - 1;
+
+				// NPCs with a power level of 0 shouldn't know force powers.
+				if(NPC->client->ps.forcePowerLevel[i] == 0)
+					NPC->client->ps.forcePowersKnown &= ~(1 << i);
+			}
+
+			
+		}
+	}
 
 /*
 Ghoul2 Insert Start

@@ -683,6 +683,13 @@ void PlayerStateToEntityState( playerState_t *ps, entityState_t *s )
 	s->weapon = ps->weapon;
 	s->groundEntityNum = ps->groundEntityNum;
 
+	s->forceUpperAnim = ps->forceUpperAnim;
+	s->forceLowerAnim = ps->forceLowerAnim;
+	s->forceUpperAnimTimer = ps->forceUpperAnimTimer;
+	s->forceLowerAnimTimer = ps->forceLowerAnimTimer;
+	s->forceUpperAnimSpeed = ps->forceUpperAnimSpeed;
+	s->forceLowerAnimSpeed = ps->forceLowerAnimSpeed;
+
 	s->powerups = 0;
 	for ( i = 0 ; i < MAX_POWERUPS ; i++ ) {
 		if ( ps->powerups[ i ] ) {

@@ -116,6 +116,7 @@ typedef enum //# setType_e
 	SET_PLAYERMODEL,//## %s="Kyle" # Name of an NPC config in NPC2.cfg to use for this ent
 	SET_VEHICLE,//## %s="speeder" # Name of an vehicle config in vehicles.cfg to make this ent drive
 	SET_SECURITY_KEY,// %s="keyname" # name of a security key to give to the player - don't place one in map, just give the name here and it handles the rest (use "null" to remove their current key)
+	SET_SABER_STYLE,//## %s="fast" # Set the saber style
 
 	SET_SCROLLTEXT,	//## %s="" # key of text string to print
 	SET_LCARSTEXT,	//## %s="" # key of text string to print in LCARS frame
@@ -257,6 +258,7 @@ typedef enum //# setType_e
 	SET_CLEAN_DAMAGING_ENTS,//## %t="BOOL_TYPES" # Removes entities that could muck up cinematics, explosives, turrets, seekers.
 	SET_HUD,//## %t="BOOL_TYPES" # Turns on/off HUD
 	SET_FORCE_CHOKING,//## %t="BOOL_TYPES" # Sets ent into force choking state, unable to act
+	SET_PRECISE_LIGHTNING,//## %t="BOOL_TYPES" # When true, NPC with Level 3 Lightning will use the Level 2 effect.
 	//JKA
 	SET_NO_PVS_CULL,//## %t="BOOL_TYPES" # This entity will *always* be drawn - use only for special case cinematic NPCs that have anims that cover multiple rooms!!!
 	SET_CLOAK,		//## %t="BOOL_TYPES" # Set a Saboteur to cloak (true) or un-cloak (false).
@@ -350,6 +352,16 @@ typedef enum //# setType_e
 
 	//in-bhc tables
 	SET_LEAN,//## %t="LEAN_TYPES" # Lean left, right or stop leaning
+
+	SET_ANIM_LOWER_FORCED,
+	SET_ANIM_UPPER_FORCED,
+	SET_ANIM_BOTH_FORCED,
+	SET_ANIM_HOLDTIME_LOWER_FORCED,
+	SET_ANIM_HOLDTIME_UPPER_FORCED,
+	SET_ANIM_HOLDTIME_BOTH_FORCED,
+	SET_ANIM_SPEED_LOWER_FORCED,
+	SET_ANIM_SPEED_UPPER_FORCED,
+	SET_ANIM_SPEED_BOTH_FORCED,
 
 	//# #eol
 	SET_

@@ -604,6 +604,13 @@ Ghoul2 Insert Start
 
 { NETF(isPortalEnt), 1 },
 
+{ NETF(forceUpperAnim), 32},
+{ NETF(forceLowerAnim), 32 },
+{ NETF(forceUpperAnimTimer), 32 },
+{ NETF(forceLowerAnimTimer), 32 },
+{ NETF(forceUpperAnimSpeed), 32 },
+{ NETF(forceLowerAnimSpeed), 32 },
+
 };
 #endif
 
@@ -1067,6 +1074,13 @@ static const netField_t	playerStateFields[] =
 { PSF(tertiaryMode), 32 },
 { PSF(firing_attack), 8 },
 { PSF(prev_firing_attack), 8 },
+
+/*{PSF(forceUpperAnim), 32},
+{ PSF(forceLowerAnim), 32 },
+{ PSF(forceUpperAnimTimer), 32 },
+{ PSF(forceLowerAnimTimer), 32 },
+{ PSF(forceUpperAnimSpeed), 32 },
+{ PSF(forceLowerAnimSpeed), 32 },*/
 };
 
 /*

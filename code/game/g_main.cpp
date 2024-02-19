@@ -248,7 +248,8 @@ cvar_t *g_NPCfleescript;
 cvar_t *g_NPCdeathscript;
 cvar_t *g_NPChead;
 cvar_t *g_NPCtorso;
-cvar_t *g_NPClegs;
+cvar_t* g_NPClegs;
+cvar_t* g_NPCmodel;
 
 cvar_t* g_darkkorriban;
 
@@ -770,9 +771,9 @@ void G_InitCvars( void ) {
 	g_NPCtype = gi.cvar("g_NPCtype", "stormtrooper", CVAR_ARCHIVE | CVAR_NORESTART);
 	g_NPCteam = gi.cvar("g_NPCteam", "enemy", CVAR_ARCHIVE | CVAR_NORESTART);
 	g_NPChealth = gi.cvar("g_NPChealth", "100", CVAR_ARCHIVE | CVAR_NORESTART);
-	g_NPCspawnscript = gi.cvar("g_NPCspawnscript", "spawnscripts/no_follow", CVAR_ARCHIVE | CVAR_NORESTART);
-	g_NPCfleescript = gi.cvar("g_NPCfleescript", "fleescripts/surrender", CVAR_ARCHIVE | CVAR_NORESTART);
-	g_NPCdeathscript = gi.cvar("g_NPCdeathscript", "deathscripts/losehead", CVAR_ARCHIVE | CVAR_NORESTART);
+	g_NPCspawnscript = gi.cvar("g_NPCspawnscript", "spawnscripts/none", CVAR_ARCHIVE | CVAR_NORESTART);
+	g_NPCfleescript = gi.cvar("g_NPCfleescript", "fleescripts/none", CVAR_ARCHIVE | CVAR_NORESTART);
+	g_NPCdeathscript = gi.cvar("g_NPCdeathscript", "deathscripts/none", CVAR_ARCHIVE | CVAR_NORESTART);
 	g_NPChead = gi.cvar("g_NPChead", "model_default", CVAR_ARCHIVE | CVAR_NORESTART);
 	g_NPCtorso = gi.cvar("g_NPCtorso", "model_default", CVAR_ARCHIVE | CVAR_NORESTART);
 	g_NPClegs = gi.cvar("g_NPClegs", "model_default", CVAR_ARCHIVE | CVAR_NORESTART);
@@ -782,6 +783,7 @@ void G_InitCvars( void ) {
 	g_NPCsabercolor = gi.cvar("g_NPCsabercolor", "red", CVAR_ARCHIVE | CVAR_NORESTART);
 	g_NPCsabertwocolor = gi.cvar("g_NPCsabertwocolor", "red", CVAR_ARCHIVE | CVAR_NORESTART);
 	g_NPCLightningColor = gi.cvar("g_NPCLightningColor", "blue", CVAR_ARCHIVE | CVAR_NORESTART);
+	g_NPCmodel = gi.cvar("g_NPCmodel", "stormtrooper", CVAR_ARCHIVE | CVAR_NORESTART);
 
 	g_allowSaberTwirling = gi.cvar("g_allowSaberTwirling", "1", CVAR_ARCHIVE | CVAR_NORESTART);
 

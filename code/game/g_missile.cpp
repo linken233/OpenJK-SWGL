@@ -744,7 +744,7 @@ void G_MissileImpact( gentity_t *ent, trace_t *trace, int hitLoc=HL_NONE )
 
 		G_BounceMissile( ent, trace );
 
-		if (player && other->client->NPC_class == CLASS_DROIDEKA)
+		if (player && other->client && other->client->NPC_class == CLASS_DROIDEKA)
 		{
 			// Still take damage from blasters bouncing off the shield
 			if (player->client->ps.stats[STAT_ARMOR] > 0)

@@ -5673,6 +5673,11 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker, const
 		return;
 	}
 
+	// Aquatic people can't drown! IT'S. NOT. CANON!!!! (And makes no sense)
+	if (mod == MOD_WATER && targ->attrFlags & ATTR_AQUATIC)
+		return;
+
+
 	// if we are the player and we are locked to an emplaced gun, we have to reroute damage to the gun....sigh.
 	if ( targ->s.eFlags & EF_LOCKED_TO_WEAPON
 		&& targ->s.number == 0
@@ -5799,6 +5804,23 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker, const
 				traya->health += 5;
 			}
 		}
+	}
+
+	// Heroes deal more damage and receive reduced damage (but not heavy weapons)
+	if (attacker && attacker->attrFlags & ATTR_HERO)
+	{
+		if (mod != MOD_CONC && mod != MOD_CONC_ALT && mod != MOD_DETPACK && mod != MOD_EMPLACED 
+		&& mod != MOD_EXPLOSIVE && mod != MOD_EXPLOSIVE_SPLASH && mod != MOD_ROCKET 
+		&& mod != MOD_ROCKET_ALT && mod != MOD_THERMAL && mod != MOD_THERMAL_ALT 
+		&& mod != MOD_REPEATER_ALT && mod != MOD_FLECHETTE_ALT)
+		{
+			damage *= 5.0f;
+		}
+	}
+
+	if (targ && targ->attrFlags & ATTR_HERO)
+	{
+		damage *= 0.5f;
 	}
 
 	// no more weakling allies!
@@ -6892,12 +6914,51 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker, const
 							G_ActivateBehavior( targ, BSET_DEATH );
 						}
 						targ->health = 1;
-						if (!Q_stricmp(SION, targ->NPC_type)
-							|| !Q_stricmp(SION_TFU, targ->NPC_type))
+					//	if (!Q_stricmp(SION, targ->NPC_type)
+							//|| !Q_stricmp(SION_TFU, targ->NPC_type))
+						if(targ->attrFlags & ATTR_HELD_BY_HATRED)
 						{
 							NPC_SetAnim(targ, SETANIM_BOTH, BOTH_FORCE_RAGE, SETANIM_FLAG_OVERRIDE | SETANIM_FLAG_RESTART | SETANIM_FLAG_HOLD);
-							targ->health = ((targ->max_health/(Q_irand(1,4)))+1);
-							if (!Q_irand(0, 2))
+							targ->client->ps.powerups[PW_INVINCIBLE] = level.time + targ->client->ps.torsoAnimTimer;
+							if (targ == player)
+							{
+								switch (g_spskill->integer)
+								{
+								case 0:
+									targ->max_health -= (targ->max_health * 0.2f);
+									break;
+								case 1:
+									targ->max_health -= (targ->max_health * 0.3f);
+									break;
+								case 2:
+									targ->max_health -= (targ->max_health * 0.5f);
+									break;
+								default:
+									targ->max_health -= (targ->max_health * 0.6f);
+									break;
+								}
+							}
+							else
+							{
+								switch (g_spskill->integer)
+								{
+								case 0:
+									targ->max_health -= (targ->max_health * 0.6f);
+									break;
+								case 1:
+									targ->max_health -= (targ->max_health * 0.5f);
+									break;
+								case 2:
+									targ->max_health -= (targ->max_health * 0.3f);
+									break;
+								default:
+									targ->max_health -= (targ->max_health * 0.6f);
+									break;
+								}
+							}
+
+							targ->health = targ->max_health;
+							if (targ->max_health < 100)
 							{
 								targ->flags &= ~FL_UNDYING;
 								targ->client->dismembered = qtrue;
