@@ -1862,7 +1862,7 @@ gentity_t *NPC_Spawn_Do(gentity_t *ent, qboolean fullSpawnNow)
 	}
 
 	newent->classname = "NPC";
-	if (!Q_stricmp(ent->NPC_type, DOOKU))
+	if (!Q_stricmp(ent->NPC_type, DOOKU) || !Q_stricmp(ent->NPC_type, DOOKU_RITUAL) || !Q_stricmp(ent->NPC_type, DOOKU_JEDI))
 	{
 		std::time_t tp = std::time(NULL);
 
