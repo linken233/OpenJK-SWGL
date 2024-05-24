@@ -74,6 +74,7 @@ extern qboolean PM_SaberInDeflect( int move );
 extern qboolean PM_SpinningSaberAnim( int anim );
 extern qboolean PM_FlippingAnim( int anim );
 extern qboolean PM_RollingAnim( int anim );
+extern qboolean PM_WalkingAnim(int anim);
 extern qboolean PM_InKnockDown( playerState_t *ps );
 extern qboolean PM_InRoll( playerState_t *ps );
 extern qboolean PM_InGetUp( playerState_t *ps );
@@ -103,10 +104,14 @@ extern qboolean G_ClearLineOfSight(const vec3_t point1, const vec3_t point2, int
 
 extern void WP_SetSaber(gentity_t* ent, int saberNum, const char* saberName);
 
+extern void Inquisitor_Spin(gentity_t* ent, qboolean increment = qtrue);
+extern void Inquisitor_Stop(gentity_t* ent, qboolean running = qfalse);
+
 extern cvar_t	*g_saberRealisticCombat;
 extern cvar_t	*d_slowmodeath;
 extern cvar_t	*g_saberNewControlScheme;
 extern int parryDebounce[];
+extern cvar_t	*g_disableNPCForce;
 
 //Locals
 static void Jedi_Aggression( gentity_t *self, int change );
@@ -158,6 +163,7 @@ void NPC_Kestis_ClearTimers(gentity_t* ent)
 void NPC_Inquisitor_ClearTimers(gentity_t* ent)
 {
 	TIMER_Set(NPC, "saber_switch", -level.time);
+	TIMER_Set(NPC, "saber_spin", -level.time);
 }
 
 void NPC_Rosh_Dark_Precache( void )
@@ -1262,8 +1268,8 @@ static void Jedi_AdjustSaberAnimLevel( gentity_t *self, int newLevel )
 		return;
 	}
 	else
-	{//go ahead and set it
-		self->client->ps.saberAnimLevel = newLevel;
+	{//go ahead and set it		
+		self->client->ps.saberAnimLevel = newLevel;		
 	}
 
 	if ( d_JediAI->integer )
@@ -7946,14 +7952,7 @@ void NPC_BSJedi_Default( void )
 		TIMER_Set(NPC, "saber_switch", Q_irand(5000, 20000));
 	}
 
-	if (!Q_stricmp(GRAND_INQ, NPC->NPC_type)
-		|| !Q_stricmp(SECOND_SIS, NPC->NPC_type)
-		|| !Q_stricmp(THIRD_SIS, NPC->NPC_type)
-		|| !Q_stricmp(FIFTH_BRO, NPC->NPC_type)
-		|| !Q_stricmp(SEVENTH_SIS, NPC->NPC_type)
-		|| !Q_stricmp(EIGHTH_BRO, NPC->NPC_type)
-		|| !Q_stricmp(NINTH_SIS, NPC->NPC_type)
-		|| !Q_stricmp(INQ_STK, NPC->NPC_type))
+	if (NPC->attrFlags & ATTR_INQUISITOR)
 		{
 			saber_colors_t currentColor = NPC->client->ps.saber[0].blade[0].color;
 
@@ -8032,11 +8031,20 @@ void NPC_BSJedi_Default( void )
 		}
 		else
 		{
+			Inquisitor_Stop(NPC);
 			Jedi_Patrol();
 		}
 	}
 	else//if ( NPC->enemy )
 	{//have an enemy
+		if (Q_irand(0,5))
+		{
+			Inquisitor_Spin(NPC);
+		}
+		else
+		{
+			Inquisitor_Stop(NPC);
+		}
 		if ( Jedi_WaitingAmbush( NPC ) )
 		{//we were still waiting to drop down - must have had enemy set on me outside my AI
 			Jedi_Ambush( NPC );

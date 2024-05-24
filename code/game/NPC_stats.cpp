@@ -116,6 +116,10 @@ stringID_table_t attrTable[] =
 	ENUM2STRING(ATTR_HELD_BY_HATRED),
 	ENUM2STRING(ATTR_HERO),
 	ENUM2STRING(ATTR_AQUATIC),
+	ENUM2STRING(ATTR_PRECISE_LIGHTNING),
+	ENUM2STRING(ATTR_INQUISITOR),
+	ENUM2STRING(ATTR_CASUAL_WALK),
+	ENUM2STRING(ATTR_NO_TWIRL),
 	{ "",	-1 }
 };
 
@@ -2573,6 +2577,12 @@ qboolean NPC_ParseParms( const char *NPCName, gentity_t *NPC )
 					ri->customRGBA[3]=n;
 				}
 				continue;
+			}
+			if (NPC->NPC_color_red && NPC->NPC_color_green && NPC->NPC_color_blue)
+			{
+				ri->customRGBA[0] = NPC->NPC_color_red;
+				ri->customRGBA[1] = NPC->NPC_color_green;
+				ri->customRGBA[2] = NPC->NPC_color_blue;
 			}
 
 			// headmodel

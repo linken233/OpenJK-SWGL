@@ -5579,24 +5579,12 @@ void PM_TorsoAnimLightsaber()
 
 qboolean NoSaberTwirlCharacter(gentity_t* ent)
 {
-	if (ent == player)
-	{
-		if (!Q_stricmp("anakin_dark", g_char_model->string)
-			|| !Q_stricmp("oldben", g_char_model->string)
-			|| !Q_stricmp("am_vader", g_char_model->string)
-			|| !Q_stricmp("anakin_apprentice", g_char_model->string))
-			return qtrue;
-	}
-	else
-	{
-		if (!Q_stricmp(EP3_VADER, ent->NPC_type)
-			|| !Q_stricmp(BEN_KENOBI, ent->NPC_type)
-			|| !Q_stricmp(VADER, ent->NPC_type)
-			|| !Q_stricmp(ANAKIN_INFINITIES, ent->NPC_type))
-			return qtrue;
-	}
-
+	// This should override everything, even if the character is allowed to twirl their saber
 	if (!g_allowSaberTwirling->integer)
+		return qtrue;
+
+	// Main deciding point now
+	if (ent->attrFlags & ATTR_NO_TWIRL)
 		return qtrue;
 
 	return qfalse;

@@ -34,6 +34,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 ////////////////////////////////////////////////////////////////////////////////////////
 #include "b_local.h"
 #include "../Ravl/CVec.h"
+#include "../cgame/cg_local.h"
 
 
 ////////////////////////////////////////////////////////////////////////////////////////
@@ -127,6 +128,8 @@ extern cvar_t*		g_bobaDebug;
 	#include <stdio.h>
 	#define STDIO_H_INC
 #endif
+#include "../../codemp/cgame/cg_local.h"
+#include <cgame/cg_local.h>
 void	Boba_Printf(const char * format, ...)
 {
 	if (g_bobaDebug->integer==0)
@@ -1114,16 +1117,24 @@ bool	Boba_Respawn()
 ////////////////////////////////////////////////////////////////////////////////////////
 void	Boba_Update()
 {
+	const char* info = CG_ConfigString(CS_SERVERINFO);
+	const char* s = Info_ValueForKey(info, "mapname");
+
 	// Never Forget The Player... Never.
 	//-----------------------------------
-	if (player && player->inuse && !NPC->enemy && NPC->client->NPC_class != CLASS_MANDALORIAN)
+	if (player && player->inuse && !NPC->enemy && NPC->client->NPC_class != CLASS_MANDALORIAN && NPC->client->NPC_class != CLASS_JANGO)
 	{
-		if (!Q_stricmp("bobafett1", NPC->targetname) || !Q_stricmp("bobafett", NPC->targetname))
+		if (!Q_stricmp(s, "t3_bounty"))
 		{
 			G_SetEnemy(NPC, player);
 		}
 		NPC->svFlags				|= SVF_LOCKEDENEMY;	// Don't forget about the enemy once you've found him
 	}
+
+	// Don't need this anymore (except like...all the time if Boba is present, idk)
+	info = NULL;
+	s = NULL;
+	
 
 	// Hey, This Is Boba, He Tests The Trace All The Time
 	//----------------------------------------------------

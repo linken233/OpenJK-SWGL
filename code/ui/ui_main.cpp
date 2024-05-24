@@ -5258,6 +5258,9 @@ static void UI_UpdateNPCCvars()
 	Cvar_Set("g_NPCfleescript", Cvar_VariableString("ui_npc_fleescript"));
 	Cvar_Set("g_NPCdeathscript", Cvar_VariableString("ui_npc_deathscript"));
 	Cvar_Set("g_NPChealth", Cvar_VariableString("ui_npc_health"));
+	Cvar_Set("g_npc_color_red", Cvar_VariableString("ui_char_color_red"));
+	Cvar_Set("g_npc_color_green", Cvar_VariableString("ui_char_color_green"));
+	Cvar_Set("g_npc_color_blue", Cvar_VariableString("ui_char_color_blue"));
 }
 
 static void UI_GetCharacterCvars ( void )

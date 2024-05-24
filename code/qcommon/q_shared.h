@@ -799,6 +799,7 @@ typedef enum
 	SABER_STAR,
 	SABER_TRIDENT,
 	SABER_SITH_SWORD,
+	SABER_INQUISITOR,
 	NUM_SABERS
 } saberType_t;
 
@@ -1043,6 +1044,8 @@ typedef struct
 	//these values are global to the saber, like all of the ones above
 	int			saberFlags;					//from SFL_ list above
 	int			saberFlags2;				//from SFL2_ list above
+	int			inquisitor_spin;
+	float		inquisitor_speed;
 
 	//done in cgame (client-side code)
 	qhandle_t	spinSound;					//none - if set, plays this sound as it spins when thrown

@@ -40,6 +40,9 @@ const char *CG_DisplayBoxedText(int iBoxX, int iBoxY, int iBoxWidth, int iBoxHei
 								const char *psText, int iFontHandle, float fScale,
 								const vec4_t v4Color);
 
+extern void Inquisitor_Stop(gentity_t* ent, qboolean running = qfalse);
+extern void Inquisitor_Spin(gentity_t* ent, qboolean increment = qtrue);
+
 /*
 ================
 CG_GetWeaponIcon
@@ -2882,6 +2885,7 @@ void CG_Weapon_f( void )
 							cg_entities[0].gent->client->ps.saber[1].Deactivate();
 						}
 						cg_entities[0].gent->client->ps.saber[0].Deactivate();
+						Inquisitor_Stop(cg_entities[0].gent, qtrue);
 						if ( cg_entities[0].gent->client->ps.saberInFlight )
 						{//play it on the saber
 							cgi_S_UpdateEntityPosition( cg_entities[0].gent->client->ps.saberEntityNum, g_entities[cg_entities[0].gent->client->ps.saberEntityNum].currentOrigin );
@@ -2895,6 +2899,7 @@ void CG_Weapon_f( void )
 					else
 					{//turn them both on
 						cg_entities[0].gent->client->ps.SaberActivate();
+						Inquisitor_Spin(cg_entities[0].gent, qfalse);
 					}
 				}
 			}

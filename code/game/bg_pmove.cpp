@@ -153,6 +153,9 @@ extern cvar_t	*g_saberAutoBlocking;
 extern cvar_t	*g_char_model;
 extern int defaultDamageCopy[WP_NUM_WEAPONS];
 
+extern void Inquisitor_Spin(gentity_t* ent, qboolean increment = qtrue);
+extern void Inquisitor_Stop(gentity_t* ent, qboolean running = qfalse);
+
 qboolean CasualWalker(pmove_t* pm);
 
 static void PM_SetWaterLevelAtPoint( vec3_t org, int *waterlevel, int *watertype );
@@ -7955,6 +7958,11 @@ static void PM_Footsteps( void )
 	if( pm->gent == NULL || pm->gent->client == NULL )
 		return;
 
+	if (pm->gent == player && pm->ps->saber[0].inquisitor_spin == -1)
+	{
+		Inquisitor_Spin(pm->gent, qfalse);
+	}
+
 	if ( (pm->ps->eFlags&EF_HELD_BY_WAMPA) )
 	{
 		PM_SetAnim( pm, SETANIM_BOTH, BOTH_HANG_IDLE, SETANIM_FLAG_NORMAL );
@@ -8568,6 +8576,11 @@ static void PM_Footsteps( void )
 					else if ( pm->ps->saberAnimLevel == SS_STAFF )
 					{
 						PM_SetAnim(pm,SETANIM_LEGS,BOTH_RUN_STAFF,setAnimFlags);
+						if (pm->gent == player && pm->ps->saber[0].inquisitor_spin)
+						{
+							Inquisitor_Stop(pm->gent, qtrue);
+							
+						}
 					}
 					else
 					{
@@ -8665,11 +8678,25 @@ static void PM_Footsteps( void )
 				{
 					if ( pm->ps->saberAnimLevel == SS_DUAL )
 					{
-						PM_SetAnim(pm,SETANIM_LEGS,BOTH_WALK_DUAL,setAnimFlags);
+						if (CasualWalker(pm))
+						{
+							PM_SetAnim(pm, SETANIM_LEGS, BOTH_WALK1, setAnimFlags);
+						}
+						else
+						{
+							PM_SetAnim(pm, SETANIM_LEGS, BOTH_WALK_DUAL, setAnimFlags);
+						}
 					}
 					else if ( pm->ps->saberAnimLevel == SS_STAFF )
 					{
-						PM_SetAnim(pm,SETANIM_LEGS,BOTH_WALK_STAFF,setAnimFlags);
+						if (CasualWalker(pm))
+						{
+							PM_SetAnim(pm, SETANIM_LEGS, BOTH_WALK1, setAnimFlags);
+						}
+						else
+						{
+							PM_SetAnim(pm, SETANIM_LEGS, BOTH_WALK_STAFF, setAnimFlags);
+						}
 					}
 					else
 					{
@@ -8853,6 +8880,11 @@ qboolean CasualWalker(pmove_t *pm)
 {
 	gentity_t *ent = pm->gent;
 
+	// If they have the flag, this should always return true.
+	if (ent->attrFlags & ATTR_CASUAL_WALK)
+		return qtrue;
+
+	// Only write conditions below this line IF there's a character that should only walk casually under specific circumstances (Which could be anything).
 	if (ent == player)
 	{
 		// Lord Vader only does a casual walk with specific styles
@@ -8860,10 +8892,6 @@ qboolean CasualWalker(pmove_t *pm)
 			&& (pm->ps->saberAnimLevel == SS_DESANN
 				|| pm->ps->saberAnimLevel == SS_TAVION
 				|| pm->ps->saberAnimLevel == SS_FAST)))
-			return qtrue;
-
-		// Kyle should always do it
-		else if(!Q_stricmp("kyle", g_char_model->string) || !Q_stricmp("kylejk2", g_char_model->string))
 			return qtrue;
 	}
 	else
@@ -8874,14 +8902,6 @@ qboolean CasualWalker(pmove_t *pm)
 				|| pm->ps->saberAnimLevel == SS_TAVION
 				|| pm->ps->saberAnimLevel == SS_FAST)))
 			return qtrue;
-
-		// Kyle should always do it
-		else if (!Q_stricmp("kyle", ent->NPC_type)
-			|| !Q_stricmp("kyle_boss", ent->NPC_type)
-			|| !Q_stricmp("KyleJK2", ent->NPC_type)
-			|| !Q_stricmp("KyleJK2noforce", ent->NPC_type))
-			return qtrue;
-
 	}
 	
 	return qfalse;

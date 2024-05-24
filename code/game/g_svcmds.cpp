@@ -48,6 +48,8 @@ extern void G_SetWeapon( gentity_t *self, int wp );
 extern stringID_table_t WPTable[];
 
 extern void SP_NPC_spawner(gentity_t *self);
+extern void Inquisitor_Spin(gentity_t* ent, qboolean increment = qtrue);
+extern void Inquisitor_Stop(gentity_t* ent, qboolean running = qfalse);
 
 extern cvar_t	*g_char_model;
 extern cvar_t	*g_char_skin_head;
@@ -443,6 +445,20 @@ void Svcmd_SaberAttackCycle_f( void )
 		}
 
 		G_Sound(self, G_SoundIndex("sound/vehicles/common/linkweaps.wav"));
+	}
+
+	if (self->client->ps.saber->type == SABER_INQUISITOR )
+	{
+		float spinSpeed = 0.0f;
+		if (self->client->ps.saber->inquisitor_spin < 3)
+		{
+			Inquisitor_Spin(self);
+		}
+		else
+		{
+			Inquisitor_Stop(self);
+		}
+		return;
 	}
 
 	if ( self->client->ps.dualSabers )
@@ -936,6 +952,10 @@ static void Svcmd_Spawn_f(void)
 	NPCspawner->behaviorSet[BSET_FLEE] = g_NPCfleescript->string;
 
 	NPCspawner->behaviorSet[BSET_DEATH] = g_NPCdeathscript->string;
+
+	NPCspawner->NPC_color_red = g_npc_color_red->integer;
+	NPCspawner->NPC_color_green = g_npc_color_green->integer;
+	NPCspawner->NPC_color_blue = g_npc_color_blue->integer;
 
 	NPCspawner->count = 1;
 

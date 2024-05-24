@@ -59,7 +59,6 @@ extern cvar_t	*g_dismemberment;
 extern cvar_t	*g_debugSaberLock;
 extern cvar_t	*g_saberLockRandomNess;
 extern cvar_t	*g_allowSaberLocking;
-extern cvar_t	*g_setSaberLocking;
 extern cvar_t	*d_slowmodeath;
 extern cvar_t	*g_cheats;
 extern cvar_t	*g_debugMelee;
@@ -67,7 +66,6 @@ extern cvar_t	*g_saberRestrictForce;
 extern cvar_t	*g_saberPickuppableDroppedSabers;
 extern cvar_t	*debug_subdivision;
 extern cvar_t	*g_newforcepowers;
-extern cvar_t	*g_knightfall;
 
 extern void WP_SetSaber(gentity_t* ent, int saberNum, const char* saberName);
 
@@ -168,6 +166,8 @@ qboolean WP_ForcePowerAvailable( gentity_t *self, forcePowers_t forcePower, int 
 void WP_ForcePowerDrain( gentity_t *self, forcePowers_t forcePower, int overrideAmt );
 void WP_DeactivateSaber( gentity_t *self, qboolean clearLength = qfalse );
 qboolean FP_ForceDrainGrippableEnt( gentity_t *victim );
+void Inquisitor_Spin(gentity_t* ent, qboolean increment = qtrue);
+void Inquisitor_Stop(gentity_t* ent, qboolean running = qfalse);
 
 qboolean IsPlayingOperationKnightfall(void);
 qboolean IsKnightfallBoss(gentity_t *ent);
@@ -5323,7 +5323,7 @@ void WP_SaberDamageTrace( gentity_t *ent, int saberNum, int bladeNum )
 				}
 				else if ( entAttacking
 					&& hitOwnerAttacking
-					&& (!Q_irand( 0, g_saberLockRandomNess->integer ) && (g_allowSaberLocking->integer && g_setSaberLocking->integer))
+					&& (!Q_irand( 0, g_saberLockRandomNess->integer ) && (g_allowSaberLocking->integer) && (ent->NPC && ent->NPC->defaultBehavior != BS_CINEMATIC))
 					&& ( g_debugSaberLock->integer || forceLock
 						|| entPowerLevel == hitOwnerPowerLevel
 						|| (entPowerLevel > FORCE_LEVEL_2 && hitOwnerPowerLevel > FORCE_LEVEL_2 )
@@ -5337,7 +5337,7 @@ void WP_SaberDamageTrace( gentity_t *ent, int saberNum, int bladeNum )
 				}
 				else if ( hitOwnerAttacking
 					&& entDefending
-					&& (!Q_irand( 0, g_saberLockRandomNess->integer*3 ) && (g_allowSaberLocking->integer && g_setSaberLocking->integer))
+					&& (!Q_irand( 0, g_saberLockRandomNess->integer*3 ) && (g_allowSaberLocking->integer) && (ent->NPC && ent->NPC->defaultBehavior != BS_CINEMATIC))
 					&& (g_debugSaberLock->integer || forceLock ||
 						((ent->client->ps.saberMove != LS_READY || (hitOwnerPowerLevel-ent->client->ps.forcePowerLevel[FP_SABER_DEFENSE]) < Q_irand( -6, 0 ) )
 							&& ((hitOwnerPowerLevel < FORCE_LEVEL_3 && ent->client->ps.forcePowerLevel[FP_SABER_DEFENSE] > FORCE_LEVEL_2 )||
@@ -5350,7 +5350,7 @@ void WP_SaberDamageTrace( gentity_t *ent, int saberNum, int bladeNum )
 				else if ( entAttacking && hitOwnerDefending )
 				{//I'm attacking hit, they're parrying
 					qboolean activeDefense = (qboolean)(hitOwner->s.number||g_saberAutoBlocking->integer||hitOwner->client->ps.saberBlockingTime > level.time);
-					if ( (!Q_irand( 0, g_saberLockRandomNess->integer*3 ) && (g_allowSaberLocking->integer && g_setSaberLocking->integer))
+					if ( (!Q_irand( 0, g_saberLockRandomNess->integer*3 ) && (g_allowSaberLocking->integer) && (ent->NPC && ent->NPC->defaultBehavior != BS_CINEMATIC))
 						&& activeDefense
 						&& (g_debugSaberLock->integer || forceLock ||
 							((hitOwner->client->ps.saberMove != LS_READY || (entPowerLevel-hitOwner->client->ps.forcePowerLevel[FP_SABER_DEFENSE]) < Q_irand( -6, 0 ) )
@@ -6706,14 +6706,7 @@ qboolean WP_SaberLaunch( gentity_t *self, gentity_t *saber, qboolean thrown, qbo
 		if ( thrown )
 		{
 			// Only inquisitors should do this, not the player or anyone else
-			if (self != player && (!Q_stricmp(GRAND_INQ, self->NPC_type)
-				|| !Q_stricmp(SECOND_SIS, self->NPC_type)
-				|| !Q_stricmp(THIRD_SIS, self->NPC_type)
-				|| !Q_stricmp(FIFTH_BRO, self->NPC_type)
-				|| !Q_stricmp(SEVENTH_SIS, self->NPC_type)
-				|| !Q_stricmp(EIGHTH_BRO, self->NPC_type)
-				|| !Q_stricmp(NINTH_SIS, self->NPC_type)
-				|| !Q_stricmp(INQ_STK, self->NPC_type)))
+			if (self != player && self->attrFlags & ATTR_INQUISITOR)
 			{
 				saber_colors_t currentColor = NPC->client->ps.saber[0].blade[0].color;
 
@@ -6847,7 +6840,7 @@ qboolean WP_SaberLaunch( gentity_t *self, gentity_t *saber, qboolean thrown, qbo
 			}
 			for ( int i = 1; i < self->client->ps.saber[0].numBlades; i++ )
 			{//turn off all others
-				if ( self->client->ps.saber[0].blade[i].active )
+				if ( self->client->ps.saber[0].blade[i].active)
 				{
 					self->client->ps.SaberBladeActivate( 0, i, qfalse );
 				}
@@ -7034,6 +7027,7 @@ void WP_SaberCatch( gentity_t *self, gentity_t *saber, qboolean switchToSaber )
 				else
 				{//turn all blades on
 					self->client->ps.saber[0].Activate();
+					Inquisitor_Spin(self, qfalse);
 				}
 			}
 		}
@@ -10927,7 +10921,7 @@ void ForceGrip( gentity_t *self )
 		case CLASS_JEDI:
 			if ( traceEnt->NPC && traceEnt->NPC->rank > RANK_CIVILIAN && self->client->ps.forcePowerLevel[FP_GRIP] < FORCE_LEVEL_2)
 			{
-				if (IsPlayingOperationKnightfall() && !IsKnightfallBoss(traceEnt))
+				if (IsPlayingOperationKnightfall() && IsKnightfallBoss(traceEnt))
 				{
 					WP_ForcePowerStop(traceEnt, FP_ABSORB);
 					WP_ForcePowerStop(traceEnt, FP_PROTECT);
@@ -11099,9 +11093,6 @@ qboolean IsPlayingOperationKnightfall()
 	const char* info = CG_ConfigString(CS_SERVERINFO);
 	const char* s = Info_ValueForKey(info, "mapname");
 
-	if (g_knightfall->integer)
-		return qtrue;
-
 	if (!Q_stricmp(s, "ep3_ok_anakin_r1")
 		|| !Q_stricmp(s, "ep3_ok_anakin_r2")
 		|| !Q_stricmp(s, "ep3_ok_anakin_r3")
@@ -11123,6 +11114,10 @@ qboolean IsPlayingOperationKnightfall()
 
 qboolean IsKnightfallBoss(gentity_t *ent)
 {
+	// Players don't get these bonuses,
+	if (ent == player)
+		return qfalse;
+
 	if (IsPlayingOperationKnightfall())
 	{
 		// These NPCs are knightfall bosses
@@ -15255,7 +15250,14 @@ qboolean PlayerAffectedByStasis(void)
 	gentity_t *ent = &g_entities[0];
 	if (ent && ent->client && ent->client->ps.stasisTime > (cg.time ? cg.time : level.time))
 	{
+		ent->inStasis = qtrue;
 		return qtrue;
+	}
+
+	if (ent&& ent->client&& ent->client->ps.stasisTime < level.time && ent->inStasis)
+	{
+		ent->inStasis = qfalse;
+		ent->s.loopSound = 0;
 	}
 
 	return qfalse;
@@ -16852,4 +16854,146 @@ bool WP_DoingMoronicForcedAnimationForForcePowers(gentity_t *ent)
 		ent->client->ps.legsAnim == BOTH_FORCE_PROTECT )
 		return true;
 	return false;
+}
+
+void Inquisitor_Spin(gentity_t *ent, qboolean increment)
+{
+	// Make sure this is an inquisitor saber we're using!
+	if (ent->client->ps.saber->type != SABER_INQUISITOR)
+		return;
+
+	// If the saber isn't on, no spinning either!
+	if (!ent->client->ps.SaberActive())
+		return;
+
+	// Is this NPC an inquisitor? If not, no spinning.
+	if (!(ent->attrFlags & ATTR_INQUISITOR) && ent != player)
+	{
+		return;
+	}
+
+	// No saber? No spinning!
+	if (!ent->weaponModel[0] || ent->client->ps.forcePowersActive & (1 << FP_SABERTHROW))
+		return;
+
+	// Player has their own logic
+	if (ent == player)
+	{
+		if (ent->client->ps.saber->inquisitor_spin <= 3)
+		{
+			if (!increment)
+			{// Just in case
+				if (ent->weaponModel[0] < 0 || ent->client->ps.forcePowersActive & (1 << FP_SABERTHROW) || ent->client->ps.torsoAnim == BOTH_SABERPULL)
+					return;
+				
+				ent->client->ps.saber->inquisitor_spin = ent->client->ps.saber->inquisitor_speed / 20.0f;
+				gi.G2API_SetBoneAnim(&ent->ghoul2[ent->weaponModel[0]], "model_root", 0, 360, BONE_ANIM_OVERRIDE_LOOP, ent->client->ps.saber->inquisitor_speed, level.time, -1, -1);
+
+			}
+			else
+			{// Just in case
+				if (ent->weaponModel[0] < 0 || ent->client->ps.forcePowersActive & (1 << FP_SABERTHROW) || ent->client->ps.torsoAnim == BOTH_SABERPULL)
+					return;
+
+				ent->client->ps.saber->inquisitor_speed = 20.f * (++ent->client->ps.saber->inquisitor_spin);
+				gi.G2API_SetBoneAnim(&ent->ghoul2[ent->weaponModel[0]], "model_root", 0, 360, BONE_ANIM_OVERRIDE_LOOP, ent->client->ps.saber->inquisitor_speed, level.time, -1, -1);
+			}
+		}
+		else
+		{
+			Inquisitor_Stop(ent);
+		}
+	}
+	else if (ent->NPC)
+	{
+		if (ent->client->ps.SaberActive() && TIMER_Done(ent, "saber_spin"))
+		{// Just in case
+			if (ent->weaponModel[0] < 0 || ent->client->ps.forcePowersActive & (1 << FP_SABERTHROW) || ent->client->ps.torsoAnim == BOTH_SABERPULL)
+				return;
+
+			// Setting the style to staff, just in case
+			ent->client->ps.saberAnimLevel = SS_STAFF;
+			gi.G2API_SetBoneAnim(&ent->ghoul2[ent->weaponModel[0]], "model_root", 0, 360, BONE_ANIM_OVERRIDE_LOOP, (20.f * Q_irand(1, 3)), level.time, -1, -1);
+			ent->client->ps.saber->inquisitor_spin = 1;
+
+			// Timer just to keep the saber from spinning very quickly.
+			TIMER_Set(ent, "saber_spin", Q_irand(5000, 20000));
+		}
+	}
+
+}
+
+void Inquisitor_Stop(gentity_t* ent, qboolean running)
+{
+	// Make sure this is an inquisitor saber we're using!
+	if (ent->client->ps.saber->type != SABER_INQUISITOR)
+		return;
+
+	// No saber? No spinning!
+	if (!ent->weaponModel[0] || ent->client->ps.forcePowersActive & (1 << FP_SABERTHROW))
+		return;
+
+	// Is this NPC an inquisitor? If not, no spinning.
+	if (!(ent->attrFlags & ATTR_INQUISITOR) && ent != player)
+	{
+		return;
+	}
+
+	// Player has their own logic, but they'll have a few things
+	if (ent == player)
+	{
+		if (ent->client->ps.saber->inquisitor_spin <= 0)
+		{// Just in case
+			if (ent->weaponModel[0] < 0 || ent->client->ps.forcePowersActive & (1 << FP_SABERTHROW) || ent->client->ps.torsoAnim == BOTH_SABERPULL)
+				return;
+			gi.G2API_SetBoneAnim(&ent->ghoul2[ent->weaponModel[0]], "model_root", 0, 0, BONE_ANIM_OVERRIDE, 1.0f, level.time, -1, -1);
+		}
+		else if (ent->client->ps.saber->inquisitor_spin > 0)
+		{// Just in case
+			if (ent->weaponModel[0] < 0 || ent->client->ps.forcePowersActive & (1 << FP_SABERTHROW) || ent->client->ps.torsoAnim == BOTH_SABERPULL)
+				return;
+			gi.G2API_SetBoneAnim(&ent->ghoul2[ent->weaponModel[0]], "model_root", 0, 360, BONE_ANIM_OVERRIDE, ent->client->ps.saber->inquisitor_speed, level.time, -1, -1);
+		}
+
+		if (!running)
+		{
+			ent->client->ps.saber->inquisitor_spin = 0;
+			ent->client->ps.saber->inquisitor_speed = 0;
+		}
+		else
+		{
+			ent->client->ps.saber->inquisitor_spin = -1;
+		}
+	}
+	else if (ent->NPC)
+	{
+		// Setting the style to staff, just in case
+		ent->client->ps.saberAnimLevel = SS_STAFF;
+
+		if (ent->client->ps.forcePowersActive & (1 << FP_SABERTHROW) || ent->client->ps.torsoAnim == BOTH_SABERPULL)
+		{
+			return;
+		}
+		
+		// If the Inquisitor has no enemy or their saber is off, stop the spinning anyway and reset the timer, otherwise, do the check.
+		if (!ent->enemy || !ent->client->ps.SaberActive())
+		{// Just in case
+			if (ent->weaponModel[0] < 0 || ent->client->ps.forcePowersActive & (1 << FP_SABERTHROW) || ent->client->ps.torsoAnim == BOTH_SABERPULL)
+				return;
+			gi.G2API_SetBoneAnim(&ent->ghoul2[ent->weaponModel[0]], "model_root", 0, 0, BONE_ANIM_OVERRIDE, 1.0f, level.time, -1, -1);
+			ent->client->ps.saber->inquisitor_spin = 0;
+			TIMER_Set(NPC, "saber_spin", -level.time);
+		}
+		else if (TIMER_Done(ent, "saber_spin"))
+		{// Just in case
+			if (ent->weaponModel[0] < 0 || ent->client->ps.forcePowersActive & (1 << FP_SABERTHROW) || ent->client->ps.torsoAnim == BOTH_SABERPULL)
+				return;
+			gi.G2API_SetBoneAnim(&ent->ghoul2[ent->weaponModel[0]], "model_root", 0, 0, BONE_ANIM_OVERRIDE, 1.0f, level.time, -1, -1);
+			ent->client->ps.saber->inquisitor_spin = 0;
+
+			// We'll set the Spin timer again so the Inquisitor can't just start their saber back up immediately. This one is a lot shorter though.
+			TIMER_Set(NPC, "saber_spin", Q_irand(2000,10000));
+		}
+
+	}
 }

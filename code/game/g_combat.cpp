@@ -4606,9 +4606,9 @@ extern void RunEmplacedWeapon( gentity_t *ent, usercmd_t **ucmd );
 				self->NPC->timeOfDeath = level.time + 10000;
 			}
 		}
-		else if ( meansOfDeath == MOD_SNIPER 
+		else if ( (meansOfDeath == MOD_SNIPER 
 			|| meansOfDeath == MOD_DESTRUCTION
-			|| meansOfDeath == MOD_HIGH_POWERED_SHOT)
+			|| meansOfDeath == MOD_HIGH_POWERED_SHOT) && (self->client->NPC_class != CLASS_VEHICLE || (self->client->NPC_class == CLASS_VEHICLE && self->m_pVehicle->m_pVehicleInfo->type == VH_ANIMAL)))
 		{
 			gentity_t	*tent;
 			vec3_t		spot;
@@ -5677,7 +5677,6 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker, const
 	if (mod == MOD_WATER && targ->attrFlags & ATTR_AQUATIC)
 		return;
 
-
 	// if we are the player and we are locked to an emplaced gun, we have to reroute damage to the gun....sigh.
 	if ( targ->s.eFlags & EF_LOCKED_TO_WEAPON
 		&& targ->s.number == 0
@@ -5887,6 +5886,14 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker, const
 			if(!Q_irand(0,2))
 				G_Damage(attacker, targ, targ, 0, 0, Q_irand(1,3), DAMAGE_NO_KILL, MOD_GAS, HL_CHEST);
 		}
+	}
+
+	// Spinning inquisitor sabers have a damage debuff for balancing.
+	if (attacker && attacker->client &&
+		attacker->client->ps.saber->type == SABER_INQUISITOR
+		&& attacker->client->ps.saber->inquisitor_spin && mod == MOD_SABER)
+	{
+		damage *= 0.5f;
 	}
 
 	if ( client && PM_InOnGroundAnim( &client->ps ))
@@ -7164,19 +7171,17 @@ int KnightfallDamage(int damage, gentity_t* attacker, gentity_t* targ, int mod)
 		if ((attacker && attacker->client)
 			&& (targ && targ->client))
 		{
-		
-		// Trying to stop friendly fire between the player and the clones
-		if (attacker->client->playerTeam == targ->client->playerTeam)
-			damage = 0;
-		// 2x damage from clones to Jedi (so they're actually helpful)
-		else if ((mod == MOD_BLASTER || mod == MOD_BLASTER_ALT) && targ->client->NPC_class == CLASS_JEDI && !IsKnightfallBoss(targ))
-			damage *= 2.0f;
-		}
-		else if (IsKnightfallBoss(attacker) && targ != player)
-		{
-			damage *= 3.0f;
-		}
 
+			// Trying to stop friendly fire between the player and the clones
+			if (attacker->client->playerTeam == targ->client->playerTeam)
+				damage = 0;
+			// 2x damage from clones to Jedi (so they're actually helpful)
+			else if ((mod == MOD_BLASTER || mod == MOD_BLASTER_ALT) && targ->client->NPC_class == CLASS_JEDI && !IsKnightfallBoss(targ))
+				damage *= 2.0f;
+			else if (IsKnightfallBoss(attacker) && targ != player)
+				damage *= 3.0f;
+
+		}
 	}
 
 	return damage;

@@ -326,11 +326,16 @@ void NPC_SetMiscDefaultData(gentity_t *ent)
 
 		ent->behaviorSet[BSET_FLEE] = NULL;
 		ent->behaviorSet[BSET_DEATH] = NULL;
+		const char* info = CG_ConfigString(CS_SERVERINFO);
+		const char* s = Info_ValueForKey(info, "mapname");
 
-		if (!Q_stricmp("bobafett", ent->targetname) || !Q_stricmp("bobafett1", ent->targetname))
+		if (!Q_stricmp(s, "t3_bounty"))
 		{
 			NPC->flags |= FL_UNDYING;		// Can't Kill Boba, he's got plot armor!
 		}
+
+		info = NULL;
+		s = NULL;
 
 	}
 	else if (ent->client->NPC_class == CLASS_MANDALORIAN || ent->client->NPC_class == CLASS_JANGO)
@@ -1955,6 +1960,15 @@ gentity_t *NPC_Spawn_Do(gentity_t *ent, qboolean fullSpawnNow)
 		for(int i = FP_FIRST; i < NUM_FORCE_POWERS; i++)
 			newent->NPC_FPLevel[i] = ent->NPC_FPLevel[i];
 	}
+
+	if (ent->NPC_color_red)
+		newent->NPC_color_red = ent->NPC_color_red;
+
+	if (ent->NPC_color_green)
+		newent->NPC_color_green = ent->NPC_color_green;
+
+	if (ent->NPC_color_red)
+		newent->NPC_color_blue = ent->NPC_color_red;
 
 	VectorCopy(ent->s.origin, newent->s.origin);
 	VectorCopy(ent->s.origin, newent->client->ps.origin);
@@ -5518,7 +5532,7 @@ void SP_NPC_Droid_Saber(gentity_t *self)
 /*
 NPC_Spawn_f
 */
-
+bool isInteger(const std::string& s);
 static void NPC_Spawn_f(void)
 {
 	gentity_t		*NPCspawner = G_Spawn();
@@ -5649,6 +5663,19 @@ static void NPC_Spawn_f(void)
 		else if ((!Q_stricmp("playermodel", gi.argv(spawnCommand)) || !Q_stricmp("model", gi.argv(spawnCommand))) && gi.argv(spawnCommand + 1))
 		{
 			NPCspawner->NPC_model = gi.argv(++spawnCommand);
+		}
+		else if (!Q_stricmp("rgb", gi.argv(spawnCommand)) && gi.argv(spawnCommand + 1) && gi.argv(spawnCommand + 2) && gi.argv(spawnCommand + 3))
+		{
+			char* red = gi.argv(++spawnCommand);
+			char* green = gi.argv(++spawnCommand);
+			char* blue = gi.argv(++spawnCommand);
+
+			if (isInteger(red) && isInteger(green) && isInteger(blue))
+			{
+				NPCspawner->NPC_color_red = std::stoi(red);
+				NPCspawner->NPC_color_green = std::stoi(green);
+				NPCspawner->NPC_color_blue = std::stoi(blue);
+			}
 		}
 		else
 		{
@@ -6552,4 +6579,28 @@ void Svcmd_NPC_f(void)
 			}
 		}
 	}
+}
+
+bool isInteger(const std::string& s) {
+	if (s.empty()) // Empty string is not an integer
+		return false;
+
+	size_t i = 0;
+
+	// Skip leading whitespace
+	while (i < s.length() && std::isspace(s[i]))
+		++i;
+
+	// Check for an optional sign
+	if (i < s.length() && (s[i] == '+' || s[i] == '-'))
+		++i;
+
+	// Check if the rest of the string contains only digits
+	while (i < s.length()) {
+		if (!std::isdigit(s[i]))
+			return false;
+		++i;
+	}
+
+	return true;
 }

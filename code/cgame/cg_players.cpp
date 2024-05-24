@@ -31,6 +31,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "../game/wp_saber.h"
 #include "../game/g_vehicles.h"
 #include "../Rufl/hstring.h"
+#include "NPC_SWGL.h"
 
 #define	LOOK_SWING_SCALE	0.5f
 #define	CG_SWINGSPEED		0.3f
@@ -6704,6 +6705,7 @@ Ghoul2 Insert End
 		case SABER_LANCE:
 			break;
 		case SABER_STAFF:
+		case SABER_INQUISITOR:
 			if ( bladeNum == 1 )
 			{
 				VectorScale( axis_[0], -1, axis_[0] );
@@ -9189,17 +9191,24 @@ SkipTrueView:
 				//FIXME: if the target is absorbing or blocking lightning w/saber, draw a beam from my hand to his (hand?chest?saber?)
 				vec3_t tAng, fxDir;
 				VectorCopy( cent->lerpAngles, tAng );
-				if ( cent->gent->client->ps.forcePowerLevel[FP_LIGHTNING] > FORCE_LEVEL_2 )
+				if ( cent->gent->client->ps.forcePowerLevel[FP_LIGHTNING] > FORCE_LEVEL_2)
 				{//arc
 					vec3_t	fxAxis[3];
 					AnglesToAxis( tAng, fxAxis );
-					theFxScheduler.PlayEffect( CG_GetWideForceLightning(cent), cent->gent->client->renderInfo.handLPoint, fxAxis );
+					if (cent->gent->attrFlags & ATTR_PRECISE_LIGHTNING)
+						theFxScheduler.PlayEffect(CG_GetForceLightning(cent), cent->gent->client->renderInfo.handLPoint, fxAxis);						
+					else
+						theFxScheduler.PlayEffect(CG_GetWideForceLightning(cent), cent->gent->client->renderInfo.handLPoint, fxAxis);
+
 					if ( cent->gent->client->ps.torsoAnim == BOTH_FORCE_2HANDEDLIGHTNING
 						|| cent->gent->client->ps.torsoAnim == BOTH_FORCE_2HANDEDLIGHTNING_START
 						|| cent->gent->client->ps.torsoAnim == BOTH_FORCE_2HANDEDLIGHTNING_HOLD
 						|| cent->gent->client->ps.torsoAnim == BOTH_FORCE_2HANDEDLIGHTNING_RELEASE )
 					{//jackin' 'em up, Palpatine-style
-						theFxScheduler.PlayEffect(CG_GetWideForceLightning(cent), cent->gent->client->renderInfo.handRPoint, fxAxis );
+						if (cent->gent->attrFlags & ATTR_PRECISE_LIGHTNING)
+							theFxScheduler.PlayEffect(CG_GetForceLightning(cent), cent->gent->client->renderInfo.handRPoint, fxAxis);
+						else
+							theFxScheduler.PlayEffect(CG_GetWideForceLightning(cent), cent->gent->client->renderInfo.handRPoint, fxAxis);
 					}
 				}
 				else

@@ -1259,6 +1259,9 @@ Ghoul2 Insert End
 	char		*NPC_LightningVictim;
 	char		*NPC_model;
 	int			NPC_FPLevel[NUM_FORCE_POWERS];
+	int			NPC_color_red;
+	int			NPC_color_green;
+	int			NPC_color_blue;
 
 //Variables used by movers (most likely exclusively by them)
 	moverState_t moverState;

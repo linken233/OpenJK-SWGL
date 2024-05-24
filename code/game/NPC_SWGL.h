@@ -5,7 +5,10 @@
 #define ATTR_HELD_BY_HATRED 0x00000001 // Too angry to die initially. Loses maximum health and heals to their full upon defeat. If maximum health is lower than 100, make them defeatable.
 #define ATTR_HERO 0x00000002 // Hero character. Can't be mind tricked, disarmed, takes reduced damage from everything, and deals increased damage.
 #define ATTR_AQUATIC 0x00000004 // Can't die from drowning
-#define ATTR_PRECISE_LIGHTNING 0x00000004 // Uses the lightning effects from levels 1 and 2 instead of wide lightning.
+#define ATTR_PRECISE_LIGHTNING 0x00000008 // Uses the lightning effects from levels 1 and 2 instead of wide lightning.
+#define ATTR_INQUISITOR 0x00000010 // Member of the Inquisitorious
+#define ATTR_CASUAL_WALK 0x00000020 // Walks normally (like Kyle Katarn in Jedi Outcast) instead of the other saber animations.
+#define ATTR_NO_TWIRL 0x00000040 // Doesn't saber twirl.
 
 // Old Republic
 #define HAVOC_MAJOR "Havoc_Major"

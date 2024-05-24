@@ -207,7 +207,6 @@ cvar_t	*g_saberRestrictForce;
 cvar_t	*g_saberPickuppableDroppedSabers;
 cvar_t	*g_dismemberProbabilities;
 cvar_t	*g_allowSaberLocking;
-cvar_t	*g_setSaberLocking;
 
 cvar_t	*g_validJKO;
 
@@ -253,10 +252,7 @@ cvar_t* g_NPCmodel;
 
 cvar_t* g_darkkorriban;
 
-cvar_t *g_knightfall;
-
 cvar_t *g_allowSaberTwirling;
-
 
 // kef -- used with DebugTraceForNPC
 cvar_t	*g_npcdebug;
@@ -730,14 +726,11 @@ void G_InitCvars( void ) {
 	g_saberRestrictForce = gi.cvar( "g_saberRestrictForce", "0", CVAR_ARCHIVE );//restricts certain force powers when using a 2-handed saber or 2 sabers
 	g_saberPickuppableDroppedSabers = gi.cvar( "g_saberPickuppableDroppedSabers", "0", CVAR_ARCHIVE );//lets you pick up sabers that are dropped
 
-	g_allowSaberLocking = gi.cvar("g_allowSaberLocking", "1", CVAR_ARCHIVE);//Lets you enable or disable saber locking while ingame.
-	g_setSaberLocking = gi.cvar("g_setSaberLocking", "1", CVAR_INIT);//Lets you enable or disable saber locking while ingame. (Cvar used only in cutscenes so as not to override the player's own preference)
+	g_allowSaberLocking = gi.cvar("g_allowSaberLocking", "1", CVAR_ARCHIVE);// Lets you enable or disable saber locking while ingame.
 
 	g_adoptcharstats = gi.cvar("g_adoptcharstats", "1", CVAR_ARCHIVE);// Lets the player adopt the health and armor of characters they select while ingame (or disable it). Disabled by default in missions.
 
 	g_validJKO = gi.cvar("g_validJKO", "0", CVAR_INIT);
-
-	g_knightfall = gi.cvar("g_knightfall", "0", CVAR_INIT);
 
 	g_forceLightningColor = gi.cvar("g_forceLightningColor", "0", CVAR_ARCHIVE);
 
