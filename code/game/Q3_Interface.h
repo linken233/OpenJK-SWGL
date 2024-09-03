@@ -317,12 +317,12 @@ typedef enum //# setType_e
 	SET_FORCE_ABSORB_LEVEL,//## %t="FORCE_LEVELS" # Change force power level
 	SET_FORCE_DRAIN_LEVEL,//## %t="FORCE_LEVELS" # Change force power level
 	SET_FORCE_SIGHT_LEVEL,//## %t="FORCE_LEVELS" # Change force power level
-	SET_FORCE_STASIS_LEVEL,
-	SET_FORCE_BLAST_LEVEL,
-	SET_FORCE_GRASP_LEVEL,
-	SET_FORCE_DESTRUCTION_LEVEL,
-	SET_FORCE_LIGHTNING_STRIKE_LEVEL,
-	SET_FORCE_FEAR_LEVEL,
+	SET_FORCE_STASIS_LEVEL,//## %t="FORCE_LEVELS" # Change force power level
+	SET_FORCE_BLAST_LEVEL,//## %t="FORCE_LEVELS" # Change force power level
+	SET_FORCE_GRASP_LEVEL,//## %t="FORCE_LEVELS" # Change force power level
+	SET_FORCE_DESTRUCTION_LEVEL,//## %t="FORCE_LEVELS" # Change force power level
+	SET_FORCE_LIGHTNING_STRIKE_LEVEL,//## %t="FORCE_LEVELS" # Change force power level
+	SET_FORCE_FEAR_LEVEL,//## %t="FORCE_LEVELS" # Change force power level
 	SET_SABER1_COLOR1,		//## %t="SABER_COLORS" # Set color of first blade of first saber
 	SET_SABER1_COLOR2,		//## %t="SABER_COLORS" # Set color of second blade of first saber
 	SET_SABER2_COLOR1,		//## %t="SABER_COLORS" # Set color of first blade of first saber
