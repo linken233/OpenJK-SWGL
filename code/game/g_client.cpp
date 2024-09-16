@@ -1060,6 +1060,11 @@ qboolean G_StandardHumanoid( gentity_t *self )
 		{//rockettrooper duplicates many of these
 			return qtrue;
 		}
+		if (!Q_stricmp("models/players/galak_mech/galak_mech", GLAName))
+		{
+			//galak duplicates many of these
+			return qtrue;
+		}
 		if (!Q_stricmp("models/players/droideka/droideka", GLAName))
 		{//rockettrooper duplicates many of these
 			return qtrue;
@@ -1161,6 +1166,10 @@ qboolean G_StandardHumanoid(const char* GLAName)
 			return qtrue;
 		}
 		if (!Q_stricmp("droideka", GLAName))
+		{//only _humanoid skeleton is expected to have these
+			return qtrue;
+		}
+		if (!Q_stricmp("galak_mech", GLAName))
 		{//only _humanoid skeleton is expected to have these
 			return qtrue;
 		}

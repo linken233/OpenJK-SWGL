@@ -1961,6 +1961,8 @@ stringID_table_t animTable [MAX_ANIMATIONS+1] =
 		ENUM2STRING(BOTH_SWGL_CIN_99), 		//# Level specific cinematic
 		ENUM2STRING(BOTH_SWGL_CIN_100), 	//# Level specific cinematic
 
+		ENUM2STRING(BOTH_ALERT1),
+
 	//must be terminated
 	{ NULL,-1 }
 };
