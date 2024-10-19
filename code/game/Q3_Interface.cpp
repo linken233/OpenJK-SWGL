@@ -9784,6 +9784,7 @@ extern void LockDoors(gentity_t *const ent);
 			{
 				gi.cvar_set("g_saber2", (char*)data);
 			}
+			Q3_SetSaberActive(entID, qfalse);
 		}
 		break;
 
