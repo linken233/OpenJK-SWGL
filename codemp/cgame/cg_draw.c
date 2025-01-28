@@ -810,9 +810,26 @@ static void CG_DrawSaberStyle( centity_t *cent, menuDef_t *menuHUD)
 	switch ( cg.predictedPlayerState.fd.saberDrawAnimLevel )
 	{
 	case 1://FORCE_LEVEL_1:
-	case 5://FORCE_LEVEL_5://Tavion
 
 		focusItem = Menu_FindItemByName(menuHUD, "saberstyle_fast");
+
+		if (focusItem)
+		{
+			trap->R_SetColor( colorTable[CT_WHITE] );
+
+			CG_DrawPic(
+				focusItem->window.rect.x,
+				focusItem->window.rect.y,
+				focusItem->window.rect.w,
+				focusItem->window.rect.h,
+				focusItem->window.background
+				);
+		}
+
+		break;
+	case 5://FORCE_LEVEL_5://Tavion
+
+		focusItem = Menu_FindItemByName(menuHUD, "saberstyle_tavion");
 
 		if (focusItem)
 		{
@@ -847,8 +864,23 @@ static void CG_DrawSaberStyle( centity_t *cent, menuDef_t *menuHUD)
 		}
 		break;
 	case 3://FORCE_LEVEL_3:
-	case 4://FORCE_LEVEL_4://Desann
 		focusItem = Menu_FindItemByName(menuHUD, "saberstyle_strong");
+
+		if (focusItem)
+		{
+			trap->R_SetColor( colorTable[CT_WHITE] );
+
+			CG_DrawPic(
+				focusItem->window.rect.x,
+				focusItem->window.rect.y,
+				focusItem->window.rect.w,
+				focusItem->window.rect.h,
+				focusItem->window.background
+				);
+		}
+		break;
+	case 4://FORCE_LEVEL_4://Desann
+		focusItem = Menu_FindItemByName(menuHUD, "saberstyle_desann");
 
 		if (focusItem)
 		{
