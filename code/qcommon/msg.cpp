@@ -604,6 +604,13 @@ Ghoul2 Insert Start
 
 { NETF(isPortalEnt), 1 },
 
+{ NETF(forceUpperAnim), 32},
+{ NETF(forceLowerAnim), 32 },
+{ NETF(forceUpperAnimTimer), 32 },
+{ NETF(forceLowerAnimTimer), 32 },
+{ NETF(forceUpperAnimSpeed), 32 },
+{ NETF(forceLowerAnimSpeed), 32 },
+
 };
 #endif
 
@@ -991,6 +998,42 @@ static const netField_t	playerStateFields[] =
 { PSF(externalEventParm), 8 },
 { PSF(clientNum), 32 },
 { PSF(weapon), 6 },
+{ PSF(dynWpnVals[0]), 6 },
+{ PSF(dynWpnVals[1]), 6 },
+{ PSF(dynWpnVals[2]), 6 },
+{ PSF(dynWpnVals[3]), 6 },
+{ PSF(dynWpnVals[4]), 6 },
+{ PSF(dynWpnVals[5]), 6 },
+{ PSF(dynWpnVals[6]), 6 },
+{ PSF(dynWpnVals[7]), 6 },
+{ PSF(dynWpnVals[8]), 6 },
+{ PSF(dynWpnVals[9]), 6 },
+{ PSF(dynWpnVals[10]), 6 },
+{ PSF(dynWpnVals[11]), 6 },
+{ PSF(dynWpnVals[12]), 6 },
+{ PSF(dynWpnVals[13]), 6 },
+{ PSF(dynWpnVals[14]), 6 },
+{ PSF(dynWpnVals[15]), 6 },
+{ PSF(dynWpnVals[16]), 6 },
+{ PSF(dynWpnVals[17]), 6 },
+{ PSF(dynWpnVals[18]), 6 },
+{ PSF(dynWpnVals[19]), 6 },
+{ PSF(dynWpnVals[20]), 6 },
+{ PSF(dynWpnVals[21]), 6 },
+{ PSF(dynWpnVals[22]), 6 },
+{ PSF(dynWpnVals[23]), 6 },
+{ PSF(dynWpnVals[24]), 6 },
+{ PSF(dynWpnVals[25]), 6 },
+{ PSF(dynWpnVals[26]), 6 },
+{ PSF(dynWpnVals[27]), 6 },
+{ PSF(dynWpnVals[28]), 6 },
+{ PSF(dynWpnVals[29]), 6 },
+{ PSF(dynWpnVals[30]), 6 },
+{ PSF(dynWpnVals[31]), 6 },
+{ PSF(dynWpnVals[32]), 6 },
+{ PSF(dynWpnVals[33]), 6 },
+{ PSF(dynWpnVals[34]), 6 },
+{ PSF(dynWpnVals[35]), 6 },
 { PSF(weaponstate),	  4 },
 { PSF(batteryCharge),	16 },
 { PSF(viewangles[0]), 0 },
@@ -1031,6 +1074,13 @@ static const netField_t	playerStateFields[] =
 { PSF(tertiaryMode), 32 },
 { PSF(firing_attack), 8 },
 { PSF(prev_firing_attack), 8 },
+
+/*{PSF(forceUpperAnim), 32},
+{ PSF(forceLowerAnim), 32 },
+{ PSF(forceUpperAnimTimer), 32 },
+{ PSF(forceLowerAnimTimer), 32 },
+{ PSF(forceUpperAnimSpeed), 32 },
+{ PSF(forceLowerAnimSpeed), 32 },*/
 };
 
 /*

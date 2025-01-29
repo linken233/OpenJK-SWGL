@@ -60,6 +60,34 @@ extern stringID_table_t WPTable[];
 
 gentity_t* traya = NULL;
 
+stringID_table_t FPTable[] =
+{
+	ENUM2STRING(FP_HEAL),
+	ENUM2STRING(FP_LEVITATION),
+	ENUM2STRING(FP_SPEED),
+	ENUM2STRING(FP_PUSH),
+	ENUM2STRING(FP_PULL),
+	ENUM2STRING(FP_TELEPATHY),
+	ENUM2STRING(FP_GRIP),
+	ENUM2STRING(FP_LIGHTNING),
+	ENUM2STRING(FP_SABERTHROW),
+	ENUM2STRING(FP_SABER_DEFENSE),
+	ENUM2STRING(FP_SABER_OFFENSE),
+	//new Jedi Academy powers
+	ENUM2STRING(FP_RAGE),
+	ENUM2STRING(FP_PROTECT),
+	ENUM2STRING(FP_ABSORB),
+	ENUM2STRING(FP_DRAIN),
+	ENUM2STRING(FP_SEE),
+	ENUM2STRING(FP_STASIS),
+	ENUM2STRING(FP_BLAST),
+	ENUM2STRING(FP_GRASP),
+	ENUM2STRING(FP_DESTRUCTION),
+	ENUM2STRING(FP_FEAR),
+	ENUM2STRING(FP_LIGHTNING_STRIKE),
+	{ "",	-1 }
+};
+
 
 /*
 -------------------------
@@ -225,6 +253,7 @@ void G_ClassSetDontFlee(gentity_t *self)
 	case CLASS_JANGO:
 	case CLASS_SABER_DROID:
 	case CLASS_ASSASSIN_DROID:
+	case CLASS_DROIDEKA:
 	case CLASS_PLAYER:
 	case CLASS_VEHICLE:
 		self->NPC->scriptFlags |= SCF_DONT_FLEE;
@@ -297,11 +326,16 @@ void NPC_SetMiscDefaultData(gentity_t *ent)
 
 		ent->behaviorSet[BSET_FLEE] = NULL;
 		ent->behaviorSet[BSET_DEATH] = NULL;
+		const char* info = CG_ConfigString(CS_SERVERINFO);
+		const char* s = Info_ValueForKey(info, "mapname");
 
-		if (!Q_stricmp("bobafett", ent->targetname) || !Q_stricmp("bobafett1", ent->targetname))
+		if (!Q_stricmp(s, "t3_bounty"))
 		{
 			NPC->flags |= FL_UNDYING;		// Can't Kill Boba, he's got plot armor!
 		}
+
+		info = NULL;
+		s = NULL;
 
 	}
 	else if (ent->client->NPC_class == CLASS_MANDALORIAN || ent->client->NPC_class == CLASS_JANGO)
@@ -314,8 +348,8 @@ void NPC_SetMiscDefaultData(gentity_t *ent)
 		ent->behaviorSet[BSET_FLEE] = NULL;
 		ent->behaviorSet[BSET_DEATH] = NULL;
 	}
-	else if (NPC->client->ps.weapon == WP_CLONECARBINE || NPC->client->ps.weapon == WP_CLONERIFLE ||
-		NPC->client->ps.weapon == WP_CLONECOMMANDO || NPC->client->ps.weapon == WP_REBELRIFLE)
+	else if (NPC->client->ps.weapon == WP_CLONECARBINE || NPC->client->ps.weapon == WP_CLONECOMMANDO
+				|| NPC->client->ps.weapon == WP_REBELRIFLE)
 	{
 		ent->NPC->scriptFlags |= (SCF_ALT_FIRE | SCF_CHASE_ENEMIES);
 
@@ -388,11 +422,11 @@ void NPC_SetMiscDefaultData(gentity_t *ent)
 		{
 			NPC_Inquisitor_ClearTimers(ent); // For them switching their sabers
 	}
-	else if (!Q_stricmp(SION, ent->NPC_type) || !Q_stricmp(SION_TFU, ent->NPC_type))
+	/*else if (!Q_stricmp(SION, ent->NPC_type) || !Q_stricmp(SION_TFU, ent->NPC_type))
 	{
 		NPC->flags |= FL_UNDYING; // Sion is the lord of pain, he won't die immediately
 		ent->client->dismembered = qfalse;
-	}
+	}*/
 	else if (ent->client->NPC_class == CLASS_ROCKETTROOPER)
 	{//set some stuff, precache
 		ent->client->ps.forcePowersKnown |= (1 << FP_LEVITATION);
@@ -438,6 +472,18 @@ void NPC_SetMiscDefaultData(gentity_t *ent)
 			ent->NPC->scriptFlags |= SCF_ALT_FIRE;
 		}
 		ent->flags |= (FL_NO_KNOCKBACK);
+	}
+	else if (ent->client->NPC_class == CLASS_DROIDEKA)
+	{
+		ent->client->ps.stats[STAT_ARMOR] = 250;
+		ent->client->ps.powerups[PW_GALAK_SHIELD] = Q3_INFINITE;
+
+		// Droidekas have two guns, so let's use them
+		G_CreateG2AttachedWeaponModel(ent, CG_GetCurrentWeaponModel(ent), ent->handLBolt, 1);
+	
+		ent->flags |= FL_NO_KNOCKBACK;
+		//ent->NPC->scriptFlags = SCF_CHASE_ENEMIES | SCF_LOOK_FOR_ENEMIES | SCF_DONT_FLEE;
+		
 	}
 
 	if (ent->spawnflags & 4096)
@@ -592,7 +638,7 @@ void NPC_SetMiscDefaultData(gentity_t *ent)
 			}
 			if (ent->client->ps.weapon != WP_SABER)
 			{
-				G_CreateG2AttachedWeaponModel(ent, weaponData[ent->client->ps.weapon].weaponMdl, ent->handRBolt, 0);
+				G_CreateG2AttachedWeaponModel(ent, CG_GetCurrentWeaponModel(ent), ent->handRBolt, 0);
 			}
 		}
 		else
@@ -601,42 +647,46 @@ void NPC_SetMiscDefaultData(gentity_t *ent)
 				&& ent->client->ps.weapon != WP_SABER //sabers done above
 				&& (!(ent->NPC->aiFlags&NPCAI_MATCHPLAYERWEAPON) || !ent->weaponModel[0]))//they do this themselves
 			{
-				G_CreateG2AttachedWeaponModel(ent, weaponData[ent->client->ps.weapon].weaponMdl, ent->handRBolt, 0);
+				G_CreateG2AttachedWeaponModel(ent, CG_GetCurrentWeaponModel(ent), ent->handRBolt, 0);
 			}
-			switch (ent->client->ps.weapon)
+
+			if (CG_IsWeaponPistol(ent) || ent->client->ps.weapon == WP_BRYAR_PISTOL)
 			{
-			case WP_BRYAR_PISTOL://FIXME: new weapon: imp blaster pistol
-			case WP_BLASTER_PISTOL:
-			case WP_JANGO:
-			case WP_CLONEPISTOL:
 				if ((ent->client->NPC_class == CLASS_REBORN || ent->client->NPC_class == CLASS_JANGO)
 					&& ent->NPC->rank >= RANK_LT_COMM
 					&& (!(ent->NPC->aiFlags&NPCAI_MATCHPLAYERWEAPON) || !ent->weaponModel[0]))//they do this themselves
 				{//dual blaster pistols, so add the left-hand one, too
-					G_CreateG2AttachedWeaponModel(ent, weaponData[ent->client->ps.weapon].weaponMdl, ent->handLBolt, 1);
+					G_CreateG2AttachedWeaponModel(ent, CG_GetCurrentWeaponModel(ent), ent->handLBolt, 1);
 				}
 				break;
-			case WP_DISRUPTOR:
-			case WP_BOWCASTER:
-			case WP_REPEATER:
-			case WP_DEMP2:
-			case WP_FLECHETTE:
-			case WP_ROCKET_LAUNCHER:
-			case WP_CONCUSSION:
-			default:
-				break;
-			case WP_THERMAL:
-			case WP_BLASTER:
-				//FIXME: health in NPCs.cfg, and not all blaster users are stormtroopers
-				//ent->health = 25;
-				//FIXME: not necc. a ST
-				ST_ClearTimers(ent);
-				if (ent->NPC->rank >= RANK_LT || ent->client->ps.weapon == WP_THERMAL)
-				{//officers, grenade-throwers use alt-fire
-					//ent->health = 50;
-					//ent->NPC->scriptFlags |= SCF_ALT_FIRE;
+			}
+			else
+			{
+				switch (ent->client->ps.weapon)
+				{
+				case WP_DISRUPTOR:
+				case WP_BOWCASTER:
+				case WP_REPEATER:
+				case WP_DEMP2:
+				case WP_FLECHETTE:
+				case WP_ROCKET_LAUNCHER:
+				case WP_CONCUSSION:
+				default:
+					break;
+				case WP_THERMAL:
+				case WP_BLASTER:
+				case WP_SBD:
+					//FIXME: health in NPCs.cfg, and not all blaster users are stormtroopers
+					//ent->health = 25;
+					//FIXME: not necc. a ST
+					ST_ClearTimers(ent);
+					if (ent->NPC->rank >= RANK_LT || ent->client->ps.weapon == WP_THERMAL)
+					{//officers, grenade-throwers use alt-fire
+						//ent->health = 50;
+						//ent->NPC->scriptFlags |= SCF_ALT_FIRE;
+					}
+					break;
 				}
-				break;
 			}
 		}
 		if (!Q_stricmp("galak_mech", ent->NPC_type))
@@ -702,7 +752,7 @@ void NPC_SetMiscDefaultData(gentity_t *ent)
 			}
 			if (ent->client->ps.weapon != WP_SABER)
 			{
-				G_CreateG2AttachedWeaponModel(ent, weaponData[ent->client->ps.weapon].weaponMdl, ent->handRBolt, 0);
+				G_CreateG2AttachedWeaponModel(ent, CG_GetCurrentWeaponModel(ent), ent->handRBolt, 0);
 			}
 		}
 		else if (ent->client->NPC_class == CLASS_PROBE || ent->client->NPC_class == CLASS_REMOTE ||
@@ -719,72 +769,77 @@ void NPC_SetMiscDefaultData(gentity_t *ent)
 				&& ent->client->ps.weapon != WP_SABER//sabers done above
 				&& (!(ent->NPC->aiFlags&NPCAI_MATCHPLAYERWEAPON) || !ent->weaponModel[0]))//they do this themselves
 			{
-				G_CreateG2AttachedWeaponModel(ent, weaponData[ent->client->ps.weapon].weaponMdl, ent->handRBolt, 0);
+				G_CreateG2AttachedWeaponModel(ent, CG_GetCurrentWeaponModel(ent), ent->handRBolt, 0);
 			}
-			switch (ent->client->ps.weapon)
+
+			if (CG_IsWeaponPistol(ent))
 			{
-			case WP_BRYAR_PISTOL:
-				break;
-			case WP_BLASTER_PISTOL:
-			case WP_CLONEPISTOL:
-			case WP_JANGO:
 				NPCInfo->scriptFlags |= SCF_PILOT;
 				if (ent->client->NPC_class == CLASS_REBORN
 					&& ent->NPC->rank >= RANK_LT_COMM
 					&& (!(ent->NPC->aiFlags&NPCAI_MATCHPLAYERWEAPON) || !ent->weaponModel[0]))//they do this themselves
 				{//dual blaster pistols, so add the left-hand one, too
-					G_CreateG2AttachedWeaponModel(ent, weaponData[ent->client->ps.weapon].weaponMdl, ent->handLBolt, 1);
+					G_CreateG2AttachedWeaponModel(ent, CG_GetCurrentWeaponModel(ent), ent->handLBolt, 1);
 				}
 				break;
-			case WP_DISRUPTOR:
-				//Sniper
-				//ent->NPC->scriptFlags |= SCF_ALT_FIRE;//FIXME: use primary fire sometimes?  Up close?  Different class of NPC?
-				break;
-			case WP_BOWCASTER:
-				NPCInfo->scriptFlags |= SCF_PILOT;
-				break;
-			case WP_REPEATER:
-				NPCInfo->scriptFlags |= SCF_PILOT;
-				//machine-gunner
-				break;
-			case WP_DEMP2:
-				break;
-			case WP_FLECHETTE:
-				NPCInfo->scriptFlags |= SCF_PILOT;
-				//shotgunner
-				if (!Q_stricmp("stofficeralt", ent->NPC_type))
+			}
+			else
+			{
+				switch (ent->client->ps.weapon)
 				{
-					//ent->NPC->scriptFlags |= SCF_ALT_FIRE;
-				}
-				break;
-			case WP_ROCKET_LAUNCHER:
-				break;
-			case WP_CONCUSSION:
-				break;
-			case WP_THERMAL:
-				//Gran, use main, bouncy fire
-//					ent->NPC->scriptFlags |= SCF_ALT_FIRE;
-				break;
-			case WP_MELEE:
-				break;
-			case WP_NOGHRI_STICK:
-				break;
-			default:
-			case WP_BLASTER:
-				//FIXME: health in NPCs.cfg, and not all blaster users are stormtroopers
-				//FIXME: not necc. a ST
-				NPCInfo->scriptFlags |= SCF_PILOT;
+				case WP_BRYAR_PISTOL:
+					break;
+				case WP_DISRUPTOR:
+				case WP_CIS_SNIPER:
+					//Sniper
+					//ent->NPC->scriptFlags |= SCF_ALT_FIRE;//FIXME: use primary fire sometimes?  Up close?  Different class of NPC?
+					break;
+				case WP_BOWCASTER:
+					NPCInfo->scriptFlags |= SCF_PILOT;
+					break;
+				case WP_REPEATER:
+					NPCInfo->scriptFlags |= SCF_PILOT;
+					//machine-gunner
+					break;
+				case WP_DEMP2:
+					break;
+				case WP_FLECHETTE:
+					NPCInfo->scriptFlags |= SCF_PILOT;
+					//shotgunner
+					if (!Q_stricmp("stofficeralt", ent->NPC_type))
+					{
+						//ent->NPC->scriptFlags |= SCF_ALT_FIRE;
+					}
+					break;
+				case WP_ROCKET_LAUNCHER:
+					break;
+				case WP_CONCUSSION:
+					break;
+				case WP_THERMAL:
+					//Gran, use main, bouncy fire
+	//					ent->NPC->scriptFlags |= SCF_ALT_FIRE;
+					break;
+				case WP_MELEE:
+					break;
+				case WP_NOGHRI_STICK:
+					break;
+				default:
+				case WP_BLASTER:
+					//FIXME: health in NPCs.cfg, and not all blaster users are stormtroopers
+					//FIXME: not necc. a ST
+					NPCInfo->scriptFlags |= SCF_PILOT;
 
-				ST_ClearTimers(ent);
-				if (ent->NPC->rank >= RANK_COMMANDER)
-				{//commanders use alt-fire
-					//ent->NPC->scriptFlags |= SCF_ALT_FIRE;
+					ST_ClearTimers(ent);
+					if (ent->NPC->rank >= RANK_COMMANDER)
+					{//commanders use alt-fire
+						//ent->NPC->scriptFlags |= SCF_ALT_FIRE;
+					}
+					if (!Q_stricmp("rodian2", ent->NPC_type))
+					{
+						//ent->NPC->scriptFlags |= SCF_ALT_FIRE;
+					}
+					break;
 				}
-				if (!Q_stricmp("rodian2", ent->NPC_type))
-				{
-					//ent->NPC->scriptFlags |= SCF_ALT_FIRE;
-				}
-				break;
 			}
 		}
 		if (!Q_stricmp("galak_mech", ent->NPC_type))
@@ -801,19 +856,17 @@ void NPC_SetMiscDefaultData(gentity_t *ent)
 			&& ent->client->ps.weapon != WP_SABER//sabers done above
 			&& (!(ent->NPC->aiFlags&NPCAI_MATCHPLAYERWEAPON) || !ent->weaponModel[0]))//they do this themselves
 		{
-			G_CreateG2AttachedWeaponModel(ent, weaponData[ent->client->ps.weapon].weaponMdl, ent->handRBolt, 0);
+			G_CreateG2AttachedWeaponModel(ent, CG_GetCurrentWeaponModel(ent), ent->handRBolt, 0);
 		}
 
-		if (ent->client->ps.weapon == WP_BLASTER_PISTOL
-			|| ent->client->ps.weapon == WP_CLONEPISTOL
-			|| ent->client->ps.weapon == WP_JANGO)
+		if (CG_IsWeaponPistol(ent))
 		{
 			NPCInfo->scriptFlags |= SCF_PILOT;
 			if (ent->client->NPC_class == CLASS_REBORN
 				&& ent->NPC->rank >= RANK_LT_COMM
 				&& (!(ent->NPC->aiFlags&NPCAI_MATCHPLAYERWEAPON) || !ent->weaponModel[0]))//they do this themselves
 			{//dual blaster pistols, so add the left-hand one, too
-				G_CreateG2AttachedWeaponModel(ent, weaponData[ent->client->ps.weapon].weaponMdl, ent->handLBolt, 1);
+				G_CreateG2AttachedWeaponModel(ent, CG_GetCurrentWeaponModel(ent), ent->handLBolt, 1);
 			}
 		}
 		break;
@@ -1016,6 +1069,10 @@ int NPC_WeaponsForTeam(team_t team, int spawnflags, const char *NPC_type)
 		if (Q_stricmp("howler", NPC_type) == 0)
 		{
 			return ((1 << WP_MELEE));
+		}
+		if (Q_stricmp("droideka", NPC_type) == 0)
+		{
+			return (1 << WP_SBD);
 		}
 		//Stormtroopers, etc.
 		return (1 << WP_BLASTER);
@@ -1894,6 +1951,24 @@ gentity_t *NPC_Spawn_Do(gentity_t *ent, qboolean fullSpawnNow)
 
 	if(ent->NPC_team)
 		newent->NPC_team = G_NewString(ent->NPC_team);
+	if (ent->NPC_model)
+		newent->NPC_model = G_NewString(ent->NPC_model);
+	if (ent->soundSet)
+		newent->soundSet = G_NewString(ent->soundSet);
+	if (ent->NPC_FPLevel)
+	{
+		for(int i = FP_FIRST; i < NUM_FORCE_POWERS; i++)
+			newent->NPC_FPLevel[i] = ent->NPC_FPLevel[i];
+	}
+
+	if (ent->NPC_color_red)
+		newent->NPC_color_red = ent->NPC_color_red;
+
+	if (ent->NPC_color_green)
+		newent->NPC_color_green = ent->NPC_color_green;
+
+	if (ent->NPC_color_red)
+		newent->NPC_color_blue = ent->NPC_color_red;
 
 	VectorCopy(ent->s.origin, newent->s.origin);
 	VectorCopy(ent->s.origin, newent->client->ps.origin);
@@ -3270,6 +3345,7 @@ void SP_NPC_SWGL_Jedi(gentity_t *self)
 		else
 		{//random!
 			int sanityCheck = 20;	//just in case
+			npc_pick = Q_irand(0, 4);
 			while (sanityCheck--)
 			{
 				switch (npc_pick)
@@ -3289,82 +3365,6 @@ void SP_NPC_SWGL_Jedi(gentity_t *self)
 				case 4:
 					self->NPC_type = "kotor_jedi5";
 					break;
-				case 5:
-					self->NPC_type = "kotor_jedi6";
-					break;
-				case 6:
-					self->NPC_type = "kotor_jedi7";
-					break;
-				case 7:
-					self->NPC_type = "kotor_jedi8";
-					break;
-				case 8:
-					self->NPC_type = "kotor_jedi9";
-					break;
-				case 9:
-					self->NPC_type = "kotor_jedi10";
-					break;
-				case 10:
-					self->NPC_type = "kotor_jedi11";
-					break;
-				case 11:
-					self->NPC_type = "kotor_jedi12";
-					break;
-				case 12:
-					self->NPC_type = "kotor_jedi13";
-					break;
-				case 13:
-					self->NPC_type = "kotor_jedi14";
-					break;
-				case 14:
-					self->NPC_type = "kotor_jedi15";
-					break;
-				case 15:
-					self->NPC_type = "kotor_jedi16";
-					break;
-				case 16:
-					self->NPC_type = "kotor_jedi17";
-					break;
-				case 17:
-					self->NPC_type = "kotor_jedi18";
-					break;
-				case 18:
-					self->NPC_type = "kotor_jedi19";
-					break;
-				case 19:
-					self->NPC_type = "kotor_jedi20";
-					break;
-				case 20:
-					self->NPC_type = "kotor_jedi21";
-					break;
-				case 21:
-					self->NPC_type = "kotor_jedi22";
-					break;
-				case 22:
-					self->NPC_type = "kotor_jedi23";
-					break;
-				case 23:
-					self->NPC_type = "kotor_jedi24";
-					break;
-				case 24:
-					self->NPC_type = "kotor_jedi25";
-					break;
-				case 25:
-					self->NPC_type = "kotor_jedi26";
-					break;
-				case 26:
-					self->NPC_type = "kotor_jedi27";
-					break;
-				case 27:
-					self->NPC_type = "kotor_jedi28";
-					break;
-				case 28:
-					self->NPC_type = "kotor_jedi29";
-					break;
-				case 29:
-					self->NPC_type = "kotor_jedi30";
-					break;
-				case 30:
 				default://just in case
 					self->NPC_type = "kotor_jedi1";
 					break;
@@ -3377,7 +3377,7 @@ void SP_NPC_SWGL_Jedi(gentity_t *self)
 			}
 		}
 	}
-
+	self->NPC_skin = "random";
 	SP_NPC_spawner(self);
 }
 /*QUAKED NPC_Prisoner(1 0 0) (-16 -16 -24) (16 16 40) ELDER x x x DROPTOFLOOR CINEMATIC NOTSOLID STARTINSOLID SHY
@@ -5457,7 +5457,7 @@ void SP_NPC_Droid_Saber(gentity_t *self)
 /*
 NPC_Spawn_f
 */
-
+bool isInteger(const std::string& s);
 static void NPC_Spawn_f(void)
 {
 	gentity_t		*NPCspawner = G_Spawn();
@@ -5514,7 +5514,7 @@ static void NPC_Spawn_f(void)
 	NPCspawner->NPC_type = Q_strlwr(G_NewString(npc_type));
 
 	// Default values to prevent crashing
-	char* skin = "default";
+	char* skin = "";
 
 	char* team = "";
 
@@ -5585,6 +5585,45 @@ static void NPC_Spawn_f(void)
 		{
 			NPCspawner->NPC_LightningColor = gi.argv(++spawnCommand);
 		}
+		else if ((!Q_stricmp("playermodel", gi.argv(spawnCommand)) || !Q_stricmp("model", gi.argv(spawnCommand))) && gi.argv(spawnCommand + 1))
+		{
+			NPCspawner->NPC_model = gi.argv(++spawnCommand);
+		}
+		else if (!Q_stricmp("rgb", gi.argv(spawnCommand)) && gi.argv(spawnCommand + 1) && gi.argv(spawnCommand + 2) && gi.argv(spawnCommand + 3))
+		{
+			char* red = gi.argv(++spawnCommand);
+			char* green = gi.argv(++spawnCommand);
+			char* blue = gi.argv(++spawnCommand);
+
+			if (isInteger(red) && isInteger(green) && isInteger(blue))
+			{
+				NPCspawner->NPC_color_red = std::stoi(red);
+				NPCspawner->NPC_color_green = std::stoi(green);
+				NPCspawner->NPC_color_blue = std::stoi(blue);
+			}
+		}
+		else
+		{
+			//force powers
+			int fp = GetIDForString(FPTable, gi.argv(spawnCommand));
+			int		n;
+			if (fp >= FP_FIRST && fp < NUM_FORCE_POWERS)
+			{
+				n = std::stoi(gi.argv(++spawnCommand));
+
+				if (n > 5)
+				{
+					n = 5;
+				}
+				else if (n < 0)
+				{
+					n = 0;
+				}
+				// We'll increment the value by one since we don't want to mess with any force powers that the player doesn't want changed. So 0 will mean don't change and 1 will mean set to 0 and so on.
+				NPCspawner->NPC_FPLevel[fp] = n+1;
+				continue;
+			}
+		}
 
 		spawnCommand++;
 
@@ -5592,10 +5631,7 @@ static void NPC_Spawn_f(void)
 
 	NPCspawner->NPC_skin = G_NewString(skin);
 
-	if (Q_stricmp("", team))
-	{
-		NPCspawner->NPC_team = G_NewString(team);
-	}
+	NPCspawner->NPC_team = G_NewString(team);	
 
 	if (!Q_stricmp(NPCspawner->NPC_type, DOOKU))
 	{
@@ -5856,10 +5892,10 @@ void NPC_Anim_f(void)
 	char* name;
 	char* anim;
 	char* part;
+	int length = 0;
 
 	name = gi.argv(2);
 	anim = gi.argv(3);
-	part = gi.argv(4);
 
 	int			animID = 0;
 
@@ -5868,7 +5904,7 @@ void NPC_Anim_f(void)
 	if (!*name || !name[0])
 	{
 		gi.Printf(S_COLOR_RED"Error, Expected:\n");
-		gi.Printf(S_COLOR_RED"NPC anim '[NPC targetname]' '[Animation]' '[Body Area] - sets anims on NPC with certain targetname\n");
+		gi.Printf(S_COLOR_RED"NPC anim '[NPC targetname]' '[Animation]' '[Time in milliseconds]' '[Body Area]' - sets anims on NPC with certain targetname\n");
 		gi.Printf(S_COLOR_RED"or\n");
 		gi.Printf(S_COLOR_RED"NPC anim '[NPC targetname]' remove - Sets animation back to default with the NPC\n");
 		return;
@@ -5876,11 +5912,28 @@ void NPC_Anim_f(void)
 
 	if (animID <= 0)
 	{
-		if (Q_stricmp(anim, "remove"))
+		if (Q_stricmp(anim, "remove") && Q_stricmp(anim, "none"))
 		{
 			gi.Printf(S_COLOR_RED"Error, Invalid Animation:%s\n", anim);
 			return;
 		}
+	}
+
+	// Allow for a little flexibility in the args, just in case the 4th or 5th args are switched by the players.
+	if (gi.argv(4))
+	{
+		if (atoi((char*)gi.argv(4)) != 0)
+			length = atoi((char*)gi.argv(4)); // We'll assume any number is what the player wants for length.
+		else
+			part = gi.argv(4); // Part could end up being any string, but since we check if the parts are upper or lower only, all other strings won't do anything.
+	}
+
+	if (gi.argv(5))
+	{
+		if (atoi((char*)gi.argv(5)) != 0)
+			length = atoi((char*)gi.argv(5));
+		else
+			part = gi.argv(5);
 	}
 
 	for (n = 1; n < ENTITYNUM_MAX_NORMAL; n++)
@@ -5890,7 +5943,7 @@ void NPC_Anim_f(void)
 		{
 			continue;
 		}		
-		if ((ent->targetname && Q_stricmp(name, ent->targetname) == 0))
+		if (ent->targetname && ent->NPC && (Q_stricmp(name, ent->targetname) == 0 || !Q_stricmp("all", name)))
 		{		
 
 			if (!Q_stricmp(anim, "remove") || !Q_stricmp(anim, "none"))
@@ -5905,13 +5958,15 @@ void NPC_Anim_f(void)
 				{
 					gi.Printf(S_COLOR_GREEN"Setting NPC %s named %s upper body animation to %s\n", ent->NPC_type, ent->targetname, anim);
 					NPC_SetAnim(ent, SETANIM_TORSO, animID, SETANIM_FLAG_RESTART | SETANIM_FLAG_HOLD | SETANIM_FLAG_OVERRIDE);
-					PM_SetTorsoAnimTimer(ent, &ent->client->ps.torsoAnimTimer, -1);
+					if(length != 0)
+						PM_SetTorsoAnimTimer(ent, &ent->client->ps.torsoAnimTimer, length);
 				}
 				else if (!Q_stricmp(part, "lower"))
 				{
 					gi.Printf(S_COLOR_GREEN"Setting NPC %s named %s lower body animation to %s\n", ent->NPC_type, ent->targetname, anim);
 					NPC_SetAnim(ent, SETANIM_LEGS, animID, SETANIM_FLAG_RESTART | SETANIM_FLAG_HOLD | SETANIM_FLAG_OVERRIDE);
-					PM_SetLegsAnimTimer(ent, &ent->client->ps.legsAnimTimer, -1);
+					if (length != 0)
+						PM_SetLegsAnimTimer(ent, &ent->client->ps.legsAnimTimer, length);
 				}
 				else
 				{
@@ -5919,11 +5974,18 @@ void NPC_Anim_f(void)
 					NPC_SetAnim(ent, SETANIM_TORSO | SETANIM_LEGS, animID, SETANIM_FLAG_RESTART | SETANIM_FLAG_HOLD | SETANIM_FLAG_OVERRIDE);
 					animation_t* animations = level.knownAnimFileSets[0].animations;
 
-					if (animations[animID].loopFrames >= 0)
+					if (length != 0)
 					{
+						PM_SetLegsAnimTimer(ent, &ent->client->ps.legsAnimTimer, length);
+						PM_SetTorsoAnimTimer(ent, &ent->client->ps.torsoAnimTimer, length);
+					}
+					else if (animations[animID].loopFrames >= 0)
+					{
+						// We'll loop the animations that have loops anyway.
 						PM_SetLegsAnimTimer(ent, &ent->client->ps.legsAnimTimer, -1);
 						PM_SetTorsoAnimTimer(ent, &ent->client->ps.torsoAnimTimer, -1);
 					}
+					
 				}
 
 			}
@@ -5956,7 +6018,7 @@ void NPC_Enemy_f(void)
 		{
 			continue;
 		}
-		if ((ent->targetname && Q_stricmp(name, ent->targetname) == 0))
+		if (ent->targetname && ent->NPC && (Q_stricmp(name, ent->targetname) == 0 || !Q_stricmp("all", name)))
 		{
 			if (!Q_stricmp(enemy, "none"))
 			{
@@ -5975,10 +6037,18 @@ void NPC_Enemy_f(void)
 				ent->enemy = NULL;
 				
 			}
+			else if (!Q_stricmp(enemy, "all"))
+			{
+				ent->client->savedPlayerTeam = ent->client->playerTeam;
+				ent->client->savedEnemyTeam = ent->client->enemyTeam;
+
+				ent->client->playerTeam = TEAM_SOLO;
+				ent->client->enemyTeam = TEAM_SOLO;
+			}
 			else
 			{
 				ent->enemy = G_Find(NULL, FOFS(targetname), (char*)enemy);
-				if (ent->enemy->client->playerTeam == ent->client->playerTeam)
+				if (ent->enemy && ent->enemy->client->playerTeam == ent->client->playerTeam)
 				{
 					ent->client->savedPlayerTeam = ent->client->playerTeam;
 					ent->client->savedEnemyTeam = ent->client->enemyTeam;
@@ -6017,8 +6087,7 @@ void NPC_Team_f(void)
 
 	name = gi.argv(2);
 	teamInput = gi.argv(3);
-
-
+	
 	team_t	team;
 
 	team = (team_t)GetIDForString(TeamTable, teamInput);
@@ -6047,7 +6116,7 @@ void NPC_Team_f(void)
 		{
 			continue;
 		}
-		if ((ent->targetname && Q_stricmp(name, ent->targetname) == 0))
+		if (ent->targetname && ent->NPC && (Q_stricmp(name, ent->targetname) == 0 || !Q_stricmp("all", name)))
 		{
 			ent->client->playerTeam = team;
 			if (ent->enemy &&
@@ -6117,7 +6186,7 @@ void NPC_Weapon_f(void)
 		{
 			continue;
 		}
-		if ((ent->targetname && Q_stricmp(name, ent->targetname) == 0))
+		if (ent->targetname && ent->NPC && (Q_stricmp(name, ent->targetname) == 0 || !Q_stricmp("all", name)))
 		{
 			G_SetWeapon(ent, weapon);
 		}
@@ -6164,7 +6233,7 @@ void NPC_Saber_f(void)
 		{
 			continue;
 		}
-		if ((ent->targetname && Q_stricmp(name, ent->targetname) == 0))
+		if (ent->targetname && ent->NPC && (Q_stricmp(name, ent->targetname) == 0 || !Q_stricmp("all", name)))
 		{
 			ent->s.weapon = WP_SABER;
 
@@ -6200,7 +6269,6 @@ void NPC_Saber_f(void)
 						WP_SaberSetColor(ent, 1, i, saberTwoColor);
 				}
 			}
-
 		}
 	}
 }
@@ -6261,6 +6329,7 @@ void NPC_Remove_f(void)
 	{
 		gi.Printf(S_COLOR_RED"Error, Expected:\n");
 		gi.Printf(S_COLOR_RED"NPC remove '[NPC targetname]' - removes the NPC from the game\n");
+		gi.Printf(S_COLOR_RED"NPC remove all - removes all NPCs from the game\n");
 		return;
 	}
 
@@ -6272,8 +6341,9 @@ void NPC_Remove_f(void)
 			continue;
 		}
 		// Entity needs to be an NPC, NOT THE PLAYER!
-		if ((ent->targetname && Q_stricmp(targetname, ent->targetname) == 0) && (ent->NPC && ent != player))
+		if ((!Q_stricmp("all", targetname) || (ent->targetname && Q_stricmp(targetname, ent->targetname) == 0)) && (ent->NPC && ent != player))
 		{
+			gi.Printf(S_COLOR_GREEN"Removing NPC %s named %s\n", ent->NPC_type, ent->targetname);
 			G_UseTargets2(ent, ent, ent->target3);
 			ent->s.eFlags |= EF_NODRAW;
 			ent->svFlags &= ~SVF_NPC;
@@ -6285,7 +6355,150 @@ void NPC_Remove_f(void)
 			//Disappear in half a second
 			ent->e_ThinkFunc = thinkF_G_FreeEntity;
 			ent->nextthink = level.time + FRAMETIME;
-			
+		}
+		if (ent && (ent->svFlags & SVF_NPC_PRECACHE))
+		{//a spawner
+			if ((ent->targetname && Q_stricmp(targetname, ent->targetname) == 0)
+				|| Q_stricmp(targetname, "all") == 0)
+			{
+				gi.Printf(S_COLOR_GREEN"Removing NPC spawner %s named %s\n", ent->NPC_type, ent->targetname);
+				G_FreeEntity(ent);
+			}
+		}
+	}
+}
+
+extern void G_SetG2PlayerModel(gentity_t* const ent, const char* modelName, const char* customSkin, const char* surfOff, const char* surfOn);
+extern void G_RemovePlayerModel(gentity_t* pEnt);
+void NPC_Model_f(void)
+{
+	int			n;
+	gentity_t* ent;
+	char* targetname;
+	char* model;
+	char* skin;
+
+	targetname = gi.argv(2);
+	model = gi.argv(3);
+	skin = gi.argv(4);
+
+	if (!*targetname || !*model)
+	{
+		gi.Printf(S_COLOR_RED"Error, Expected:\n");
+		gi.Printf(S_COLOR_RED"NPC model '[NPC targetname]' '[New Model]' '[New Skin (Optional)]' - Sets the NPC's playermodel to a new one.\n");
+		return;
+	}
+
+	for (n = 1; n < ENTITYNUM_MAX_NORMAL; n++)
+	{
+		ent = &g_entities[n];
+		if (!ent->inuse)
+		{
+			continue;
+		}
+		// Entity needs to be an NPC, NOT THE PLAYER!
+		if ((!Q_stricmp("all", targetname) || ent->targetname && Q_stricmp(targetname, ent->targetname) == 0) && (ent->NPC && ent != player))
+		{
+			G_RemovePlayerModel(ent);
+			if(!*skin)
+				G_SetG2PlayerModel(ent, model, "default", NULL, NULL);
+			else
+				G_SetG2PlayerModel(ent, model, skin, NULL, NULL);
+		}
+	}
+}
+
+void NPC_Skin_f(void)
+{
+	int			n;
+	gentity_t* ent;
+	char* targetname;
+	char* skinName;
+
+	targetname = gi.argv(2);
+	skinName = gi.argv(3);
+
+	if (!*targetname || !*skinName)
+	{
+		gi.Printf(S_COLOR_RED"Error, Expected:\n");
+		gi.Printf(S_COLOR_RED"NPC skin '[NPC targetname]' '[Model/Skin Path]' - Sets the NPC's skin to a new one. Example: stormtrooper/model_blue\n");
+		return;
+	}
+
+	for (n = 1; n < ENTITYNUM_MAX_NORMAL; n++)
+	{
+		ent = &g_entities[n];
+		if (!ent->inuse)
+		{
+			continue;
+		}
+		// Entity needs to be an NPC, NOT THE PLAYER!
+		if ((!Q_stricmp("all", targetname) || ent->targetname && Q_stricmp(targetname, ent->targetname) == 0) && (ent->NPC && ent != player))
+		{
+			char skinPath[MAX_QPATH];
+
+			std::string model(ent->ghoul2[ent->playerModel].mFileName + 15, strlen(ent->ghoul2[ent->playerModel].mFileName) - 15);
+
+			model.erase(model.find("/model"));
+			//model = model.substr(0, strlen(ent->ghoul2[ent->playerModel].mFileName) - model.find("/"));
+			if (!strchr(skinName, '|'))
+			{
+				strcpy(skinPath, va("models/players/%s/model_%s.skin", model.c_str(), skinName));
+			}
+			else
+			{
+				strcpy(skinPath, va("models/players/%s/|%s", model.c_str(), skinName));
+			}
+
+			int skin = gi.RE_RegisterSkin(skinPath);
+			gi.G2API_SetSkin(&ent->ghoul2[ent->playerModel], G_SkinIndex(skinPath), skin);
+		}
+	}
+}
+
+void NPC_Follow_f(void)
+{
+	int			n;
+	gentity_t* ent;
+	char* targetname;
+	char* newLeader;
+
+	targetname = gi.argv(2);
+	newLeader = gi.argv(3);
+
+	if (!*targetname || !*newLeader)
+	{
+		gi.Printf(S_COLOR_RED"Error, Expected:\n");
+		gi.Printf(S_COLOR_RED"NPC follow '[NPC targetname]' '[Targetname OR Player OR none]' - Command NPC to follow another.\n");
+		return;
+	}
+
+	for (n = 1; n < ENTITYNUM_MAX_NORMAL; n++)
+	{
+		ent = &g_entities[n];
+		if (!ent->inuse)
+		{
+			continue;
+		}
+		// Entity needs to be an NPC, NOT THE PLAYER!
+		if ((!Q_stricmp("all", targetname) || ent->targetname && Q_stricmp(targetname, ent->targetname) == 0) && (ent->NPC && ent != player))
+		{
+			gentity_t* leader = G_Find(NULL, FOFS(targetname), (char*)newLeader);
+
+			if (leader == NULL)
+			{
+				ent->client->leader = NULL;
+				return;
+			}
+			else if (leader->health <= 0)
+			{
+				ent->client->leader = NULL;
+				return;
+			}
+			else
+			{
+				ent->client->leader = leader;
+			}
 		}
 	}
 }
@@ -6407,9 +6620,21 @@ void Svcmd_NPC_f(void)
 	{
 		NPC_Sound_f();
 	}
-	else if (Q_stricmp(cmd, "remove") == 0)
+	else if (Q_stricmp(cmd, "remove") == 0 || Q_stricmp(cmd, "clear") == 0)
 	{
 		NPC_Remove_f();
+	}
+	else if (Q_stricmp(cmd, "model") == 0 || Q_stricmp(cmd, "playermodel") == 0)
+	{
+		NPC_Model_f();
+	}
+	else if (Q_stricmp(cmd, "skin") == 0 || Q_stricmp(cmd, "appearance") == 0)
+	{
+		NPC_Skin_f();
+	}
+	else if (Q_stricmp(cmd, "follow") == 0)
+	{
+		NPC_Follow_f();
 	}
 	else if (Q_stricmp(cmd, "showbounds") == 0)
 	{//Toggle on and off
@@ -6445,4 +6670,28 @@ void Svcmd_NPC_f(void)
 			}
 		}
 	}
+}
+
+bool isInteger(const std::string& s) {
+	if (s.empty()) // Empty string is not an integer
+		return false;
+
+	size_t i = 0;
+
+	// Skip leading whitespace
+	while (i < s.length() && std::isspace(s[i]))
+		++i;
+
+	// Check for an optional sign
+	if (i < s.length() && (s[i] == '+' || s[i] == '-'))
+		++i;
+
+	// Check if the rest of the string contains only digits
+	while (i < s.length()) {
+		if (!std::isdigit(s[i]))
+			return false;
+		++i;
+	}
+
+	return true;
 }

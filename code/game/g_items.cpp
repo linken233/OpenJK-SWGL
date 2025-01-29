@@ -455,10 +455,12 @@ qboolean Pickup_Saber( gentity_t *self, qboolean hadSaber, gentity_t *pickUpSabe
 }
 
 extern void CG_ChangeWeapon( int num );
+extern void PM_WpnMdlChange(const char *currWeaponMdl, int weaponNum, playerState_t *ps);
 int Pickup_Weapon (gentity_t *ent, gentity_t *other)
 {
 	int		quantity;
 	qboolean	hadWeapon = qfalse;
+	int weaponNum = 0;
 
 	/*
 	if ( ent->count || (ent->activator && !ent->activator->s.number) )
@@ -482,13 +484,24 @@ int Pickup_Weapon (gentity_t *ent, gentity_t *other)
 	}
 
 	// add the weapon
-	if ( other->client->ps.weapons[ent->item->giTag] )
+	if ( other->client->ps.weapons[CG_GetItemGITag(ent->item)] )
 	{
 		hadWeapon = qtrue;
 	}
-	other->client->ps.weapons[ent->item->giTag] = 1;
 
-	if ( ent->item->giTag == WP_SABER && (!hadWeapon || ent->NPC_type != NULL) )
+	if (ent->item->giType == IT_DYN_WEAPON)
+	{
+		weaponNum = CG_GetItemGITag(ent->item);
+
+		other->client->ps.dynWpnVals[weaponNum] = CG_GetDynWpnValue(weaponNum, ent->item->giTag);
+		CG_UpdateSwitchDynWpnMdlCvar(weaponNum, &other->client->ps);
+
+		PM_WpnMdlChange(CG_GetCurrentWeaponModel(other, weaponNum), weaponNum, &other->client->ps);
+	}
+
+	other->client->ps.weapons[CG_GetItemGITag(ent->item)] = 1;
+
+	if ( CG_GetItemGITag(ent->item) == WP_SABER && (!hadWeapon || ent->NPC_type != NULL) )
 	{//didn't have a saber or it is specifying a certain kind of saber to use
 		if ( !Pickup_Saber( other, hadWeapon, ent ) )
 		{
@@ -499,24 +512,24 @@ int Pickup_Weapon (gentity_t *ent, gentity_t *other)
 	if ( other->s.number )
 	{//NPC
 		if ( other->s.weapon == WP_NONE
-			|| ent->item->giTag == WP_SABER )
+			|| CG_GetItemGITag(ent->item) == WP_SABER )
 		{//NPC with no weapon picked up a weapon, change to this weapon
 			//FIXME: clear/set the alt-fire flag based on the picked up weapon and my class?
-			other->client->ps.weapon = ent->item->giTag;
+			other->client->ps.weapon = CG_GetItemGITag(ent->item);
 			other->client->ps.weaponstate = WEAPON_RAISING;
-			ChangeWeapon( other, ent->item->giTag );
-			if ( ent->item->giTag == WP_SABER )
+			ChangeWeapon( other, CG_GetItemGITag(ent->item) );
+			if ( CG_GetItemGITag(ent->item) == WP_SABER )
 			{
 				other->client->ps.SaberActivate();
 				WP_SaberAddG2SaberModels( other );
 			}
 			else
 			{
-				G_CreateG2AttachedWeaponModel( other, weaponData[ent->item->giTag].weaponMdl, other->handRBolt, 0 );
+				G_CreateG2AttachedWeaponModel( other, weaponData[CG_GetItemGITag(ent->item)].weaponMdl, other->handRBolt, 0 );
 			}
 		}
 	}
-	if ( ent->item->giTag == WP_SABER )
+	if ( CG_GetItemGITag(ent->item) == WP_SABER )
 	{//picked up a saber
 		if ( other->s.weapon != WP_SABER )
 		{//player picking up saber
@@ -540,7 +553,7 @@ int Pickup_Weapon (gentity_t *ent, gentity_t *other)
 	if ( quantity )
 	{
 		// Give ammo
-		Add_Ammo( other, ent->item->giTag, quantity );
+		Add_Ammo( other, CG_GetItemGITag(ent->item), quantity );
 	}
 	return 5;
 }
@@ -742,6 +755,13 @@ void Touch_Item (gentity_t *ent, gentity_t *other, trace_t *trace) {
 	if (other->health < 1)
 		return;		// dead people can't pickup
 
+	// Droidekas have no hands, or do they? Idk
+	if (other->client->NPC_class == CLASS_DROIDEKA && (ent->item->giType == IT_WEAPON || ent->item->giType == IT_HOLDABLE))
+	{
+		return;
+	}
+
+
 	if ( other->client->ps.pm_time > 0 )
 	{//cant pick up when out of control
 		return;
@@ -838,6 +858,7 @@ void Touch_Item (gentity_t *ent, gentity_t *other, trace_t *trace) {
 	switch( ent->item->giType )
 	{
 	case IT_WEAPON:
+	case IT_DYN_WEAPON:
 		if ( other->NPC && other->s.weapon == WP_NONE )
 		{//Make them duck and sit here for a few seconds
 			int pickUpTime = Q_irand( 1000, 3000 );
@@ -848,7 +869,7 @@ void Touch_Item (gentity_t *ent, gentity_t *other, trace_t *trace) {
 			TIMER_Set( other, "attackDelay", 600 );
 			respawn = 0;
 		}
-		if ( other->client->ps.weapons[ent->item->giTag] )
+		if ( other->client->ps.weapons[CG_GetItemGITag(ent->item)] )
 		{
 			bHadWeapon = qtrue;
 		}
@@ -994,13 +1015,14 @@ gentity_t *LaunchItem( gitem_t *item, const vec3_t origin, const vec3_t velocity
 
 	dropped->e_TouchFunc = touchF_Touch_Item;
 
-	if ( item->giType == IT_WEAPON )
+	if ( item->giType == IT_WEAPON || item->giType == IT_DYN_WEAPON)
 	{
+		int giTag = CG_GetItemGITag(item);
 		// give weapon items zero pitch, a random yaw, and rolled onto their sides...but would be bad to do this for a bowcaster
-		if ( item->giTag != WP_BOWCASTER
-			&& item->giTag != WP_THERMAL
-			&& item->giTag != WP_TRIP_MINE
-			&& item->giTag != WP_DET_PACK )
+		if ( giTag != WP_BOWCASTER
+			&& giTag != WP_THERMAL
+			&& giTag != WP_TRIP_MINE
+			&& giTag != WP_DET_PACK )
 		{
 			VectorSet( dropped->s.angles, 0, Q_flrand(-1.0f, 1.0f) * 180, 90.0f );
 			G_SetAngles( dropped, dropped->s.angles );

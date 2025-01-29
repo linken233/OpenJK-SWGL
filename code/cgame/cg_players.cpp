@@ -31,6 +31,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "../game/wp_saber.h"
 #include "../game/g_vehicles.h"
 #include "../Rufl/hstring.h"
+#include "NPC_SWGL.h"
 
 #define	LOOK_SWING_SCALE	0.5f
 #define	CG_SWINGSPEED		0.3f
@@ -45,6 +46,8 @@ extern vmCvar_t	cg_debugHealthBars;
 extern vmCvar_t	cg_SFXSabers;
 extern vmCvar_t	cg_SFXSabersGlowSize;
 extern vmCvar_t	cg_SFXSabersCoreSize;
+
+extern vmCvar_t cg_ignitionSpeed;
 
 extern cvar_t *g_forceLightningColor;
 
@@ -1671,7 +1674,7 @@ static void CG_BreathPuffs( centity_t *cent, vec3_t angles, vec3_t origin )
 
 	if ( !client
 		|| cg_drawBreath.integer == 0
-		|| (!cg.renderingThirdPerson && !((cg_trueguns.integer || CG_PlayerIsDualWielding(client->ps.weapon)) || client->ps.weapon == WP_MELEE || client->ps.weapon == WP_SABER ))
+		|| (!cg.renderingThirdPerson && !((cg_trueguns.integer || CG_ChangeFirstPersonView()) || client->ps.weapon == WP_MELEE || client->ps.weapon == WP_SABER ))
 		|| client->ps.pm_type == PM_DEAD
 		|| client->breathPuffTime > cg.time )
 	{
@@ -1748,11 +1751,11 @@ static qboolean CG_CheckLookTarget( centity_t *cent, vec3_t	lookAngles, float *l
 				{//We turn heads faster than headbob speed, but not as fast as if watching an enemy
 					if ( cent->gent->client->NPC_class == CLASS_ROCKETTROOPER )
 					{//they look around slowly and deliberately
-						*lookingSpeed = LOOK_DEFAULT_SPEED*0.25f;
+						*lookingSpeed = (LOOK_DEFAULT_SPEED*0.25f) * (cg.frametime / (1000.0 / TARGET_FPS));
 					}
 					else
 					{
-						*lookingSpeed = LOOK_DEFAULT_SPEED;
+						*lookingSpeed = (LOOK_DEFAULT_SPEED) * (cg.frametime / (1000.0 / TARGET_FPS));
 					}
 				}
 
@@ -2168,6 +2171,22 @@ static void CG_G2ClientSpineAngles( centity_t *cent, vec3_t viewAngles, const ve
 		ulAngles[ROLL] = 0.0f;
 		llAngles[ROLL] = motionBoneCorrectAngles[ROLL];
 	}
+	else if (cent->gent->client->NPC_class == CLASS_DROIDEKA)
+	{
+		//each bone has only 1 axis of rotation!
+		//upper lumbar does not pitch
+		thoracicAngles[PITCH] = viewAngles[PITCH] * 0.40f;
+		ulAngles[PITCH] = 0.0f;
+		llAngles[PITCH] = viewAngles[PITCH] * 0.60f + motionBoneCorrectAngles[PITCH];
+		//only upper lumbar yaws
+		thoracicAngles[YAW] = 0.0f;
+		ulAngles[YAW] = viewAngles[YAW];
+		llAngles[YAW] = motionBoneCorrectAngles[YAW];
+		//no bone is capable of rolling
+		thoracicAngles[ROLL] = 0.0f;
+		ulAngles[ROLL] = 0.0f;
+		llAngles[ROLL] = motionBoneCorrectAngles[ROLL];
+	}
 	else
 	{//use all 3 bones
 		thoracicAngles[PITCH] = viewAngles[PITCH]*0.20f;
@@ -2298,6 +2317,30 @@ static void CG_G2ClientNeckAngles( centity_t *cent, const vec3_t lookAngles, vec
 		headAngles[YAW] = 0.0f;
 		headAngles[ROLL] = 0.0f;
 		//none of the bones roll
+	}
+	else if (cent->gent->client->NPC_class == CLASS_DROIDEKA)
+	{
+		//each bone has only 1 axis of rotation!
+		//thoracic only pitches, split with cervical
+		if (thoracicAngles[PITCH])
+		{
+			//already been set above, blend them
+			thoracicAngles[PITCH] = (thoracicAngles[PITCH] + lA[PITCH] * 0.5f) * 0.5f;
+		}
+		else
+		{
+			thoracicAngles[PITCH] = lA[PITCH] * 0.5f;
+		}
+		thoracicAngles[YAW] = thoracicAngles[ROLL] = 0.0f;
+		//cervical only pitches, split with thoracis
+		neckAngles[PITCH] = lA[PITCH] * 0.5f;
+		neckAngles[YAW] = 0.0f;
+		neckAngles[ROLL] = 0.0f;
+		//cranium only yaws
+		headAngles[PITCH] = 0.0f;
+		headAngles[YAW] = lA[YAW];
+		headAngles[ROLL] = 0.0f;
+		//no bones roll
 	}
 	else
 	{
@@ -2506,7 +2549,7 @@ static void CG_G2PlayerAngles( centity_t *cent, vec3_t legs[3], vec3_t angles )
 	float		legsYawSwingTolMin, legsYawSwingTolMax;
 	float		yawSpeed, maxYawSpeed, lookingSpeed;
 	*/
-	float		lookAngleSpeed = LOOK_TALKING_SPEED;//shut up the compiler
+	float		lookAngleSpeed = LOOK_TALKING_SPEED * (cg.frametime / (1000.0 / TARGET_FPS));//shut up the compiler
 	//float		swing, scale;
 	//int			i;
 	qboolean	looking = qfalse, talking = qfalse;
@@ -2851,7 +2894,7 @@ static void CG_G2PlayerAngles( centity_t *cent, vec3_t legs[3], vec3_t angles )
 			}
 			else if ( talking )
 			{//Slow for head bobbing
-				lookAngleSpeed = LOOK_TALKING_SPEED;
+				lookAngleSpeed = LOOK_TALKING_SPEED * (cg.frametime / (1000.0 / TARGET_FPS));
 			}
 			else if ( looking )
 			{//Not talking, set it up for looking at enemy, CheckLookTarget will scale it down if neccessary
@@ -2859,7 +2902,7 @@ static void CG_G2PlayerAngles( centity_t *cent, vec3_t legs[3], vec3_t angles )
 			}
 			else if ( cent->gent->client->renderInfo.lookingDebounceTime > cg.time )
 			{//Not looking, not talking, head is returning from a talking head bob, use talking speed
-				lookAngleSpeed = LOOK_TALKING_SPEED;
+				lookAngleSpeed = LOOK_TALKING_SPEED * (cg.frametime / (1000.0 / TARGET_FPS));
 			}
 
 			if ( looking || talking )
@@ -3052,12 +3095,12 @@ static void CG_PlayerAngles( centity_t *cent, vec3_t legs[3], vec3_t torso[3], v
 	float		torsoPitchClampMin, torsoPitchClampMax;
 	float		legsYawSwingTolMin, legsYawSwingTolMax;
 	float		maxYawSpeed, yawSpeed, lookingSpeed;
-	float		lookAngleSpeed = LOOK_TALKING_SPEED;//shut up the compiler
+	float		lookAngleSpeed = LOOK_TALKING_SPEED * (cg.frametime / (1000.0 / TARGET_FPS));//shut up the compiler
 	float		swing, scale;
 	int			i;
 	qboolean	looking = qfalse, talking = qfalse;
 
-	if ( (cg.renderingThirdPerson || ((cg_trueguns.integer || CG_PlayerIsDualWielding(cent->gent->client->ps.weapon)) && !cg.zoomMode) || cent->gent->client->ps.weapon == WP_SABER || cent->gent->client->ps.weapon == WP_MELEE) && cent->gent && cent->gent->s.number == 0 )
+	if ( (cg.renderingThirdPerson || ((cg_trueguns.integer || CG_ChangeFirstPersonView()) && !cg.zoomMode) || cent->gent->client->ps.weapon == WP_SABER || cent->gent->client->ps.weapon == WP_MELEE) && cent->gent && cent->gent->s.number == 0 )
 	{
 		// If we are rendering third person, we should just force the player body to always fully face
 		//	whatever way they are looking, otherwise, you can end up with gun shots coming off of the
@@ -3301,7 +3344,7 @@ static void CG_PlayerAngles( centity_t *cent, vec3_t legs[3], vec3_t torso[3], v
 	}
 	else if ( talking )
 	{//Slow for head bobbing
-		lookAngleSpeed = LOOK_TALKING_SPEED;
+		lookAngleSpeed = LOOK_TALKING_SPEED * (cg.frametime / (1000.0 / TARGET_FPS));
 	}
 	else if ( looking )
 	{//Not talking, set it up for looking at enemy, CheckLookTarget will scale it down if neccessary
@@ -3309,7 +3352,7 @@ static void CG_PlayerAngles( centity_t *cent, vec3_t legs[3], vec3_t torso[3], v
 	}
 	else if ( cent->gent->client->renderInfo.lookingDebounceTime > cg.time )
 	{//Not looking, not talking, head is returning from a talking head bob, use talking speed
-		lookAngleSpeed = LOOK_TALKING_SPEED;
+		lookAngleSpeed = LOOK_TALKING_SPEED * (cg.frametime / (1000.0 / TARGET_FPS));
 	}
 
 	if ( looking || talking )
@@ -6664,6 +6707,7 @@ Ghoul2 Insert End
 		case SABER_LANCE:
 			break;
 		case SABER_STAFF:
+		case SABER_INQUISITOR:
 			if ( bladeNum == 1 )
 			{
 				VectorScale( axis_[0], -1, axis_[0] );
@@ -7902,6 +7946,42 @@ void SmoothTrueView(vec3_t eyeAngles)
 }
 
 /*
+====================
+CG_GetMuzzleEffectID
+====================
+*/
+static int CG_GetMuzzleEffectID(gentity_t *ent)
+{
+	int weaponNum = ent->client->ps.weapon;
+	int dynWpnVal = ent->client->ps.dynWpnVals[weaponNum];
+
+	if (CG_IsDefaultWeaponModel(dynWpnVal))
+	{
+		return weaponData[weaponNum].mMuzzleEffectID;
+	}
+
+	return dynamicWpnData[CG_GetDynWpnNum(weaponNum, dynWpnVal)].mMuzzleEffectID;
+}
+
+/*
+=======================
+CG_GetAltMuzzleEffectID
+=======================
+*/
+static int CG_GetAltMuzzleEffectID(gentity_t *ent)
+{
+	int weaponNum = ent->client->ps.weapon;
+	int dynWpnVal = ent->client->ps.dynWpnVals[weaponNum];
+
+	if (CG_IsDefaultWeaponModel(dynWpnVal))
+	{
+		return weaponData[weaponNum].mAltMuzzleEffectID;
+	}
+
+	return dynamicWpnData[CG_GetDynWpnNum(weaponNum, dynWpnVal)].mAltMuzzleEffectID;
+}
+
+/*
 ===============
 CG_Player
 
@@ -7989,7 +8069,7 @@ void CG_Player( centity_t *cent ) {
 		return;
 	}
 
-	if(cent->currentState.number == 0 && !cg.renderingThirdPerson && (!(cg_trueguns.integer || CG_PlayerIsDualWielding(cg.snap->ps.weapon)) || cg.zoomMode))//!cg_thirdPerson.integer )
+	if(cent->currentState.number == 0 && !cg.renderingThirdPerson && (!(cg_trueguns.integer || CG_ChangeFirstPersonView()) || cg.zoomMode))//!cg_thirdPerson.integer )
 	{
 		calcedMp = qtrue;
 	}
@@ -8040,7 +8120,7 @@ Ghoul2 Insert Start
 			{//no viewentity
 				if ( cent->currentState.number == cg.snap->ps.clientNum )
 				{//I am the player
-					if ( cg.zoomMode || (!(cg_trueguns.integer || CG_PlayerIsDualWielding(cg.snap->ps.weapon)) && cg.snap->ps.weapon != WP_SABER && cg.snap->ps.weapon != WP_MELEE) || (cg.snap->ps.weapon == WP_SABER && cg_truesaberonly.integer) )
+					if ( cg.zoomMode || (!(cg_trueguns.integer || CG_ChangeFirstPersonView()) && cg.snap->ps.weapon != WP_SABER && cg.snap->ps.weapon != WP_MELEE) || (cg.snap->ps.weapon == WP_SABER && cg_truesaberonly.integer) )
 					{//not using saber or fists
 						ent.renderfx = RF_THIRD_PERSON;			// only draw in mirrors
 					}
@@ -8048,7 +8128,7 @@ Ghoul2 Insert Start
 			}
 			else if ( cent->currentState.number == cg.snap->ps.viewEntity )
 			{//I am the view entity
-				if ( cg.zoomMode || (!(cg_trueguns.integer || CG_PlayerIsDualWielding(cg.snap->ps.weapon)) && cg.snap->ps.weapon != WP_SABER && cg.snap->ps.weapon != WP_MELEE) || (cg.snap->ps.weapon == WP_SABER && cg_truesaberonly.integer) )
+				if ( cg.zoomMode || (!(cg_trueguns.integer || CG_ChangeFirstPersonView()) && cg.snap->ps.weapon != WP_SABER && cg.snap->ps.weapon != WP_MELEE) || (cg.snap->ps.weapon == WP_SABER && cg_truesaberonly.integer) )
 				{//not using first person saber test or, if so, not using saber
 					ent.renderfx = RF_THIRD_PERSON;			// only draw in mirrors
 				}
@@ -8369,7 +8449,7 @@ Ghoul2 Insert Start
 		if ( cent->currentState.number != 0
 			|| cg.renderingThirdPerson
 			|| cg.snap->ps.stats[STAT_HEALTH] <= 0
-			|| ( (cg_trueguns.integer || CG_PlayerIsDualWielding(cg.snap->ps.weapon)) && !cg.zoomMode )
+			|| ( (cg_trueguns.integer || CG_ChangeFirstPersonView()) && !cg.zoomMode )
 			|| ( !cg.renderingThirdPerson && (cg.snap->ps.weapon == WP_SABER||cg.snap->ps.weapon == WP_MELEE) )//First person saber
 			)
 		{//in some third person mode or NPC
@@ -8424,7 +8504,7 @@ Ghoul2 Insert Start
 		//Restrict True View Model changes to the player and do the True View camera view work.
 		if (cg.snap && cent->currentState.number == cg.snap->ps.viewEntity && cg_truebobbing.integer)
 		{
-			if ( !cg.renderingThirdPerson && ((cg_trueguns.integer || CG_PlayerIsDualWielding(cent->currentState.weapon)) || cent->currentState.weapon == WP_SABER
+			if ( !cg.renderingThirdPerson && ((cg_trueguns.integer || CG_ChangeFirstPersonView()) || cent->currentState.weapon == WP_SABER
 											  || cent->currentState.weapon == WP_MELEE) && !cg.zoomMode)
 			{
 				//<True View varibles
@@ -8563,11 +8643,11 @@ SkipTrueView:
 						{
 							if ( cent->gent->client->ps.stats[STAT_HEALTH] <= 0 )
 							{//dead, didn't actively turn it off
-								cent->gent->client->ps.saber[saberNum].blade[bladeNum].length -= cent->gent->client->ps.saber[saberNum].blade[bladeNum].lengthMax/10 * cg.frametime/100;
+								cent->gent->client->ps.saber[saberNum].blade[bladeNum].length -= cent->gent->client->ps.saber[saberNum].blade[bladeNum].lengthMax/10 * cg.frametime/100 * cg_ignitionSpeed.value;
 							}
 							else
 							{//actively turned it off, shrink faster
-								cent->gent->client->ps.saber[saberNum].blade[bladeNum].length -= cent->gent->client->ps.saber[saberNum].blade[bladeNum].lengthMax/10 * cg.frametime/100;
+								cent->gent->client->ps.saber[saberNum].blade[bladeNum].length -= cent->gent->client->ps.saber[saberNum].blade[bladeNum].lengthMax/10 * cg.frametime/100 * cg_ignitionSpeed.value;
 							}
 						}
 					}
@@ -8612,7 +8692,7 @@ SkipTrueView:
 								}
 								else
 								{
-									cent->gent->client->ps.saber[saberNum].blade[bladeNum].length += cent->gent->client->ps.saber[saberNum].blade[bladeNum].lengthMax/10 * cg.frametime/100;
+									cent->gent->client->ps.saber[saberNum].blade[bladeNum].length += cent->gent->client->ps.saber[saberNum].blade[bladeNum].lengthMax/10 * cg.frametime/100 * cg_ignitionSpeed.value;
 								}
 							}
 							if ( cent->gent->client->ps.saber[saberNum].blade[bladeNum].length > cent->gent->client->ps.saber[saberNum].blade[bladeNum].lengthMax )
@@ -8702,7 +8782,7 @@ SkipTrueView:
 			|| cg.renderingThirdPerson
 			|| cg.snap->ps.stats[STAT_HEALTH] <= 0
 			|| ( !cg.renderingThirdPerson && (cg.snap->ps.weapon == WP_SABER||cg.snap->ps.weapon == WP_MELEE) )  //First person saber
-			|| ( (cg_trueguns.integer || CG_PlayerIsDualWielding(cg.snap->ps.weapon)) && !cg.zoomMode )
+			|| ( (cg_trueguns.integer || CG_ChangeFirstPersonView()) && !cg.zoomMode )
 			)
 		{//if NPC, third person, or dead, unless using saber
 			//Get eyePoint & eyeAngles
@@ -8771,10 +8851,6 @@ SkipTrueView:
 			//NOTE: I'm only doing this for the saboteur right now - AT-STs might need this... others?
 			vec3_t oldMP = {0,0,0};
 			vec3_t oldMD = {0,0,0};
-			qboolean is_pistol = (qboolean)(cent->gent->s.weapon == WP_BLASTER_PISTOL
-											|| cent->gent->s.weapon == WP_REY
-											|| cent->gent->s.weapon == WP_JANGO
-											|| cent->gent->s.weapon == WP_CLONEPISTOL);
 
 			if( !calcedMp )
 			{
@@ -8789,9 +8865,9 @@ SkipTrueView:
 					// figure out where the actual model muzzle is
 					if (es->weapon == WP_ATST_MAIN)
 					{
-						if ( !es->number )
+						if (!es->number)
 						{//player, just use left one, I guess
-							if ( cent->gent->alt_fire )
+							if (cent->gent->alt_fire)
 							{
 								bolt = cent->gent->handRBolt;
 							}
@@ -8813,7 +8889,7 @@ SkipTrueView:
 					}
 					else	// ATST SIDE weapons
 					{
-						if ( cent->gent->alt_fire)
+						if (cent->gent->alt_fire)
 						{
 							bolt = cent->gent->genericBolt2;
 						}
@@ -8823,22 +8899,22 @@ SkipTrueView:
 						}
 					}
 
-					gi.G2API_GetBoltMatrix( cent->gent->ghoul2, cent->gent->playerModel, bolt, &boltMatrix, tempAngles, ent.origin, cg.time, cgs.model_draw, cent->currentState.modelScale );
+					gi.G2API_GetBoltMatrix(cent->gent->ghoul2, cent->gent->playerModel, bolt, &boltMatrix, tempAngles, ent.origin, cg.time, cgs.model_draw, cent->currentState.modelScale);
 
 					// work the matrix axis stuff into the original axis and origins used.
-					gi.G2API_GiveMeVectorFromMatrix( boltMatrix, ORIGIN, cent->gent->client->renderInfo.muzzlePoint );
-					gi.G2API_GiveMeVectorFromMatrix( boltMatrix, NEGATIVE_Y, cent->gent->client->renderInfo.muzzleDir );
+					gi.G2API_GiveMeVectorFromMatrix(boltMatrix, ORIGIN, cent->gent->client->renderInfo.muzzlePoint);
+					gi.G2API_GiveMeVectorFromMatrix(boltMatrix, NEGATIVE_Y, cent->gent->client->renderInfo.muzzleDir);
 				}
-				else if ( cent->gent && cent->gent->client && cent->gent->client->NPC_class == CLASS_GALAKMECH )
+				else if (cent->gent && cent->gent->client && (cent->gent->client->NPC_class == CLASS_GALAKMECH || (cent->gent->client->ps.weapon == WP_SBD && cent->gent->client->NPC_class != CLASS_DROIDEKA)))
 				{
 					int bolt = -1;
-					if ( cent->gent->lockCount )
+					if (cent->gent->lockCount)
 					{//using the big laser beam
 						bolt = cent->gent->handLBolt;
 					}
 					else//repeater
 					{
-						if ( cent->gent->alt_fire )
+						if (cent->gent->alt_fire)
 						{//fire from the lower barrel (not that anyone will ever notice this, but...)
 							bolt = cent->gent->genericBolt3;
 						}
@@ -8848,36 +8924,36 @@ SkipTrueView:
 						}
 					}
 
-					if ( bolt == -1 )
+					if (bolt == -1)
 					{
-						VectorCopy( ent.origin, cent->gent->client->renderInfo.muzzlePoint );
-						AngleVectors( tempAngles, cent->gent->client->renderInfo.muzzleDir, NULL, NULL );
+						VectorCopy(ent.origin, cent->gent->client->renderInfo.muzzlePoint);
+						AngleVectors(tempAngles, cent->gent->client->renderInfo.muzzleDir, NULL, NULL);
 					}
 					else
 					{
-						gi.G2API_GetBoltMatrix( cent->gent->ghoul2, cent->gent->playerModel, bolt, &boltMatrix, tempAngles, ent.origin, cg.time, cgs.model_draw, cent->currentState.modelScale );
+						gi.G2API_GetBoltMatrix(cent->gent->ghoul2, cent->gent->playerModel, bolt, &boltMatrix, tempAngles, ent.origin, cg.time, cgs.model_draw, cent->currentState.modelScale);
 
 						// work the matrix axis stuff into the original axis and origins used.
-						gi.G2API_GiveMeVectorFromMatrix( boltMatrix, ORIGIN, cent->gent->client->renderInfo.muzzlePoint );
-						gi.G2API_GiveMeVectorFromMatrix( boltMatrix, NEGATIVE_Y, cent->gent->client->renderInfo.muzzleDir );
+						gi.G2API_GiveMeVectorFromMatrix(boltMatrix, ORIGIN, cent->gent->client->renderInfo.muzzlePoint);
+						gi.G2API_GiveMeVectorFromMatrix(boltMatrix, NEGATIVE_Y, cent->gent->client->renderInfo.muzzleDir);
 					}
 				}
 				// Set the Vehicle Muzzle Point and Direction.
-				else if ( cent->gent && cent->gent->client && cent->gent->client->NPC_class == CLASS_VEHICLE )
+				else if (cent->gent && cent->gent->client && cent->gent->client->NPC_class == CLASS_VEHICLE)
 				{
 					// Get the Position and Direction of the Tag and use that as our Muzzles Properties.
 					mdxaBone_t	boltMatrix;
 					vec3_t		velocity;
 					VectorCopy(cent->gent->client->ps.velocity, velocity);
 					velocity[2] = 0;
- 					for ( int i = 0; i < MAX_VEHICLE_MUZZLES; i++ )
+					for (int i = 0; i < MAX_VEHICLE_MUZZLES; i++)
 					{
- 						if ( cent->gent->m_pVehicle->m_iMuzzleTag[i] != -1 )
+						if (cent->gent->m_pVehicle->m_iMuzzleTag[i] != -1)
 						{
-							gi.G2API_GetBoltMatrix( cent->gent->ghoul2, cent->gent->playerModel, cent->gent->m_pVehicle->m_iMuzzleTag[i], &boltMatrix, cent->lerpAngles, ent.origin, cg.time, cgs.model_draw, cent->currentState.modelScale );
-							gi.G2API_GiveMeVectorFromMatrix( boltMatrix, ORIGIN, cent->gent->m_pVehicle->m_Muzzles[i].m_vMuzzlePos );
-							gi.G2API_GiveMeVectorFromMatrix( boltMatrix, NEGATIVE_Y, cent->gent->m_pVehicle->m_Muzzles[i].m_vMuzzleDir );
-  							VectorMA(cent->gent->m_pVehicle->m_Muzzles[i].m_vMuzzlePos, 0.075f, velocity, cent->gent->m_pVehicle->m_Muzzles[i].m_vMuzzlePos);
+							gi.G2API_GetBoltMatrix(cent->gent->ghoul2, cent->gent->playerModel, cent->gent->m_pVehicle->m_iMuzzleTag[i], &boltMatrix, cent->lerpAngles, ent.origin, cg.time, cgs.model_draw, cent->currentState.modelScale);
+							gi.G2API_GiveMeVectorFromMatrix(boltMatrix, ORIGIN, cent->gent->m_pVehicle->m_Muzzles[i].m_vMuzzlePos);
+							gi.G2API_GiveMeVectorFromMatrix(boltMatrix, NEGATIVE_Y, cent->gent->m_pVehicle->m_Muzzles[i].m_vMuzzleDir);
+							VectorMA(cent->gent->m_pVehicle->m_Muzzles[i].m_vMuzzlePos, 0.075f, velocity, cent->gent->m_pVehicle->m_Muzzles[i].m_vMuzzlePos);
 						}
 						else
 						{
@@ -8885,12 +8961,12 @@ SkipTrueView:
 						}
 					}
 				}
-				else if ( ((cent->gent->client && cent->gent->NPC) || cg_dualWielding.integer)//client NPC
+				else if ((cent->gent && cent->gent->client && cent->gent->client->NPC_class == CLASS_DROIDEKA) || ((cent->gent->client && cent->gent->NPC) || cg_dualWielding.integer)//client NPC
 					/*
 					&& cent->gent->client->NPC_class == CLASS_REBORN//cultist
 					&& cent->gent->NPC->rank >= RANK_LT_COMM//commando
 					*/
-					&& is_pistol//using pistol
+					&& CG_IsWeaponPistol(cent->gent)//using pistol
 					&& cent->gent->weaponModel[1] )//one in each hand
 				{
 
@@ -8901,38 +8977,67 @@ SkipTrueView:
 						getBoth = qtrue;
 						oldOne = (cent->gent->count)?0:1;
 					}
-					if ( ( cent->gent->weaponModel[cent->gent->count] != -1)
+					if ((cent->gent->client->ps.weapon == WP_SBD) || ( ( cent->gent->weaponModel[cent->gent->count] != -1)
 						&& ( cent->gent->ghoul2.size() > cent->gent->weaponModel[cent->gent->count] )
-						&& ( cent->gent->ghoul2[cent->gent->weaponModel[cent->gent->count]].mModelindex != -1) )
+						&& ( cent->gent->ghoul2[cent->gent->weaponModel[cent->gent->count]].mModelindex != -1)) )
 					{//get whichever one we're using now
 						mdxaBone_t	boltMatrix;
 						// figure out where the actual model muzzle is
-						gi.G2API_GetBoltMatrix( cent->gent->ghoul2, cent->gent->weaponModel[cent->gent->count], 0, &boltMatrix, tempAngles, ent.origin, cg.time, cgs.model_draw, cent->currentState.modelScale );
+						if (cent->gent->client->ps.weapon == WP_SBD)
+						{
+							if(!cent->gent->count)
+								gi.G2API_GetBoltMatrix(cent->gent->ghoul2, cent->gent->playerModel, cent->gent->handRBolt, &boltMatrix, tempAngles, ent.origin, cg.time, cgs.model_draw, cent->currentState.modelScale);
+							else
+								gi.G2API_GetBoltMatrix(cent->gent->ghoul2, cent->gent->playerModel, cent->gent->handLBolt, &boltMatrix, tempAngles, ent.origin, cg.time, cgs.model_draw, cent->currentState.modelScale);
+						}
+						else
+						{
+							gi.G2API_GetBoltMatrix(cent->gent->ghoul2, cent->gent->weaponModel[cent->gent->count], 0, &boltMatrix, tempAngles, ent.origin, cg.time, cgs.model_draw, cent->currentState.modelScale);
+						}
 						// work the matrix axis stuff into the original axis and origins used.
 						gi.G2API_GiveMeVectorFromMatrix( boltMatrix, ORIGIN, cent->gent->client->renderInfo.muzzlePoint );
 						gi.G2API_GiveMeVectorFromMatrix( boltMatrix, NEGATIVE_Y, cent->gent->client->renderInfo.muzzleDir );
 					}
 					//get the old one too, if needbe, and store it in muzzle2
 					if ( getBoth
-						&& ( cent->gent->weaponModel[oldOne] != -1) //have a second weapon
+						&& (cent->gent->client->ps.weapon == WP_SBD
+						|| (( cent->gent->weaponModel[oldOne] != -1) //have a second weapon
 						&& ( cent->gent->ghoul2.size() > cent->gent->weaponModel[oldOne] ) //have a valid ghoul model index
-						&& ( cent->gent->ghoul2[cent->gent->weaponModel[oldOne]].mModelindex != -1) )//model exists and was loaded
+						&& ( cent->gent->ghoul2[cent->gent->weaponModel[oldOne]].mModelindex != -1))) )//model exists and was loaded
 					{//saboteur commando, toggle the muzzle point back and forth between the two pistols each time he fires
 						mdxaBone_t	boltMatrix;
 						// figure out where the actual model muzzle is
-						gi.G2API_GetBoltMatrix( cent->gent->ghoul2, cent->gent->weaponModel[oldOne], 0, &boltMatrix, tempAngles, ent.origin, cg.time, cgs.model_draw, cent->currentState.modelScale );
+						if (cent->gent->client->ps.weapon == WP_SBD)
+						{
+							if(!oldOne)
+								gi.G2API_GetBoltMatrix(cent->gent->ghoul2, cent->gent->playerModel, cent->gent->handRBolt, &boltMatrix, tempAngles, ent.origin, cg.time, cgs.model_draw, cent->currentState.modelScale);
+							else
+								gi.G2API_GetBoltMatrix(cent->gent->ghoul2, cent->gent->playerModel, cent->gent->handLBolt, &boltMatrix, tempAngles, ent.origin, cg.time, cgs.model_draw, cent->currentState.modelScale);
+						}
+						else
+						{
+							gi.G2API_GetBoltMatrix(cent->gent->ghoul2, cent->gent->weaponModel[oldOne], 0, &boltMatrix, tempAngles, ent.origin, cg.time, cgs.model_draw, cent->currentState.modelScale);
+						}
 						// work the matrix axis stuff into the original axis and origins used.
 						gi.G2API_GiveMeVectorFromMatrix( boltMatrix, ORIGIN, oldMP );
 						gi.G2API_GiveMeVectorFromMatrix( boltMatrix, NEGATIVE_Y, oldMD );
 					}
 				}
-				else if (( cent->gent->weaponModel[0] != -1) &&
+				else if (cent->gent->client->ps.weapon == WP_SBD || (( cent->gent->weaponModel[0] != -1) &&
 					( cent->gent->ghoul2.size() > cent->gent->weaponModel[0] ) &&
-					( cent->gent->ghoul2[cent->gent->weaponModel[0]].mModelindex != -1))
+					( cent->gent->ghoul2[cent->gent->weaponModel[0]].mModelindex != -1)))
 				{
+					
 					mdxaBone_t	boltMatrix;
-					// figure out where the actual model muzzle is
-					gi.G2API_GetBoltMatrix( cent->gent->ghoul2, cent->gent->weaponModel[0], 0, &boltMatrix, tempAngles, ent.origin, cg.time, cgs.model_draw, cent->currentState.modelScale );
+					if (cent->gent->client->ps.weapon == WP_SBD)
+					{
+						gi.G2API_GetBoltMatrix(cent->gent->ghoul2, cent->gent->playerModel, cent->gent->handRBolt, &boltMatrix, tempAngles, ent.origin, cg.time, cgs.model_draw, cent->currentState.modelScale);
+					}
+					else
+					{
+						// figure out where the actual model muzzle is
+						gi.G2API_GetBoltMatrix(cent->gent->ghoul2, cent->gent->weaponModel[0], 0, &boltMatrix, tempAngles, ent.origin, cg.time, cgs.model_draw, cent->currentState.modelScale);
+					}
 					// work the matrix axis stuff into the original axis and origins used.
 					gi.G2API_GiveMeVectorFromMatrix( boltMatrix, ORIGIN, cent->gent->client->renderInfo.muzzlePoint );
 					gi.G2API_GiveMeVectorFromMatrix( boltMatrix, NEGATIVE_Y, cent->gent->client->renderInfo.muzzleDir );
@@ -8987,7 +9092,7 @@ SkipTrueView:
 				{
 					if (firing_attack & ALT_ATTACK)
 					{
-						effect = &wData->mAltMuzzleEffect[0];
+						effect = CG_GetAltMuzzleEffect(cent->gent);
 					}
 					else if (firing_attack & TERTIARY_ATTACK)
 					{
@@ -8996,7 +9101,7 @@ SkipTrueView:
 					else
 					{	
 						// We need to make sure that the base guns also get their sound.
-						effect = &wData->mMuzzleEffect[0];
+						effect = CG_GetMuzzleEffect(cent->gent);
 					}
 				}
 
@@ -9005,13 +9110,13 @@ SkipTrueView:
 					// We're alt-firing, so see if we need to override with a custom alt-fire effect
 					if ( wData->mAltMuzzleEffect[0] )
 					{
-						effect = &wData->mAltMuzzleEffect[0];
+						effect = CG_GetAltMuzzleEffect(cent->gent);
 					}
 				}
 
 				if (/*( cent->currentState.eFlags & EF_FIRING || cent->currentState.eFlags & EF_ALT_FIRING ) &&*/ effect )
 				{
-					if ( (cent->gent && cent->gent->NPC) || CG_PlayerIsDualWielding(cg.snap->ps.weapon) )
+					if ( (cent->gent && cent->gent->NPC) || CG_ChangeFirstPersonView() )
 					{
 						if ( !VectorCompare( oldMP, vec3_origin )
 							&& !VectorCompare( oldMD, vec3_origin ) )
@@ -9088,17 +9193,24 @@ SkipTrueView:
 				//FIXME: if the target is absorbing or blocking lightning w/saber, draw a beam from my hand to his (hand?chest?saber?)
 				vec3_t tAng, fxDir;
 				VectorCopy( cent->lerpAngles, tAng );
-				if ( cent->gent->client->ps.forcePowerLevel[FP_LIGHTNING] > FORCE_LEVEL_2 )
+				if ( cent->gent->client->ps.forcePowerLevel[FP_LIGHTNING] > FORCE_LEVEL_2)
 				{//arc
 					vec3_t	fxAxis[3];
 					AnglesToAxis( tAng, fxAxis );
-					theFxScheduler.PlayEffect( CG_GetWideForceLightning(cent), cent->gent->client->renderInfo.handLPoint, fxAxis );
+					if (cent->gent->attrFlags & ATTR_PRECISE_LIGHTNING)
+						theFxScheduler.PlayEffect(CG_GetForceLightning(cent), cent->gent->client->renderInfo.handLPoint, fxAxis);						
+					else
+						theFxScheduler.PlayEffect(CG_GetWideForceLightning(cent), cent->gent->client->renderInfo.handLPoint, fxAxis);
+
 					if ( cent->gent->client->ps.torsoAnim == BOTH_FORCE_2HANDEDLIGHTNING
 						|| cent->gent->client->ps.torsoAnim == BOTH_FORCE_2HANDEDLIGHTNING_START
 						|| cent->gent->client->ps.torsoAnim == BOTH_FORCE_2HANDEDLIGHTNING_HOLD
 						|| cent->gent->client->ps.torsoAnim == BOTH_FORCE_2HANDEDLIGHTNING_RELEASE )
 					{//jackin' 'em up, Palpatine-style
-						theFxScheduler.PlayEffect(CG_GetWideForceLightning(cent), cent->gent->client->renderInfo.handRPoint, fxAxis );
+						if (cent->gent->attrFlags & ATTR_PRECISE_LIGHTNING)
+							theFxScheduler.PlayEffect(CG_GetForceLightning(cent), cent->gent->client->renderInfo.handRPoint, fxAxis);
+						else
+							theFxScheduler.PlayEffect(CG_GetWideForceLightning(cent), cent->gent->client->renderInfo.handRPoint, fxAxis);
 					}
 				}
 				else
@@ -9261,7 +9373,7 @@ Ghoul2 Insert End
 		{//no viewentity
 			if ( cent->currentState.number == cg.snap->ps.clientNum )
 			{//I am the player
-				if ( cg.zoomMode || (!(cg_trueguns.integer || CG_PlayerIsDualWielding(cg.snap->ps.weapon)) && cg.snap->ps.weapon != WP_SABER && cg.snap->ps.weapon != WP_MELEE) || (cg.snap->ps.weapon == WP_SABER && cg_truesaberonly.integer) )
+				if ( cg.zoomMode || (!(cg_trueguns.integer || CG_ChangeFirstPersonView()) && cg.snap->ps.weapon != WP_SABER && cg.snap->ps.weapon != WP_MELEE) || (cg.snap->ps.weapon == WP_SABER && cg_truesaberonly.integer) )
 				{//not using saber or fists
 					renderfx = RF_THIRD_PERSON;			// only draw in mirrors
 				}
@@ -9269,7 +9381,7 @@ Ghoul2 Insert End
 		}
 		else if ( cent->currentState.number == cg.snap->ps.viewEntity )
 		{//I am the view entity
-			if ( cg.zoomMode || (!(cg_trueguns.integer || CG_PlayerIsDualWielding(cg.snap->ps.weapon)) && cg.snap->ps.weapon != WP_SABER && cg.snap->ps.weapon != WP_MELEE) || (cg.snap->ps.weapon == WP_SABER && cg_truesaberonly.integer) )
+			if ( cg.zoomMode || (!(cg_trueguns.integer || CG_ChangeFirstPersonView()) && cg.snap->ps.weapon != WP_SABER && cg.snap->ps.weapon != WP_MELEE) || (cg.snap->ps.weapon == WP_SABER && cg_truesaberonly.integer) )
 			{//not using saber or fists
 				renderfx = RF_THIRD_PERSON;			// only draw in mirrors
 			}
@@ -9544,7 +9656,7 @@ Ghoul2 Insert End
 				// Try and get a default muzzle so we have one to fall back on
 				if ( wData->mMuzzleEffectID )
 				{
-					effect = wData->mMuzzleEffectID;
+					effect = CG_GetMuzzleEffectID(cent->gent);
 				}
 
 				if (wData->mTertiaryMuzzleEffectID)
@@ -9557,7 +9669,7 @@ Ghoul2 Insert End
 					// We're alt-firing, so see if we need to override with a custom alt-fire effect
 					if ( wData->mAltMuzzleEffectID )
 					{
-						effect = wData->mAltMuzzleEffectID;
+						effect = CG_GetAltMuzzleEffectID(cent->gent);
 					}
 				}
 
@@ -9616,13 +9728,12 @@ Ghoul2 Insert End
 	}
 
 	//FIXME: for debug, allow to draw a cone of the NPC's FOV...
-	if ( cent->currentState.number == 0 && (cg.renderingThirdPerson || ((cg_trueguns.integer || CG_PlayerIsDualWielding(cg.snap->ps.weapon)) && !cg.zoomMode)) )
+	if ( cent->currentState.number == 0 && (cg.renderingThirdPerson || ((cg_trueguns.integer || CG_ChangeFirstPersonView()) && !cg.zoomMode)) )
 	{
 		playerState_t *ps = &cg.predicted_player_state;
 
 		if (( ps->weaponstate == WEAPON_CHARGING_ALT && ps->weapon == WP_BRYAR_PISTOL )
 			|| ( ps->weaponstate == WEAPON_CHARGING_ALT && ps->weapon == WP_BLASTER_PISTOL )
-			|| ( ps->weaponstate == WEAPON_CHARGING_ALT && ps->weapon == WP_REY )
 			|| ( ps->weapon == WP_BOWCASTER && ps->weaponstate == WEAPON_CHARGING )
 			|| ( ps->weapon == WP_DEMP2 && ps->weaponstate == WEAPON_CHARGING_ALT ))
 		{
@@ -9635,12 +9746,6 @@ Ghoul2 Insert End
 			{
 				// Hardcoded max charge time of 1 second
 				val = ( cg.time - ps->weaponChargeTime ) * 0.001f;
-				shader = cgi_R_RegisterShader( "gfx/effects/bryarFrontFlash" );
-			}
-			else if ( ps->weapon == WP_REY)
-			{
-				// Hardcoded max charge time of 0.5 second
-				val = ( cg.time - ps->weaponChargeTime ) * 0.0005f;
 				shader = cgi_R_RegisterShader( "gfx/effects/bryarFrontFlash" );
 			}
 			else if ( ps->weapon == WP_BOWCASTER )

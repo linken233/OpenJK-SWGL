@@ -48,6 +48,8 @@ extern void G_SetWeapon( gentity_t *self, int wp );
 extern stringID_table_t WPTable[];
 
 extern void SP_NPC_spawner(gentity_t *self);
+extern void Inquisitor_Spin(gentity_t* ent, qboolean increment = qtrue);
+extern void Inquisitor_Stop(gentity_t* ent, qboolean running = qfalse);
 
 extern cvar_t	*g_char_model;
 extern cvar_t	*g_char_skin_head;
@@ -79,7 +81,8 @@ extern cvar_t *g_NPCsabertwocolor;
 extern cvar_t *g_NPChealth;
 extern cvar_t *g_NPCspawnscript;
 extern cvar_t *g_NPCfleescript;
-extern cvar_t *g_NPCdeathscript;
+extern cvar_t* g_NPCdeathscript;
+extern cvar_t* g_NPCmodel;
 
 /*
 ===================
@@ -444,10 +447,18 @@ void Svcmd_SaberAttackCycle_f( void )
 		G_Sound(self, G_SoundIndex("sound/vehicles/common/linkweaps.wav"));
 	}
 
-	// If you are scoped and switched to tertiaryMode, you should be no longer scoped.
-	if (self->s.weapon == WP_CLONECOMMANDO && self->client->ps.tertiaryMode && cg.zoomMode >= ST_A280)
+	if (self->client->ps.saber->type == SABER_INQUISITOR )
 	{
-		cg.zoomMode = 0;
+		float spinSpeed = 0.0f;
+		if (self->client->ps.saber->inquisitor_spin < 3)
+		{
+			Inquisitor_Spin(self);
+		}
+		else
+		{
+			Inquisitor_Stop(self);
+		}
+		return;
 	}
 
 	if ( self->client->ps.dualSabers )
@@ -921,6 +932,8 @@ static void Svcmd_Spawn_f(void)
 
 	NPCspawner->NPC_SaberOne = g_NPCsaber->string;
 
+	NPCspawner->NPC_model = g_NPCmodel->string;
+
 	if (Q_stricmp("", g_NPCsabertwo->string) 
 	&& Q_stricmp("empty", g_NPCsabertwo->string) 
 	&& Q_stricmp("null", g_NPCsabertwo->string))
@@ -940,6 +953,10 @@ static void Svcmd_Spawn_f(void)
 
 	NPCspawner->behaviorSet[BSET_DEATH] = g_NPCdeathscript->string;
 
+	NPCspawner->NPC_color_red = g_npc_color_red->integer;
+	NPCspawner->NPC_color_green = g_npc_color_green->integer;
+	NPCspawner->NPC_color_blue = g_npc_color_blue->integer;
+
 	NPCspawner->count = 1;
 
 	NPCspawner->delay = 0;
@@ -953,6 +970,27 @@ static void Svcmd_Spawn_f(void)
 	}
 
 	NPC_PrecacheByClassName(NPCspawner->NPC_type);
+
+	// If the NPC is random, we need to clear the variables, that way they won't be all confused and stuff.
+	if (!Q_stricmp("jedi_random", NPCspawner->NPC_type)
+		|| !Q_stricmp("kotor_jedi", NPCspawner->NPC_type)
+		|| !Q_stricmp("prequel_jedi", NPCspawner->NPC_type)
+		|| !Q_stricmp("swtor_jedi", NPCspawner->NPC_type)
+		|| !Q_stricmp("swtor_sith", NPCspawner->NPC_type)
+		|| !Q_stricmp("jedi_youngling", NPCspawner->NPC_type))
+	{
+		NPCspawner->NPC_skin = NULL;
+
+		NPCspawner->NPC_SaberOne = NULL;
+
+		NPCspawner->NPC_model = NULL;
+		
+		NPCspawner->NPC_SaberTwo = NULL;
+
+		NPCspawner->NPC_SaberOneColor = NULL;
+
+		NPCspawner->NPC_SaberTwoColor = NULL;
+	}
 
 	if (!Q_stricmp("jedi_random", NPCspawner->NPC_type))
 	{//special case, for testing
@@ -1010,26 +1048,17 @@ static void Svcmd_Scale_f(void)
 		gi.Printf(S_COLOR_RED "USAGE: scale <30-150>" S_COLOR_WHITE "\n");
 	}
 	else if (gi.argc() == 2)
-	{
-		try
-		{
-			int value = std::stoi(gi.argv(1));
+	{		
+		int value = atoi((char*)gi.argv(1));
 
-			if (value < 30 || value > 150)
-			{
-				gi.Printf(S_COLOR_RED "ERROR: Scale must be between 30 and 150. You put %i." S_COLOR_WHITE "\n", value);
-			}
-			else
-			{
-				player->s.modelScale[0] = player->s.modelScale[1] = player->s.modelScale[2] = value / 100.0f;
-			}
-		}
-		catch (...)
+		if (value < 30 || value > 150)
 		{
-			gi.Printf(S_COLOR_RED "ERROR: You just tried to crash the game! Shame on you!" S_COLOR_WHITE "\n");
+			gi.Printf(S_COLOR_RED "ERROR: Scale must be between 30 and 150.\n");
 		}
-
-		
+		else
+		{
+			player->s.modelScale[0] = player->s.modelScale[1] = player->s.modelScale[2] = value / 100.0f;
+		}		
 	}
 }
 

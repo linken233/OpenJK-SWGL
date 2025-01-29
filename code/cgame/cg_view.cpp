@@ -1329,7 +1329,7 @@ float CG_ForceSpeedFOV( void )
 	float timeLeft = player->client->ps.forcePowerDuration[FP_SPEED] - cg.time;
 	float length = FORCE_SPEED_DURATION*forceSpeedValue[player->client->ps.forcePowerLevel[FP_SPEED]];
 	float amt = forceSpeedFOVMod[player->client->ps.forcePowerLevel[FP_SPEED]];
-	if ( !cg.renderingThirdPerson && ((!cg.zoomMode && (cg_trueguns.integer || CG_PlayerIsDualWielding(cg.snap->ps.weapon))) || cg.snap->ps.weapon == WP_SABER
+	if ( !cg.renderingThirdPerson && ((!cg.zoomMode && (cg_trueguns.integer || CG_ChangeFirstPersonView())) || cg.snap->ps.weapon == WP_SABER
 										   || cg.snap->ps.weapon == WP_MELEE) && cg_truefov.value )
 	{
 		fov = cg_truefov.value;
@@ -1408,7 +1408,7 @@ static qboolean	CG_CalcFov( void ) {
 		{
 			fov_x = cg.overrides.fov;
 		}
-		else if ( !cg.renderingThirdPerson && ((!cg.zoomMode && (cg_trueguns.integer || CG_PlayerIsDualWielding(cg.snap->ps.weapon))) || cg.snap->ps.weapon == WP_SABER
+		else if ( !cg.renderingThirdPerson && ((!cg.zoomMode && (cg_trueguns.integer || CG_ChangeFirstPersonView())) || cg.snap->ps.weapon == WP_SABER
 											   || cg.snap->ps.weapon == WP_MELEE) && cg_truefov.value )
 		{
 			fov_x = cg_truefov.value;
@@ -2116,7 +2116,7 @@ void CG_DrawActiveFrame( int serverTime, stereoFrame_t stereoView ) {
 		cg_thirdPerson.integer
 		|| (cg.snap->ps.stats[STAT_HEALTH] <= 0)
 		|| (cg.snap->ps.eFlags&EF_HELD_BY_SAND_CREATURE)
-		|| ((g_entities[0].client&&g_entities[0].client->NPC_class==CLASS_ATST)
+		|| ((g_entities[0].client&&g_entities[0].client->NPC_class==CLASS_ATST) || (g_entities[0].client && g_entities[0].client->NPC_class == CLASS_DROIDEKA)
 		|| ((cg.snap->ps.weapon == WP_SABER || cg.snap->ps.weapon == WP_MELEE) && !cg_fpls.integer) ));
 
 	if (cg_fpls.integer && cg_trueinvertsaber.integer == 2 && (cg.snap->ps.weapon == WP_SABER || cg.snap->ps.weapon == WP_MELEE))

@@ -325,6 +325,7 @@ public:
 
 	//scriptflags
 	int			scriptFlags;//in b_local.h
+	int			attrFlags;//in NPC_SWGL.h
 
 	//moveInfo
 	int			desiredSpeed;

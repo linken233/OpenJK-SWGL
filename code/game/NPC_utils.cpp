@@ -281,17 +281,12 @@ qboolean NPC_UpdateAngles ( qboolean doPitch, qboolean doYaw )
 			NPC->s.weapon==WP_FLECHETTE ||
 			NPC->s.weapon==WP_BRYAR_PISTOL ||
 			NPC->s.weapon==WP_NOGHRI_STICK ||
-			NPC->s.weapon==WP_BATTLEDROID ||
 			NPC->s.weapon==WP_THEFIRSTORDER ||
 			NPC->s.weapon==WP_CLONECARBINE ||
-			NPC->s.weapon==WP_REBELBLASTER ||
-			NPC->s.weapon==WP_CLONERIFLE ||
 			NPC->s.weapon==WP_CLONECOMMANDO ||
 			NPC->s.weapon==WP_REBELRIFLE ||
-			NPC->s.weapon==WP_REY ||
-			NPC->s.weapon==WP_JANGO ||
 			NPC->s.weapon==WP_BOBA ||
-			NPC->s.weapon==WP_CLONEPISTOL)
+			NPC->s.weapon==WP_SBD)
 		{
 			yawSpeed *= 10.0f;
 		}

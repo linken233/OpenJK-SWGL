@@ -76,6 +76,7 @@ stringID_table_t SaberTable[] =
 	ENUM2STRING(SABER_STAR),
 	ENUM2STRING(SABER_TRIDENT),
 	ENUM2STRING(SABER_SITH_SWORD),
+	ENUM2STRING(SABER_INQUISITOR),
 	{ "",	-1 }
 };
 
@@ -492,7 +493,7 @@ static void Saber_ParseSaberType( saberInfo_t *saber, const char **p ) {
 	if ( COM_ParseString( p, &value ) )
 		return;
 	saberType = GetIDForString( SaberTable, value );
-	if ( saberType >= SABER_SINGLE && saberType <= NUM_SABERS )
+	if ( saberType >= SABER_SINGLE && saberType < NUM_SABERS )
 		saber->type = (saberType_t)saberType;
 }
 static void Saber_ParseSaberModel( saberInfo_t *saber, const char **p ) {

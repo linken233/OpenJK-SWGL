@@ -207,7 +207,6 @@ cvar_t	*g_saberRestrictForce;
 cvar_t	*g_saberPickuppableDroppedSabers;
 cvar_t	*g_dismemberProbabilities;
 cvar_t	*g_allowSaberLocking;
-cvar_t	*g_setSaberLocking;
 
 cvar_t	*g_validJKO;
 
@@ -248,14 +247,12 @@ cvar_t *g_NPCfleescript;
 cvar_t *g_NPCdeathscript;
 cvar_t *g_NPChead;
 cvar_t *g_NPCtorso;
-cvar_t *g_NPClegs;
+cvar_t* g_NPClegs;
+cvar_t* g_NPCmodel;
 
 cvar_t* g_darkkorriban;
 
-cvar_t *g_knightfall;
-
 cvar_t *g_allowSaberTwirling;
-
 
 // kef -- used with DebugTraceForNPC
 cvar_t	*g_npcdebug;
@@ -729,14 +726,11 @@ void G_InitCvars( void ) {
 	g_saberRestrictForce = gi.cvar( "g_saberRestrictForce", "0", CVAR_ARCHIVE );//restricts certain force powers when using a 2-handed saber or 2 sabers
 	g_saberPickuppableDroppedSabers = gi.cvar( "g_saberPickuppableDroppedSabers", "0", CVAR_ARCHIVE );//lets you pick up sabers that are dropped
 
-	g_allowSaberLocking = gi.cvar("g_allowSaberLocking", "1", CVAR_ARCHIVE);//Lets you enable or disable saber locking while ingame.
-	g_setSaberLocking = gi.cvar("g_setSaberLocking", "1", CVAR_INIT);//Lets you enable or disable saber locking while ingame. (Cvar used only in cutscenes so as not to override the player's own preference)
+	g_allowSaberLocking = gi.cvar("g_allowSaberLocking", "1", CVAR_ARCHIVE);// Lets you enable or disable saber locking while ingame.
 
 	g_adoptcharstats = gi.cvar("g_adoptcharstats", "1", CVAR_ARCHIVE);// Lets the player adopt the health and armor of characters they select while ingame (or disable it). Disabled by default in missions.
 
 	g_validJKO = gi.cvar("g_validJKO", "0", CVAR_INIT);
-
-	g_knightfall = gi.cvar("g_knightfall", "0", CVAR_INIT);
 
 	g_forceLightningColor = gi.cvar("g_forceLightningColor", "0", CVAR_ARCHIVE);
 
@@ -770,9 +764,9 @@ void G_InitCvars( void ) {
 	g_NPCtype = gi.cvar("g_NPCtype", "stormtrooper", CVAR_ARCHIVE | CVAR_NORESTART);
 	g_NPCteam = gi.cvar("g_NPCteam", "enemy", CVAR_ARCHIVE | CVAR_NORESTART);
 	g_NPChealth = gi.cvar("g_NPChealth", "100", CVAR_ARCHIVE | CVAR_NORESTART);
-	g_NPCspawnscript = gi.cvar("g_NPCspawnscript", "spawnscripts/no_follow", CVAR_ARCHIVE | CVAR_NORESTART);
-	g_NPCfleescript = gi.cvar("g_NPCfleescript", "fleescripts/surrender", CVAR_ARCHIVE | CVAR_NORESTART);
-	g_NPCdeathscript = gi.cvar("g_NPCdeathscript", "deathscripts/losehead", CVAR_ARCHIVE | CVAR_NORESTART);
+	g_NPCspawnscript = gi.cvar("g_NPCspawnscript", "spawnscripts/none", CVAR_ARCHIVE | CVAR_NORESTART);
+	g_NPCfleescript = gi.cvar("g_NPCfleescript", "fleescripts/none", CVAR_ARCHIVE | CVAR_NORESTART);
+	g_NPCdeathscript = gi.cvar("g_NPCdeathscript", "deathscripts/none", CVAR_ARCHIVE | CVAR_NORESTART);
 	g_NPChead = gi.cvar("g_NPChead", "model_default", CVAR_ARCHIVE | CVAR_NORESTART);
 	g_NPCtorso = gi.cvar("g_NPCtorso", "model_default", CVAR_ARCHIVE | CVAR_NORESTART);
 	g_NPClegs = gi.cvar("g_NPClegs", "model_default", CVAR_ARCHIVE | CVAR_NORESTART);
@@ -782,6 +776,7 @@ void G_InitCvars( void ) {
 	g_NPCsabercolor = gi.cvar("g_NPCsabercolor", "red", CVAR_ARCHIVE | CVAR_NORESTART);
 	g_NPCsabertwocolor = gi.cvar("g_NPCsabertwocolor", "red", CVAR_ARCHIVE | CVAR_NORESTART);
 	g_NPCLightningColor = gi.cvar("g_NPCLightningColor", "blue", CVAR_ARCHIVE | CVAR_NORESTART);
+	g_NPCmodel = gi.cvar("g_NPCmodel", "stormtrooper", CVAR_ARCHIVE | CVAR_NORESTART);
 
 	g_allowSaberTwirling = gi.cvar("g_allowSaberTwirling", "1", CVAR_ARCHIVE | CVAR_NORESTART);
 
@@ -1636,6 +1631,11 @@ qboolean G_RagDoll(gentity_t *ent, vec3_t forcedAngles)
 	int ragAnim;
 	//int ragVar = gi.Cvar_VariableIntegerValue("broadsword");
 	int ragVar = g_broadsword->integer;
+
+	if (ent->client->NPC_class == CLASS_DROIDEKA)
+	{
+		return qfalse;
+	}
 
 	if (!ragVar)
 	{

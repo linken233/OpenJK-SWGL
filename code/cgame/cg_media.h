@@ -29,6 +29,8 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "../cgame/cg_local.h"
 #include "g_shared.h"
 
+#define	TARGET_FPS	60
+
 #define	NUM_CROSSHAIRS		9
 
 typedef enum {

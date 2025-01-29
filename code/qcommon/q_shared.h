@@ -799,6 +799,7 @@ typedef enum
 	SABER_STAR,
 	SABER_TRIDENT,
 	SABER_SITH_SWORD,
+	SABER_INQUISITOR,
 	NUM_SABERS
 } saberType_t;
 
@@ -1043,6 +1044,8 @@ typedef struct
 	//these values are global to the saber, like all of the ones above
 	int			saberFlags;					//from SFL_ list above
 	int			saberFlags2;				//from SFL2_ list above
+	int			inquisitor_spin;
+	float		inquisitor_speed;
 
 	//done in cgame (client-side code)
 	qhandle_t	spinSound;					//none - if set, plays this sound as it spins when thrown
@@ -1587,6 +1590,7 @@ public:
 }; // saberInfoRetail_t
 
 #define MAX_SABERS 2	// if this ever changes then update the table "static const save_field_t savefields_gClient[]"!!!!!!!!!!!!
+#define MAX_NUM_WEAPONS 36
 
 // playerState_t is the information needed by both the client and server
 // to predict player motion and actions
@@ -1643,6 +1647,7 @@ public:
 
 	int			clientNum;		// ranges from 0 to MAX_CLIENTS-1
 	int			weapon;			// copied to entityState_t->weapon
+	int			dynWpnVals[MAX_NUM_WEAPONS];
 	int			weaponstate;
 
 	int			batteryCharge;
@@ -1702,6 +1707,14 @@ public:
 	int			lastOnGround;	//last time you were on the ground
 	int			lastStationary;	//last time you were on the ground
 	int			weaponShotCount;
+
+	// Forced animations
+	int forceUpperAnim;
+	int forceLowerAnim;
+	int forceUpperAnimTimer;
+	int forceLowerAnimTimer;
+	int forceUpperAnimSpeed;
+	int forceLowerAnimSpeed;
 
 #ifndef JK2_MODE
 	//FIXME: maybe allocate all these structures (saber, force powers, vehicles)
@@ -1876,7 +1889,7 @@ public:
 	int			forcePowerRegenAmount;				//default is 1
 #endif // !JK2_MODE
 
-	int			forcePowerLevel[NUM_FORCE_POWERS];		//so we know the max forceJump power you have
+	int			 forcePowerLevel[NUM_FORCE_POWERS];		//so we know the max forceJump power you have
 	float		forceJumpZStart;					//So when you land, you don't get hurt as much
 	float		forceJumpCharge;					//you're current forceJump charge-up level, increases the longer you hold the force jump button down
 	int			forceGripEntityNum;					//what entity I'm gripping
@@ -1973,6 +1986,7 @@ public:
 		saved_game.write<int32_t>(externalEventTime);
 		saved_game.write<int32_t>(clientNum);
 		saved_game.write<int32_t>(weapon);
+		saved_game.write<int32_t>(dynWpnVals);
 		saved_game.write<int32_t>(weaponstate);
 		saved_game.write<int32_t>(batteryCharge);
 		saved_game.write<float>(viewangles);
@@ -2114,6 +2128,13 @@ public:
 		saved_game.write<int32_t>(tertiaryMode);
 		saved_game.write<int8_t>(firing_attack);
 		saved_game.write<int8_t>(prev_firing_attack);
+
+		saved_game.write<int32_t>(forceUpperAnim);
+		saved_game.write<int32_t>(forceLowerAnim);
+		saved_game.write<int32_t>(forceUpperAnimTimer);
+		saved_game.write<int32_t>(forceLowerAnimTimer);
+		saved_game.write<int32_t>(forceUpperAnimSpeed);
+		saved_game.write<int32_t>(forceLowerAnimSpeed);
 	}
 
 	void sg_import(
@@ -2149,6 +2170,7 @@ public:
 		saved_game.read<int32_t>(externalEventTime);
 		saved_game.read<int32_t>(clientNum);
 		saved_game.read<int32_t>(weapon);
+		saved_game.read<int32_t>(dynWpnVals);
 		saved_game.read<int32_t>(weaponstate);
 		saved_game.read<int32_t>(batteryCharge);
 		saved_game.read<float>(viewangles);
@@ -2284,12 +2306,19 @@ public:
 		saved_game.read<int32_t>(vehTurnaroundTime);
 		saved_game.read<int32_t>(brokenLimbs);
 		saved_game.read<int32_t>(electrifyTime);
-		saved_game.read<int32_t>(stasisTime);
-#endif // !JK2_MODE
+		saved_game.read<int32_t>(stasisTime); 
 		saved_game.read<int32_t>(shotsRemaining);
 		saved_game.read<int32_t>(tertiaryMode);
 		saved_game.read<int8_t>(firing_attack);
 		saved_game.read<int8_t>(prev_firing_attack);
+		saved_game.read<int32_t>(forceUpperAnim);
+		saved_game.read<int32_t>(forceLowerAnim);
+		saved_game.read<int32_t>(forceUpperAnimTimer);
+		saved_game.read<int32_t>(forceLowerAnimTimer);
+		saved_game.read<int32_t>(forceUpperAnimSpeed);
+		saved_game.read<int32_t>(forceLowerAnimSpeed);
+#endif // !JK2_MODE
+		
 	}
 }; // PlayerStateBase
 
@@ -2484,6 +2513,13 @@ typedef struct entityState_s {// !!!!!!!!!!! LOADSAVE-affecting struct !!!!!!!!!
 
 	int		scale;			//Scale players
 
+	int forceUpperAnim;
+	int forceLowerAnim;
+	int forceUpperAnimTimer;
+	int forceLowerAnimTimer;
+	int forceUpperAnimSpeed;
+	int forceLowerAnimSpeed;
+
 	//FIXME: why did IMMERSION dupe these 2 fields here?  There's no reason for this!!!
 	qboolean	saberInFlight;
 	qboolean	saberActive;
@@ -2565,6 +2601,12 @@ Ghoul2 Insert End
 		saved_game.write<float>(modelScale);
 		saved_game.write<int32_t>(radius);
 		saved_game.write<int32_t>(boltInfo);
+		saved_game.write<int32_t>(forceUpperAnim);
+		saved_game.write<int32_t>(forceLowerAnim);
+		saved_game.write<int32_t>(forceUpperAnimTimer);
+		saved_game.write<int32_t>(forceLowerAnimTimer);
+		saved_game.write<int32_t>(forceUpperAnimSpeed);
+		saved_game.write<int32_t>(forceLowerAnimSpeed);
 
 #ifndef JK2_MODE
 		saved_game.write<int32_t>(isPortalEnt);
@@ -2625,6 +2667,13 @@ Ghoul2 Insert End
 #ifndef JK2_MODE
 		saved_game.read<int32_t>(isPortalEnt);
 #endif // !JK2_MODE
+
+		saved_game.read<int32_t>(forceUpperAnim);
+		saved_game.read<int32_t>(forceLowerAnim);
+		saved_game.read<int32_t>(forceUpperAnimTimer);
+		saved_game.read<int32_t>(forceLowerAnimTimer);
+		saved_game.read<int32_t>(forceUpperAnimSpeed);
+		saved_game.read<int32_t>(forceLowerAnimSpeed);
 	}
 } entityState_t;
 

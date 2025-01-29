@@ -672,6 +672,8 @@ extern	vmCvar_t		cg_hudRatio;
 
 extern	vmCvar_t		cg_dualWielding;
 
+extern vmCvar_t			cg_switchDynWpnMdl;
+
 void CG_NewClientinfo( int clientNum );
 //
 // cg_main.c
@@ -833,6 +835,8 @@ void CG_Weapon_f( void );
 void CG_DPNextWeapon_f( void );
 void CG_DPPrevWeapon_f(void);
 void CG_Dualwield_f(void);
+qboolean CG_SwitchDynWpnMdl_f(qboolean nextDynWpn);
+void CG_SwitchDynWpnMdl_f(void);
 void CG_DPNextInventory_f( void );
 void CG_DPPrevInventory_f( void );
 void CG_DPNextForcePower_f( void );
@@ -850,7 +854,24 @@ void CG_DrawWeaponSelect( void );
 
 void CG_OutOfAmmoChange( void );	// should this be in pmove?
 
-qboolean CG_PlayerIsDualWielding(int weapon);
+qboolean CG_IsWeaponPistol(gentity_t *ent);
+qboolean CG_ChangeFirstPersonView(void);
+
+qboolean CG_IsWeaponDynamic(int weaponNum);
+int CG_GetDynWpnNum(int weaponNum, int dynWpnVal);
+int CG_GetDynWpnNum(gentity_t *ent);
+int CG_GetMaxDynWpn(int weaponNum);
+qboolean CG_IsDefaultWeaponModel(int dynWpnVal);
+qboolean CG_IsDefaultWeaponModel(gentity_t *ent, int weaponNum);
+const char *CG_GetCurrentWeaponModel(gentity_t *ent);
+const char *CG_GetCurrentWeaponModel(gentity_t *ent, int weaponNum);
+const char *CG_GetMuzzleEffect(gentity_t *ent);
+const char *CG_GetAltMuzzleEffect(gentity_t *ent);
+int CG_GetBaseWpnFromDynWpn(int dynWpnNum);
+int CG_GetItemGITag(gitem_t *item);
+int CG_GetDynWpnValue(int weaponNum, int dynWpnNum);
+void CG_UpdateSwitchDynWpnMdlCvar(int weaponNum, playerState_t *ps);
+
 
 //
 // cg_marks.c

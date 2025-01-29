@@ -638,22 +638,15 @@ typedef enum {
 	MOD_FORCE_DRAIN,
 	MOD_EMPLACED,
 
-	MOD_CLONERIFLE,
-	MOD_CLONERIFLE_ALT,
-	MOD_REBELBLASTER,
-	MOD_REBELBLASTER_ALT,
 	MOD_CLONECOMMANDO,
 	MOD_CLONECOMMANDO_ALT,
 	MOD_REBELRIFLE,
 	MOD_REBELRIFLE_ALT,
-	MOD_REY,
-	MOD_REY_ALT,
-	MOD_JANGO,
-	MOD_JANGO_ALT,
 	MOD_BOBA,
 	MOD_BOBA_ALT,
-	MOD_CLONEPISTOL,
-	MOD_CLONEPISTOL_ALT,
+	MOD_SBD,
+	MOD_CIS_SNIPER,
+	MOD_CIS_SNIPER_ALT,
 
 // world / generic
 	MOD_ELECTROCUTE,
@@ -689,6 +682,7 @@ typedef enum
 {
 	IT_BAD,
 	IT_WEAPON,
+	IT_DYN_WEAPON,
 	IT_AMMO,
 	IT_ARMOR,
 	IT_HEALTH,
@@ -743,8 +737,11 @@ extern ammoData_t ammoData[AMMO_MAX];
 
 //==============================================================================
 
+extern dynamicWpnData_t dynamicWpnData[DYN_WP_NUM_WEAPONS];
+
 gitem_t	*FindItem( const char *className );
 gitem_t	*FindItemForWeapon( weapon_t weapon );
+gitem_t	*FindItemForDynWeapon(dynamicWeapon_t dynWeapon);
 gitem_t	*FindItemForInventory( int inv );
 
 #define	ITEM_INDEX(x) ((x)-bg_itemlist)

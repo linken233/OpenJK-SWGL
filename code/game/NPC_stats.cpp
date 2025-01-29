@@ -40,6 +40,8 @@ extern qboolean NPCsPrecached;
 extern vec3_t playerMins;
 extern vec3_t playerMaxs;
 extern stringID_table_t WPTable[];
+extern stringID_table_t DynWPTable[];
+extern stringID_table_t FPTable[];
 
 extern qboolean IsPlayingOperationKnightfall(void);
 
@@ -81,7 +83,7 @@ stringID_table_t footstepTypeTable[] =
 	{ NULL,-1 }
 };
 
-stringID_table_t FPTable[] =
+/*stringID_table_t FPTable[] =
 {
 	ENUM2STRING(FP_HEAL),
 	ENUM2STRING(FP_LEVITATION),
@@ -106,6 +108,20 @@ stringID_table_t FPTable[] =
 	ENUM2STRING(FP_DESTRUCTION),
 	ENUM2STRING(FP_FEAR),
 	ENUM2STRING(FP_LIGHTNING_STRIKE),
+	{ "",	-1 }
+};*/
+
+stringID_table_t attrTable[] =
+{
+	ENUM2STRING(ATTR_HELD_BY_HATRED),
+	ENUM2STRING(ATTR_HERO),
+	ENUM2STRING(ATTR_AQUATIC),
+	ENUM2STRING(ATTR_PRECISE_LIGHTNING),
+	ENUM2STRING(ATTR_INQUISITOR),
+	ENUM2STRING(ATTR_CASUAL_WALK),
+	ENUM2STRING(ATTR_NO_TWIRL),
+	ENUM2STRING(ATTR_COMMANDO),
+	ENUM2STRING(ATTR_BRAWLER),
 	{ "",	-1 }
 };
 
@@ -197,6 +213,7 @@ stringID_table_t ClassTable[] =
 	ENUM2STRING(CLASS_HAZARD_TROOPER),
 	ENUM2STRING(CLASS_VEHICLE),
 	ENUM2STRING(CLASS_JANGO),
+	ENUM2STRING(CLASS_DROIDEKA),
 	{ "",	-1 }
 };
 
@@ -1811,83 +1828,81 @@ void CG_NPC_Precache ( gentity_t *spawner )
 			playerTeam = (team_t)GetIDForString( TeamTable, token );
 			continue;
 		}
-
-
 		// snd
-		if ( !Q_stricmp( token, "snd" ) ) {
-			if ( COM_ParseString( &p, &value ) ) {
+		if (!Q_stricmp(token, "snd")) {
+			if (COM_ParseString(&p, &value)) {
 				continue;
 			}
-			if ( !(spawner->svFlags&SVF_NO_BASIC_SOUNDS) )
+			if (!(spawner->svFlags & SVF_NO_BASIC_SOUNDS))
 			{
 				//FIXME: store this in some sound field or parse in the soundTable like the animTable...
-				Q_strncpyz( sound, value, sizeof( sound ) );
-				patch = strstr( sound, "/" );
-				if ( patch )
+				Q_strncpyz(sound, value, sizeof(sound));
+				patch = strstr(sound, "/");
+				if (patch)
 				{
 					*patch = 0;
 				}
-				ci.customBasicSoundDir = G_NewString( sound );
+				ci.customBasicSoundDir = G_NewString(sound);
 			}
 			continue;
 		}
 
 		// sndcombat
-		if ( !Q_stricmp( token, "sndcombat" ) ) {
-			if ( COM_ParseString( &p, &value ) ) {
+		if (!Q_stricmp(token, "sndcombat")) {
+			if (COM_ParseString(&p, &value)) {
 				continue;
 			}
-			if ( !(spawner->svFlags&SVF_NO_COMBAT_SOUNDS) )
+			if (!(spawner->svFlags & SVF_NO_COMBAT_SOUNDS))
 			{
 				//FIXME: store this in some sound field or parse in the soundTable like the animTable...
-				Q_strncpyz( sound, value, sizeof( sound ) );
-				patch = strstr( sound, "/" );
-				if ( patch )
+				Q_strncpyz(sound, value, sizeof(sound));
+				patch = strstr(sound, "/");
+				if (patch)
 				{
 					*patch = 0;
 				}
-				ci.customCombatSoundDir = G_NewString( sound );
+				ci.customCombatSoundDir = G_NewString(sound);
 			}
 			continue;
 		}
 
 		// sndextra
-		if ( !Q_stricmp( token, "sndextra" ) ) {
-			if ( COM_ParseString( &p, &value ) ) {
+		if (!Q_stricmp(token, "sndextra")) {
+			if (COM_ParseString(&p, &value)) {
 				continue;
 			}
-			if ( !(spawner->svFlags&SVF_NO_EXTRA_SOUNDS) )
+			if (!(spawner->svFlags & SVF_NO_EXTRA_SOUNDS))
 			{
 				//FIXME: store this in some sound field or parse in the soundTable like the animTable...
-				Q_strncpyz( sound, value, sizeof( sound ) );
-				patch = strstr( sound, "/" );
-				if ( patch )
+				Q_strncpyz(sound, value, sizeof(sound));
+				patch = strstr(sound, "/");
+				if (patch)
 				{
 					*patch = 0;
 				}
-				ci.customExtraSoundDir = G_NewString( sound );
+				ci.customExtraSoundDir = G_NewString(sound);
 			}
 			continue;
 		}
 
 		// sndjedi
-		if ( !Q_stricmp( token, "sndjedi" ) ) {
-			if ( COM_ParseString( &p, &value ) ) {
+		if (!Q_stricmp(token, "sndjedi")) {
+			if (COM_ParseString(&p, &value)) {
 				continue;
 			}
-			if ( !(spawner->svFlags&SVF_NO_EXTRA_SOUNDS) )
+			if (!(spawner->svFlags & SVF_NO_EXTRA_SOUNDS))
 			{
 				//FIXME: store this in some sound field or parse in the soundTable like the animTable...
-				Q_strncpyz( sound, value, sizeof( sound ) );
-				patch = strstr( sound, "/" );
-				if ( patch )
+				Q_strncpyz(sound, value, sizeof(sound));
+				patch = strstr(sound, "/");
+				if (patch)
 				{
 					*patch = 0;
 				}
-				ci.customJediSoundDir = G_NewString( sound );
+				ci.customJediSoundDir = G_NewString(sound);
 			}
 			continue;
-		}
+		}		
 
 		//cache weapons
 		if ( !Q_stricmp( token, "weapon" ) )
@@ -2012,6 +2027,7 @@ extern void G_MatchPlayerWeapon( gentity_t *ent );
 extern void G_InitPlayerFromCvars( gentity_t *ent );
 extern void G_SetG2PlayerModel( gentity_t * const ent, const char *modelName, const char *customSkin, const char *surfOff, const char *surfOn );
 void setYounglingSkin(gentity_t* NPC, char *custom_skin, int custom_skin_size);
+void NPC_AssignRandom(gentity_t* ent, char* playerModel);
 qboolean NPC_ParseParms( const char *NPCName, gentity_t *NPC )
 {
 	const char	*token;
@@ -2102,6 +2118,7 @@ qboolean NPC_ParseParms( const char *NPCName, gentity_t *NPC )
 
 		NPC->client->ps.dualSabers = qfalse;
 		NPC->client->ps.saberStylesKnown = 0;
+		NPC->attrFlags = 0;
 	}
 
 	//Set defaults
@@ -2564,6 +2581,12 @@ qboolean NPC_ParseParms( const char *NPCName, gentity_t *NPC )
 				}
 				continue;
 			}
+			if (NPC->NPC_color_red && NPC->NPC_color_green && NPC->NPC_color_blue)
+			{
+				ri->customRGBA[0] = NPC->NPC_color_red;
+				ri->customRGBA[1] = NPC->NPC_color_green;
+				ri->customRGBA[2] = NPC->NPC_color_blue;
+			}
 
 			// headmodel
 			if ( !Q_stricmp( token, "headmodel" ) )
@@ -2633,7 +2656,12 @@ qboolean NPC_ParseParms( const char *NPCName, gentity_t *NPC )
 				{
 					continue;
 				}
+				// playermodels are guaranteed in all npc files, so we can do the NPC_model check here
+				if (NPC->NPC_model)
+					value = NPC->NPC_model;
+
 				Q_strncpyz( playerModel, value, sizeof(playerModel));
+
 				if (NPC == player)
 				{
 					gi.cvar_set("g_char_model", playerModel);
@@ -2650,6 +2678,10 @@ qboolean NPC_ParseParms( const char *NPCName, gentity_t *NPC )
 					continue;
 				}
 				Q_strncpyz( customSkin, value, sizeof(customSkin));
+
+				// Trying to avoid the risk of the player getting a skin they didn't want.
+				if (!Q_stricmp("random", value) && NPC == player)
+					value = "default";
 				continue;
 			}
 			else if (NPC != player 
@@ -3653,91 +3685,127 @@ qboolean NPC_ParseParms( const char *NPCName, gentity_t *NPC )
 				}
 			}
 
-			// snd
-			if ( !Q_stricmp( token, "snd" ) )
+			if (!NPC->soundSet)
 			{
-				if ( COM_ParseString( &p, &value ) )
+				// snd
+				if (!Q_stricmp(token, "snd"))
 				{
+					if (COM_ParseString(&p, &value))
+					{
+						continue;
+					}
+					if (!(NPC->svFlags & SVF_NO_BASIC_SOUNDS))
+					{
+						//FIXME: store this in some sound field or parse in the soundTable like the animTable...
+						Q_strncpyz(sound, value, sizeof(sound));
+						patch = strstr(sound, "/");
+						if (patch)
+						{
+							*patch = 0;
+						}
+						ci->customBasicSoundDir = G_NewString(sound);
+					}
+					if (NPC == player)
+					{
+						gi.cvar_set("snd", G_NewString(sound));
+					}
 					continue;
 				}
-				if ( !(NPC->svFlags&SVF_NO_BASIC_SOUNDS) )
+
+				// sndcombat
+				if (!Q_stricmp(token, "sndcombat"))
 				{
-					//FIXME: store this in some sound field or parse in the soundTable like the animTable...
-					Q_strncpyz( sound, value, sizeof( sound ) );
-					patch = strstr( sound, "/" );
-					if ( patch )
+					if (COM_ParseString(&p, &value))
 					{
-						*patch = 0;
+						continue;
 					}
-					ci->customBasicSoundDir = G_NewString( sound );
+					if (!(NPC->svFlags & SVF_NO_COMBAT_SOUNDS))
+					{
+						//FIXME: store this in some sound field or parse in the soundTable like the animTable...
+						Q_strncpyz(sound, value, sizeof(sound));
+						patch = strstr(sound, "/");
+						if (patch)
+						{
+							*patch = 0;
+						}
+						ci->customCombatSoundDir = G_NewString(sound);
+					}
+					continue;
 				}
-				if (NPC == player)
+
+				// sndextra
+				if (!Q_stricmp(token, "sndextra"))
 				{
-					gi.cvar_set("snd", G_NewString(sound));
+					if (COM_ParseString(&p, &value))
+					{
+						continue;
+					}
+					if (!(NPC->svFlags & SVF_NO_EXTRA_SOUNDS))
+					{
+						//FIXME: store this in some sound field or parse in the soundTable like the animTable...
+						Q_strncpyz(sound, value, sizeof(sound));
+						patch = strstr(sound, "/");
+						if (patch)
+						{
+							*patch = 0;
+						}
+						ci->customExtraSoundDir = G_NewString(sound);
+					}
+					continue;
 				}
-				continue;
+
+				// sndjedi
+				if (!Q_stricmp(token, "sndjedi"))
+				{
+					if (COM_ParseString(&p, &value))
+					{
+						continue;
+					}
+					if (!(NPC->svFlags & SVF_NO_EXTRA_SOUNDS))
+					{
+						//FIXME: store this in some sound field or parse in the soundTable like the animTable...
+						Q_strncpyz(sound, value, sizeof(sound));
+						patch = strstr(sound, "/");
+						if (patch)
+						{
+							*patch = 0;
+						}
+						ci->customJediSoundDir = G_NewString(sound);
+					}
+					continue;
+				}
+			}
+			else
+			{
+				ci->customBasicSoundDir = G_NewString(NPC->soundSet);
+				ci->customCombatSoundDir = G_NewString(NPC->soundSet);
+				ci->customExtraSoundDir = G_NewString(NPC->soundSet);
+				ci->customJediSoundDir = G_NewString(NPC->soundSet);
 			}
 
-			// sndcombat
-			if ( !Q_stricmp( token, "sndcombat" ) )
+			// NPC attributes
+			if (!Q_stricmp(token, "attribute"))
 			{
-				if ( COM_ParseString( &p, &value ) )
+				if (COM_ParseString(&p, &value))
 				{
 					continue;
 				}
-				if ( !(NPC->svFlags&SVF_NO_COMBAT_SOUNDS) )
-				{
-					//FIXME: store this in some sound field or parse in the soundTable like the animTable...
-					Q_strncpyz( sound, value, sizeof( sound ) );
-					patch = strstr( sound, "/" );
-					if ( patch )
-					{
-						*patch = 0;
-					}
-					ci->customCombatSoundDir = G_NewString( sound );
-				}
-				continue;
-			}
+				int attr = GetIDForString(attrTable, value);
+				if(attr != -1)
+					NPC->attrFlags |= attr;
 
-			// sndextra
-			if ( !Q_stricmp( token, "sndextra" ) )
-			{
-				if ( COM_ParseString( &p, &value ) )
+				// People held by hatred cannot be dismembered until they die.
+				if (NPC->attrFlags & ATTR_HELD_BY_HATRED)
 				{
-					continue;
+					NPC->flags |= FL_UNDYING;
+					NPC->client->dismembered = qfalse;
 				}
-				if ( !(NPC->svFlags&SVF_NO_EXTRA_SOUNDS) )
+				else
 				{
-					//FIXME: store this in some sound field or parse in the soundTable like the animTable...
-					Q_strncpyz( sound, value, sizeof( sound ) );
-					patch = strstr( sound, "/" );
-					if ( patch )
-					{
-						*patch = 0;
-					}
-					ci->customExtraSoundDir = G_NewString( sound );
+					NPC->flags &= ~FL_UNDYING;
+					NPC->client->dismembered = qtrue;
 				}
-				continue;
-			}
-
-			// sndjedi
-			if ( !Q_stricmp( token, "sndjedi" ) )
-			{
-				if ( COM_ParseString( &p, &value ) )
-				{
-					continue;
-				}
-				if ( !(NPC->svFlags&SVF_NO_EXTRA_SOUNDS) )
-				{
-					//FIXME: store this in some sound field or parse in the soundTable like the animTable...
-					Q_strncpyz( sound, value, sizeof( sound ) );
-					patch = strstr( sound, "/" );
-					if ( patch )
-					{
-						*patch = 0;
-					}
-					ci->customJediSoundDir = G_NewString( sound );
-				}
+				
 				continue;
 			}
 
@@ -3756,6 +3824,15 @@ qboolean NPC_ParseParms( const char *NPCName, gentity_t *NPC )
 				}
 				//FIXME: need to precache the weapon, too?  (in above func)
 				int weap = GetIDForString( WPTable, value );
+				int dynWpnNum = GetIDForString(DynWPTable, value);
+
+				// The weapon read is a dynamic weapon.
+				if (weap == -1 && dynWpnNum >= 0)
+				{
+					weap = CG_GetBaseWpnFromDynWpn(dynWpnNum);
+					NPC->client->ps.dynWpnVals[weap] = CG_GetDynWpnValue(weap, dynWpnNum);
+				}
+
 				if ( weap >= WP_NONE && weap < WP_NUM_WEAPONS )
 				{
 					NPC->client->ps.weapon = weap;
@@ -3860,10 +3937,10 @@ qboolean NPC_ParseParms( const char *NPCName, gentity_t *NPC )
 				}
 				//Other unique behaviors/numbers that are currently hardcoded?
 			}
-
+			
 			//force powers
 			int fp = GetIDForString( FPTable, token );
-			if ( fp >= FP_FIRST && fp < NUM_FORCE_POWERS )
+			if ( fp >= FP_FIRST && fp < NUM_FORCE_POWERS)
 			{
 				if ( COM_ParseInt( &p, &n ) )
 				{
@@ -3888,6 +3965,7 @@ qboolean NPC_ParseParms( const char *NPCName, gentity_t *NPC )
 				{//clear
 					NPC->client->ps.forcePowersKnown &= ~( 1 << fp );
 				}
+				
 				NPC->client->ps.forcePowerLevel[fp] = n;
 				continue;
 			}
@@ -4475,6 +4553,35 @@ qboolean NPC_ParseParms( const char *NPCName, gentity_t *NPC )
 
 	ci->infoValid = qfalse;
 
+	// New force power assignments (just in case)
+	if (NPC->NPC_FPLevel)
+	{
+		for (int i = FP_FIRST; i < NUM_FORCE_POWERS; i++)
+		{
+			if (NPC->NPC_FPLevel[i] > 0)
+			{
+				// We'll start by letting the character know the power at first
+				NPC->client->ps.forcePowersKnown |= (1 << i);
+
+				// Subtracting by 1 since we increased it in earlier code. We only want force powers with actual values being affected.
+				// Default powers given to the NPC that the player didn't change shouldn't be touched. So 1 = 0 in this instance.
+				NPC->client->ps.forcePowerLevel[i] = NPC->NPC_FPLevel[i] - 1;
+
+				// NPCs with a power level of 0 shouldn't know force powers.
+				if(NPC->client->ps.forcePowerLevel[i] == 0)
+					NPC->client->ps.forcePowersKnown &= ~(1 << i);
+			}
+
+			
+		}
+	}
+
+	if (!Q_stricmp(customSkin, "random") || !Q_stricmp(NPC->NPC_skin, "random"))
+	{
+		NPC_AssignRandom(NPC, playerModel);
+		strcpy(customSkin, NPC->NPC_skin);
+	}
+
 /*
 Ghoul2 Insert Start
 */
@@ -4872,4 +4979,55 @@ void setYounglingSkin(gentity_t* NPC, char *custom_skin, int custom_skin_size)
 	skin += "lower_a1";
 
 	Q_strncpyz(custom_skin, skin.c_str(), custom_skin_size);
+}
+
+void NPC_AssignRandom(gentity_t* ent, char* playerModel)
+{
+	if (!ent)
+		return;
+
+	if (!ent->NPC_skin)
+		return;
+
+	std::string headList[64];
+	std::string torsoList[64];
+	std::string lowerList[64];
+	char filelist[2048];
+	char	skinname[64];
+	char* fileptr;
+	int		filelen;
+	int		numfiles;
+	int j;
+	int headCount = 0, torsoCount = 0, lowerCount = 0;
+	numfiles = gi.FS_GetFileList(va("models/players/%s", playerModel), ".skin", filelist, sizeof(filelist));
+	fileptr = filelist;
+
+	for (j = 0; j < numfiles; j++, fileptr += filelen + 1)
+	{
+		filelen = strlen(fileptr);
+		COM_StripExtension(fileptr, skinname, sizeof(skinname));
+		if (Q_stricmpn(skinname, "head_", 5) == 0)
+		{
+			headList[headCount++] = skinname;
+		}
+		else if (Q_stricmpn(skinname, "torso_", 6) == 0)
+		{
+			torsoList[torsoCount++] = skinname;
+		}
+		else if (Q_stricmpn(skinname, "lower_", 6) == 0)
+		{
+			lowerList[lowerCount++] = skinname;
+		}
+	}
+
+	if (!headList[0].empty() && !torsoList[0].empty() && !lowerList[0].empty())
+	{
+		std::string newSkin;
+		newSkin.append(headList[Q_irand(0, headCount - 1)]);
+		newSkin.append("|");
+		newSkin.append(torsoList[Q_irand(0, torsoCount - 1)]);
+		newSkin.append("|");
+		newSkin.append(lowerList[Q_irand(0, lowerCount - 1)]);
+		ent->NPC_skin = G_NewString(newSkin.c_str());
+	}
 }

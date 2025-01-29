@@ -2077,6 +2077,7 @@ static void CG_DrawZoomMask( void )
 	static qboolean	flip = qtrue;
 	float			charge = cg.snap->ps.batteryCharge / (float)MAX_BATTERIES; // convert charge to a percentage
 	qboolean		power = qfalse;
+	int				weaponNum = 0;
 
 	cent = &cg_entities[0];
 
@@ -2355,7 +2356,9 @@ static void CG_DrawZoomMask( void )
 	{
 		level = (float)(80.0f - cg_zoomFov) / 80.0f;
 
-		switch (weaponData[cent->currentState.weapon].scopeType)
+		weaponNum = cent->currentState.weapon;
+
+		switch (weaponData[weaponNum].scopeType)
 		{
 			case ST_A280:
 				cgs.media.scopeTypeMask = cgi_R_RegisterShader("gfx/2d/a280mask");
@@ -2373,6 +2376,17 @@ static void CG_DrawZoomMask( void )
 				cgs.media.scopeTypeMask = cgi_R_RegisterShader("gfx/2d/f11dMask");
 				cgs.media.scopeTypeInsert = cgi_R_RegisterShader("gfx/2d/f11dInsert");
 				break;
+			case ST_E5:
+				cgs.media.scopeTypeMask = cgi_R_RegisterShader("gfx/2d/cis_cropcircle2");
+				cgs.media.scopeTypeInsert = cgi_R_RegisterShader("gfx/2d/f11dInsert");
+				break;
+		}
+
+		// I probably shouldn't hard code this, but oh well.
+		if (weaponNum == WP_THEFIRSTORDER && CG_GetDynWpnNum(player) == DYN_WP_REBELBLASTER)
+		{
+			cgs.media.scopeTypeMask = cgi_R_RegisterShader("gfx/2d/a280mask");
+			cgs.media.scopeTypeInsert = cgi_R_RegisterShader("gfx/2d/a280insert");
 		}
 
 		CG_DrawPic( 0, 0, 640, 480, cgs.media.scopeTypeMask ); 
@@ -3318,7 +3332,7 @@ static void CG_DrawRocketLocking( int lockEntNum, int lockTime )
 			{
 				sz -= ( cg.overrides.fov - cg_zoomFov ) / 80.0f;
 			}
-			else if ( !cg.renderingThirdPerson && ((cg_trueguns.integer || CG_PlayerIsDualWielding(cg.snap->ps.weapon)) || cg.snap->ps.weapon == WP_SABER
+			else if ( !cg.renderingThirdPerson && ((cg_trueguns.integer || CG_ChangeFirstPersonView()) || cg.snap->ps.weapon == WP_SABER
 												   || cg.snap->ps.weapon == WP_MELEE) && cg_truefov.value )
 			{
 				sz -= ( cg_truefov.value - cg_zoomFov ) / 80.0f;

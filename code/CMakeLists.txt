@@ -46,6 +46,14 @@ if(BuildSPEngine OR BuildJK2SPEngine)
 
 	#    Dependencies
 	# OpenAL (is optionally included for Windows)
+
+	if (NOT WIN32)
+		# OpenGL
+		find_package(OpenGL REQUIRED)
+		set(SPEngineIncludeDirectories ${SPEngineIncludeDirectories} ${OPENGL_INCLUDE_DIR})
+		set(SPEngineLibraries ${SPEngineLibraries} ${OPENGL_LIBRARIES})
+	endif()
+
 	if(MSVC AND NOT WIN64)
 		if(UseInternalOpenAL)
 			# There's a libs/OpenAL32.lib
