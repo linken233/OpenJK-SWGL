@@ -1093,6 +1093,30 @@ const char *GetStringForID( const stringID_table_t *table, int id )
 	return NULL;
 }
 
+char* Q_IntToBinaryString(int value) {
+	const int BITS = sizeof(int) * 8;
+
+	char* binaryString = new char[BITS + 1];
+	binaryString[BITS] = '\0';
+	for (int i = BITS - 1; i >= 0; --i) {
+		binaryString[i] = (value & 1) ? '1' : '0'; 
+		value >>= 1; 
+	}
+	return binaryString; 
+}
+
+int Q_FindFirstBitIndex(int bits) {
+	int i = 0;
+	while (bits > 0) {
+		if (bits & 1) {
+			return i+1;
+		}
+		bits >>= 1;
+		i++;
+	}
+	return 0;
+}
+
 qboolean Q_InBitflags( const uint32_t *bits, int index, uint32_t bitsPerByte ) {
 	return ( bits[index / bitsPerByte] & (1 << (index % bitsPerByte)) ) ? qtrue : qfalse;
 }

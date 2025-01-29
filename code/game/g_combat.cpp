@@ -140,7 +140,7 @@ Toss the weapon and powerups for the killed player
 */
 extern gentity_t *WP_DropThermal( gentity_t *ent );
 extern qboolean WP_SaberLose( gentity_t *self, vec3_t throwDir );
-gentity_t *TossClientItems( gentity_t *self )
+gentity_t* TossClientItems_Configurable(gentity_t* self,  bool dropOneSaber)
 {
 	//FIXME: drop left-hand weapon, too?
 	gentity_t	*dropped = NULL;
@@ -164,36 +164,47 @@ gentity_t *TossClientItems( gentity_t *self )
 
 	if ( weapon == WP_SABER )
 	{
+		//If I have no saber, don't matter
 		if ( self->weaponModel[0] < 0 )
-		{//don't have one in right hand
+		{
 			self->s.weapon = WP_NONE;
 		}
-		else if ( !(self->client->ps.saber[0].saberFlags&SFL_NOT_DISARMABLE)
-			|| g_saberPickuppableDroppedSabers->integer )
-		{//okay to drop it
+		//If it's called from DropWeapon Command, First drop the left saber.
+		else if (g_saberPickuppableDroppedSabers->integer && self->weaponModel[1] > 0 && dropOneSaber)
+		{
+			if (self->client->ps.saber[1].name && self->client->ps.saber[1].name[0]) {
+				//If drop is successfull then remove the saber from the player.
+				dropped = G_DropSaberItem(self->client->ps.saber[1].name, self->client->ps.saber[1].blade[0].color, self->client->renderInfo.handLPoint, self->client->ps.velocity, self->currentAngles);
+				if (dropped != NULL)
+				{
+					WP_RemoveSaber(self, 1);
+				}
+			}
+		}
+		//If it's called from DropWeapon Command, Secondly drop the right saber
+		else if (g_saberPickuppableDroppedSabers->integer && self->weaponModel[0] > 0 && dropOneSaber)
+		{
+			if (self->client->ps.saber[0].name && self->client->ps.saber[0].name[0]) {
+				//If drop is successfull then remove the saber from the player.
+				dropped = G_DropSaberItem(self->client->ps.saber[0].name, self->client->ps.saber[0].blade[0].color, self->client->renderInfo.handLPoint, self->client->ps.velocity, self->currentAngles);
+				if (dropped != NULL)
+				{
+					WP_RemoveSaber(self, 0);
+					self->s.weapon = WP_NONE;
+				}
+			}
+		}
+		//If it's death or other cause, drop both at once
+		else if ( !(self->client->ps.saber[0].saberFlags&SFL_NOT_DISARMABLE) || g_saberPickuppableDroppedSabers->integer)
+		{	//This code still look strange (but works x) )
 			if ( WP_SaberLose( self, NULL ) )
 			{
 				self->s.weapon = WP_NONE;
 			}
-		}
-		if ( g_saberPickuppableDroppedSabers->integer )
-		{//drop your left one, too
-			if ( self->weaponModel[1] >= 0 )
-			{//have one in left
-				if ( !(self->client->ps.saber[0].saberFlags&SFL_NOT_DISARMABLE)
-					|| g_saberPickuppableDroppedSabers->integer )
-				{//okay to drop it
-					//just drop an item
-					if ( self->client->ps.saber[1].name
-						&& self->client->ps.saber[1].name[0] )
-					{//have a valid string to use for saberType
-						//turn it into a pick-uppable item!
-						if ( G_DropSaberItem( self->client->ps.saber[1].name, self->client->ps.saber[1].blade[0].color, self->client->renderInfo.handLPoint, self->client->ps.velocity, self->currentAngles ) != NULL )
-						{//dropped it
-							WP_RemoveSaber( self, 1 );
-						}
-					}
-				}
+			if (g_saberPickuppableDroppedSabers->integer && self->weaponModel[1] > 0 && self->client->ps.saber[1].name && self->client->ps.saber[1].name[0] 
+				&& G_DropSaberItem(self->client->ps.saber[1].name, self->client->ps.saber[1].blade[0].color, self->client->renderInfo.handLPoint, self->client->ps.velocity, self->currentAngles) != NULL)
+			{
+				WP_RemoveSaber(self, 1);
 			}
 		}
 	}
@@ -373,6 +384,10 @@ gentity_t *TossClientItems( gentity_t *self )
 	}
 
 	return dropped;//NOTE: presumes only drop one thing
+}
+
+gentity_t* TossClientItems(gentity_t* self) {
+	return TossClientItems_Configurable(self, false);
 }
 
 void G_DropKey( gentity_t *self )

@@ -50,6 +50,7 @@ extern void ForceBlast(gentity_t *self);
 extern void G_CreateG2AttachedWeaponModel( gentity_t *ent, const char *psWeaponModel, int boltNum, int weaponNum );
 extern void G_StartMatrixEffect( gentity_t *ent, int meFlags = 0, int length = 1000, float timeScale = 0.0f, int spinTime = 0 );
 extern void ItemUse_Bacta(gentity_t *ent);
+extern void WP_DropWeapon_Configurable(gentity_t* dropper, vec3_t velocity, bool fromConsoleCommand, bool deleteWeapon,bool forceNoWeapon);
 extern gentity_t *G_GetSelfForPlayerCmd( void );
 
 /*
@@ -198,8 +199,6 @@ void G_Give( gentity_t *ent, const char *name, const char *args, int argc )
 	{
 		if (argc == 3)
 		{
-			ent->client->ps.stats[STAT_ARMOR] = atoi(args);
-
 			ent->client->ps.stats[STAT_ARMOR] = Com_Clampi(0, ent->client->ps.stats[STAT_MAX_HEALTH], atoi(args));
 		}
 		else
@@ -1612,6 +1611,39 @@ void ClientCommand( int clientNum ) {
 			ent->client->ps.saberStylesKnown |= (1<<addStyle);
 		}
 	}
+	/* For UI -> CG Synchronisation */
+	else if (Q_stricmp(cmd, "syncsaberstyle") == 0)
+	{
+		ent = G_GetSelfForPlayerCmd();
+		if (ent->client->ps.saberAnimLevel != cg.saberAnimLevelPending) {
+			cg.saberAnimLevelPending = ent->client->ps.saberAnimLevel;
+		}
+	}
+	else if (Q_stricmp (cmd, "removesaberstyle") == 0)
+	{
+		ent = G_GetSelfForPlayerCmd();
+		if ( !ent || !ent->client )
+		{//wtf?
+			return;
+		}
+		if ( gi.argc() < 2 )
+		{
+			gi.SendServerCommand( ent-g_entities, va("print \"usage: remove <saber style>\n\""));
+			gi.SendServerCommand( ent-g_entities, va("print \"Valid styles: SS_FAST, SS_MEDIUM, SS_STRONG, SS_DESANN, SS_TAVION, SS_DUAL and SS_STAFF\n\""));
+			gi.SendServerCommand( ent-g_entities, va("print \"If no style are remaining, SS_MEDIUM will be set by default\n\""));
+			return;
+		}
+
+		int removeStyle = GetIDForString( SaberStyleTable, gi.argv(1) );
+		if (removeStyle > SS_NONE && removeStyle < SS_STAFF )
+		{
+			ent->client->ps.saberStylesKnown &= ~(1<<removeStyle);
+		}
+		if (ent->client->ps.saberStylesKnown == 0) {
+			ent->client->ps.saberStylesKnown = (1 << SS_MEDIUM);
+			cg.saberAnimLevelPending = ent->client->ps.saberAnimLevel = SS_MEDIUM;
+		}
+	}
 	else if (Q_stricmp (cmd, "setsaberstyle") == 0)
 	{
 		ent = G_GetSelfForPlayerCmd();
@@ -1723,6 +1755,12 @@ void ClientCommand( int clientNum ) {
 	else if (Q_stricmp (cmd, "flushcam") == 0)
 	{
 		Cmd_FlushCamFile_f( ent );
+	}
+	else if (Q_stricmp(cmd, "dropcurrentweapon") == 0) {
+		WP_DropWeapon_Configurable(ent, NULL,true,false,false);
+	}
+	else if (Q_stricmp(cmd, "removecurrentweapon") == 0) {
+		WP_DropWeapon_Configurable(ent, NULL, true, true, false);
 	}
 	else if ( Q_stricmp( cmd, "dropsaber" ) == 0 )
 	{

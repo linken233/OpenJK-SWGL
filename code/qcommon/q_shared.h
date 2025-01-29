@@ -2869,6 +2869,20 @@ typedef enum
 
 } PlayerEffectFlags_e;
 
+/* Q_FindFirstBitIndex
+	Return the index of the first rightmost bit which is not 0.
+	011000 => 4
+	000110 => 2
+*/
+int Q_FindFirstBitIndex(int bits);
+
+/* Q_IntToBinaryString
+	Return an int in it's binary representation.
+	4 =>  00000100
+	15 => 00001111
+*/
+char* Q_IntToBinaryString(int value);
+
 qboolean Q_InBitflags( const uint32_t *bits, int index, uint32_t bitsPerByte );
 void Q_AddToBitflags( uint32_t *bits, int index, uint32_t bitsPerByte );
 void Q_RemoveFromBitflags( uint32_t *bits, int index, uint32_t bitsPerByte );
