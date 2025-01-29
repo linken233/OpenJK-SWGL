@@ -5673,7 +5673,6 @@ static void UI_SwitchSaberStyle(const char* saberStyle) {
 
 	menuDef_t* menu;
 	short	stanceIndex = GetIDForString(SaberStyleTable, saberStyle);
-	Com_Printf("Asking to switch stance %s (%d)\n", saberStyle, stanceIndex);
 	menu = Menu_GetFocused();
 
 	if (!menu)
@@ -5688,7 +5687,7 @@ static void UI_SwitchSaberStyle(const char* saberStyle) {
 
 	/* Should the player be allowed to play with this in with dual or staff saber? May be it could be interesting to have Fast/Strong + Staff/Dual but
 		I don't think the engine would allow this. Cycle Saber Attack should be updated to reflect this kind of changes first*/
-	if ((Q_stricmp(Cvar_VariableString("g_saber_type"), "single") || Q_stricmp(Cvar_VariableString("g_saber_type"), ""))) {
+	if (!(Q_stricmp(Cvar_VariableString("g_saber_type"), "single") || Q_stricmp(Cvar_VariableString("g_saber_type"), ""))) {
 		return;
 	}
 
