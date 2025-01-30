@@ -165,17 +165,13 @@ qboolean playerUsableWeapons[WP_NUM_WEAPONS] =
 	qfalse,//WP_SCEPTER,
 	qtrue,//WP_NOGHRI_STICK,
 
-	qtrue,//WP_BATTLEDROID
 	qtrue,//WP_THEFIRSTORDER,
 	qtrue,//WP_CLONECARBINE,
-	qtrue,//WP_REBELBLASTER,
-	qtrue,//WP_CLONERIFLE,
 	qtrue,//WP_CLONECOMMANDO,
 	qtrue,//WP_REBELRIFLE,
-	qtrue,//WP_REY,
-	qtrue,//WP_JANGO,
-	qtrue,//WP_BOBA,
-	qtrue,//WP_CLONEPISTOL
+	qtrue,//WP_BOBA
+	qtrue,//WP_SBD
+	qtrue//WP_CIS_SNIPER
 
 	//# #eol
 	//WP_NUM_WEAPONS
@@ -249,6 +245,13 @@ void WPN_TertiaryFireOptions(const char **holdBuf);
 
 void WPN_WeaponModel2(const char **holdBuf);
 
+void DYN_WPN_WeaponType(const char **holdBuf);
+void DYN_WPN_WeaponClass(const char **holdBuf);
+void DYN_WPN_WeaponModel(const char **holdBuf);
+void DYN_WPN_WeaponIcon(const char **holdBuf);
+void DYN_WPN_MuzzleEffect(const char **holdBuf);
+void DYN_WPN_AltMuzzleEffect(const char **holdBuf);
+
 // Legacy weapons.dat force fields
 void WPN_FuncSkip(const char **holdBuf);
 
@@ -297,17 +300,13 @@ const int defaultDamage[] = {
 	0,							// WP_SCEPTER
 	0,							// WP_NOGHRI_STICK
 
-	E5_DAMAGE,					// WP_BATTLEDROID
 	F_11D_DAMAGE,				// WP_THEFIRSTORDER
 	CLONECARBINE_DAMAGE,		// WP_CLONECARBINE
-	REBELBLASTER_DAMAGE,		// WP_REBELBLASTER
-	CLONERIFLE_DAMAGE,			// WP_CLONERIFLE
 	CLONECOMMANDO_DAMAGE,		// WP_CLONECOMMANDO
 	REBELRIFLE_DAMAGE,			// WP_REBELRIFLE
-	REY_DAMAGE,					// WP_REY
-	JANGO_DAMAGE,				// WP_JANGO
 	BOBA_DAMAGE,				// WP_BOBA
-	CLONEPISTOL_DAMAGE,			// WP_CLONEPISTOL
+	SBD_DAMAGE,					// WP_SBD
+	CIS_SNIPER_DAMAGE			// WP_CIS_SNIPER
 };
 
 const int defaultAltDamage[] = {
@@ -346,17 +345,13 @@ const int defaultAltDamage[] = {
 	0,						// WP_SCEPTER
 	0,						// WP_NOGHRI_STICK
 
-	E5_ALT_DAMAGE,			// WP_BATTLEDROID
 	F_11D_SCOPE_DAMAGE,		// WP_THEFIRSTORDER
 	CLONECARBINE_ALT_DAMAGE, // WP_CLONECARBINE
-	REBELBLASTER_SCOPE_DAMAGE,// WP_REBELBLASTER
-	CLONERIFLE_ALT_DAMAGE,		// WP_CLONERIFLE
 	CLONECOMMANDO_ALT_DAMAGE,// WP_CLONECOMMANDO
 	REBELRIFLE_SCOPE_DAMAGE,// WP_REBELRIFLE
-	REY_DAMAGE,				// WP_REY
-	JANGO_ALT_DAMAGE,		// WP_JANGO
 	BOBA_SCOPE_DAMAGE,		// WP_BOBA
-	CLONEPISTOL_ALT_DAMAGE,		// WP_CLONEPISTOL
+	0,						// WP_SBD
+	CIS_SNIPER_SCOPE_DAMAGE
 };
 
 const int defaultSplashDamage[] = {
@@ -395,17 +390,13 @@ const int defaultSplashDamage[] = {
 	0,								// WP_SCEPTER
 	0,								// WP_NOGHRI_STICK
 
-	0,								// WP_BATTLEDROID
 	0,				   				// WP_THEFIRSTORDER
 	0,				   				// WP_CLONECARBINE
-	0,				   				// WP_REBELBLASTER
-	0,				   				// WP_CLONERIFLE
 	0,				   				// WP_CLONECOMMANDO
 	0,						   	 	// WP_REBELRIFLE
-	0,				   				// WP_REY
-	0,				   				// WP_JANGO
 	0,				   				// WP_BOBA
-	0,				   				// WP_CLONEPISTOL
+	0,				   				// WP_SBD
+	0				   				// WP_CIS_SNIPER
 };
 
 const float defaultSplashRadius[] = {
@@ -444,17 +435,13 @@ const float defaultSplashRadius[] = {
 	0.0f,							// WP_SCEPTER
 	0.0f,							// WP_NOGHRI_STICK
 
-	0.0f,							// WP_BATTLEDROID
 	0.0f,							// WP_THEFIRSTORDER
 	0.0f,							// WP_CLONECARBINE
-	0.0f,							// WP_REBELBLASTER
-	0.0f,							// WP_CLONERIFLE
 	0.0f,							// WP_CLONECOMMANDO
 	0.0f,							// WP_REBELRIFLE
-	0.0f,							// WP_REY
-	0.0f,							// WP_JANGO
 	0.0f,							// WP_BOBA
-	0.0f,							// WP_CLONEPISTOL
+	0.0f,							// WP_SBD
+	0.0f							// WP_CIS_SNIPER
 };
 
 const int defaultAltSplashDamage[] = {
@@ -493,17 +480,13 @@ const int defaultAltSplashDamage[] = {
 	0,								// WP_SCEPTER
 	0,								// WP_NOGHRI_STICK
 
-	0,								// WP_BATTLEDROID
 	0,								// WP_THEFIRSTORDER
 	0,								// WP_CLONECARBINE
-	0,								// WP_REBELBLASTER
-	0,				   				// WP_CLONERIFLE
 	CLONECOMMANDO_ALT_SPLASH_DAMAGE,// WP_CLONECOMMANDO
 	0,				   				// WP_REBELRIFLE
-	0,				   				// WP_REY
-	0,				   				// WP_JANGO
 	0,				   				// WP_BOBA
-	0,				   				// WP_CLONEPISTOL
+	0,				   				// WP_SBD
+	0				   				// WP_CIS_SNIPER
 };
 
 const float defaultAltSplashRadius[] = {
@@ -542,17 +525,13 @@ const float defaultAltSplashRadius[] = {
 	0.0f,							// WP_SCEPTER
 	0.0f,							// WP_NOGHRI_STICK
 
-	0.0f,							// WP_BATTLEDROID
 	0.0f,							// WP_THEFIRSTORDER
 	0.0f,							// WP_CLONECARBINE
-	0.0f,							// WP_REBELBLASTER
-	0.0f,							// WP_CLONERIFLE
 	CLONECOMMANDO_ALT_SPLASH_RADIUS,// WP_CLONECOMMANDO
 	0.0f,							// WP_REBELRIFLE
-	0.0f,							// WP_REY
-	0.0f,							// WP_JANGO
 	0.0f,							// WP_BOBA
-	0.0f,							// WP_CLONEPISTOL
+	0.0f,							// WP_SBD
+	0.0f							// WP_CIS_SNIPER
 };
 
 wpnParms_t WpnParms[] =
@@ -615,6 +594,13 @@ wpnParms_t WpnParms[] =
 	{ "tertiaryfireopt",	WPN_TertiaryFireOptions},
 
 	{ "weaponmodel2",		WPN_WeaponModel2 },
+
+	{ "dynWpnType",				DYN_WPN_WeaponType },
+	{ "dynWpnClass",			DYN_WPN_WeaponClass },
+	{ "dynWpnModel",			DYN_WPN_WeaponModel },
+	{ "dynWpnIcon",				DYN_WPN_WeaponIcon },
+	{ "dynWpnMuzzleEffect",		DYN_WPN_MuzzleEffect },
+	{ "dynWpnAltMuzzleEffect",	DYN_WPN_AltMuzzleEffect },
 
 	// Old legacy files contain these, so we skip them to shut up warnings
 	{ "firingforce",		WPN_FuncSkip },
@@ -699,28 +685,20 @@ void WPN_WeaponType( const char **holdBuf)
 		weaponNum = WP_SCEPTER;
 	else if (!Q_stricmp(tokenStr,"WP_NOGHRI_STICK"))
 		weaponNum = WP_NOGHRI_STICK;
-	else if (!Q_stricmp(tokenStr, "WP_BATTLEDROID"))
-		weaponNum = WP_BATTLEDROID;
 	else if (!Q_stricmp(tokenStr, "WP_THEFIRSTORDER"))
 		weaponNum = WP_THEFIRSTORDER;
 	else if (!Q_stricmp(tokenStr, "WP_CLONECARBINE"))
 		weaponNum = WP_CLONECARBINE;
-	else if (!Q_stricmp(tokenStr, "WP_REBELBLASTER"))
-		weaponNum = WP_REBELBLASTER;
-	else if (!Q_stricmp(tokenStr, "WP_CLONERIFLE"))
-		weaponNum = WP_CLONERIFLE;
 	else if (!Q_stricmp(tokenStr, "WP_CLONECOMMANDO"))
 		weaponNum = WP_CLONECOMMANDO;
 	else if (!Q_stricmp(tokenStr, "WP_REBELRIFLE"))
 		weaponNum = WP_REBELRIFLE;
-	else if (!Q_stricmp(tokenStr, "WP_REY"))
-		weaponNum = WP_REY;
-	else if (!Q_stricmp(tokenStr, "WP_JANGO"))
-		weaponNum = WP_JANGO;
 	else if (!Q_stricmp(tokenStr, "WP_BOBA"))
 		weaponNum = WP_BOBA;
-	else if (!Q_stricmp(tokenStr, "WP_CLONEPISTOL"))
-		weaponNum = WP_CLONEPISTOL;
+	else if (!Q_stricmp(tokenStr, "WP_SBD"))
+		weaponNum = WP_SBD;
+	else if (!Q_stricmp(tokenStr, "WP_CIS_SNIPER"))
+		weaponNum = WP_CIS_SNIPER;
 	else
 	{
 		weaponNum = 0;
@@ -1726,7 +1704,7 @@ void WPN_ScopeType(const char **holdBuf)
 	// This is for cg.zoommode.
 	tokenInt += 3;
 
-    if ((tokenInt < ST_A280) || (tokenInt > ST_F11D ))
+    if ((tokenInt < ST_A280) || (tokenInt > ST_E5 ))
     {
         gi.Printf(S_COLOR_YELLOW"WARNING: bad scopeType in external weapon data '%d'\n", tokenInt);
         return;
@@ -1806,7 +1784,6 @@ void WPN_TertiaryFireOptions(const char **holdBuf)
 	}
 }
 
-
 //--------------------------------------------
 void WPN_WeaponModel2(const char **holdBuf)
 {
@@ -1828,6 +1805,163 @@ void WPN_WeaponModel2(const char **holdBuf)
 
 	Q_strncpyz(weaponData[wpnParms.weaponNum].weaponMdl2,tokenStr,len);
 }
+
+
+/*
+===============
+Dynamic Weapons
+===============
+*/
+
+void DYN_WPN_WeaponType(const char **holdBuf)
+{
+	int weaponNum;
+	const char	*tokenStr;
+
+	if (COM_ParseString(holdBuf,&tokenStr))
+	{
+		return;
+	}
+
+	if (!Q_stricmp(tokenStr,"DYN_WP_REY"))
+		weaponNum = DYN_WP_REY;
+	else if (!Q_stricmp(tokenStr,"DYN_WP_BATTLEDROID"))
+		weaponNum = DYN_WP_BATTLEDROID;
+	else if (!Q_stricmp(tokenStr,"DYN_WP_JANGO"))
+		weaponNum = DYN_WP_JANGO;
+	else if (!Q_stricmp(tokenStr,"DYN_WP_REBELBLASTER"))
+		weaponNum = DYN_WP_REBELBLASTER;
+	else if (!Q_stricmp(tokenStr,"DYN_WP_CLONERIFLE"))
+		weaponNum = DYN_WP_CLONERIFLE;
+	else if (!Q_stricmp(tokenStr, "DYN_WP_CLONEPISTOL"))
+		weaponNum = DYN_WP_CLONEPISTOL;
+	else if (!Q_stricmp(tokenStr, "DYN_WP_DROIDEKA"))
+		weaponNum = DYN_WP_DROIDEKA;
+	else
+	{
+		weaponNum = 0;
+		gi.Printf(S_COLOR_YELLOW"WARNING: bad dynWpnType in external weapon data '%s'\n", tokenStr);
+	}
+
+	wpnParms.weaponNum = weaponNum;
+}
+
+//--------------------------------------------
+void DYN_WPN_WeaponClass(const char **holdBuf)
+{
+	int len;
+	const char	*tokenStr;
+
+	if (COM_ParseString(holdBuf,&tokenStr))
+	{
+		return;
+	}
+
+	len = strlen(tokenStr);
+	len++;
+	if (len > 32)
+	{
+		len = 32;
+		gi.Printf(S_COLOR_YELLOW"WARNING: dynWpnClass too long in external WEAPONS.DAT '%s'\n", tokenStr);
+	}
+
+	Q_strncpyz(dynamicWpnData[wpnParms.weaponNum].classname,tokenStr,len);
+}
+
+//--------------------------------------------
+void DYN_WPN_WeaponModel(const char **holdBuf)
+{
+	int len;
+	const char	*tokenStr;
+
+	if ( COM_ParseString(holdBuf,&tokenStr))
+	{
+		return;
+	}
+
+	len = strlen(tokenStr);
+	len++;
+	if (len > 64)
+	{
+		len = 64;
+		gi.Printf(S_COLOR_YELLOW"WARNING: weaponMdl too long in external WEAPONS.DAT '%s'\n", tokenStr);
+	}
+
+	Q_strncpyz(dynamicWpnData[wpnParms.weaponNum].weaponMdl,tokenStr,len);
+}
+
+//--------------------------------------------
+void DYN_WPN_WeaponIcon(const char **holdBuf)
+{
+	int len;
+	const char	*tokenStr;
+
+	if ( COM_ParseString(holdBuf,&tokenStr))
+	{
+		return;
+	}
+
+	len = strlen(tokenStr);
+	len++;
+	if (len > 64)
+	{
+		len = 64;
+		gi.Printf(S_COLOR_YELLOW"WARNING: dynWpnIcon too long in external WEAPONS.DAT '%s'\n", tokenStr);
+	}
+
+	Q_strncpyz(dynamicWpnData[wpnParms.weaponNum].weaponIcon,tokenStr,len);
+}
+
+//--------------------------------------------
+void DYN_WPN_MuzzleEffect(const char **holdBuf)
+{
+	const char	*tokenStr;
+
+	if ( COM_ParseString(holdBuf,&tokenStr))
+	{
+		return;
+	}
+	size_t len = strlen( tokenStr );
+
+	len++;
+	if (len > 64)
+	{
+		len = 64;
+		gi.Printf(S_COLOR_YELLOW"WARNING: DW_MuzzleEffect '%s' too long in external WEAPONS.DAT\n", tokenStr);
+	}
+
+	G_EffectIndex( tokenStr );
+	Q_strncpyz(dynamicWpnData[wpnParms.weaponNum].mMuzzleEffect,tokenStr,len);
+}
+
+//--------------------------------------------
+void DYN_WPN_AltMuzzleEffect(const char **holdBuf)
+{
+	const char	*tokenStr;
+
+	if ( COM_ParseString(holdBuf,&tokenStr))
+	{
+		return;
+	}
+	size_t len = strlen( tokenStr );
+
+	len++;
+	if (len > 64)
+	{
+		len = 64;
+		gi.Printf(S_COLOR_YELLOW"WARNING: DW_AltMuzzleEffect '%s' too long in external WEAPONS.DAT\n", tokenStr);
+	}
+
+	G_EffectIndex( tokenStr );
+	Q_strncpyz(dynamicWpnData[wpnParms.weaponNum].mAltMuzzleEffect,tokenStr,len);
+}
+
+/*
+======================
+End of Dynamic Weapons
+======================
+*/
+
 
 //--------------------------------------------
 static void WP_ParseParms(const char *buffer)
@@ -1868,6 +2002,7 @@ void WP_LoadWeaponParms (void)
 
 	// initialise the data area
 	memset(weaponData, 0, sizeof(weaponData));
+	memset(dynamicWpnData, 0, sizeof(dynamicWpnData));
 
 	// put in the default values, because backwards compatibility is awesome!
 	for(int i = 0; i < WP_NUM_WEAPONS; i++)

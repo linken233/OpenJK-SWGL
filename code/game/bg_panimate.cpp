@@ -4483,14 +4483,32 @@ void PM_SaberStartTransAnim( int saberAnimLevel, int anim, float *animSpeed, gen
 	{//using a scepter and dual style, slow down anims
 		if ( anim >= BOTH_A1_T__B_ && anim <= BOTH_H7_S7_BR )
 		{
-			*animSpeed *= 0.75;
+			if (gent
+				&& gent->client
+				&& gent->client->ps.forceUpperAnimSpeed)
+			{
+				*animSpeed *= gent->client->ps.forceUpperAnimSpeed;
+			}
+			else
+			{
+				*animSpeed *= 0.75;
+			}
 		}
 	}
 	if ( gent && gent->client && gent->client->ps.forceRageRecoveryTime > level.time )
 	{//rage recovery
 		if ( anim >= BOTH_A1_T__B_ && anim <= BOTH_H1_S1_BR )
 		{//animate slower
-			*animSpeed *= 0.75;
+			if (gent
+				&& gent->client
+				&& gent->client->ps.forceUpperAnimSpeed)
+			{
+				*animSpeed *= gent->client->ps.forceUpperAnimSpeed;
+			}
+			else
+			{
+				*animSpeed *= 0.75;
+			}
 		}
 	}
 	else if ( gent && gent->NPC && gent->NPC->rank == RANK_CIVILIAN )
@@ -4499,7 +4517,16 @@ void PM_SaberStartTransAnim( int saberAnimLevel, int anim, float *animSpeed, gen
 		{//his fast attacks are slower
 			if ( !PM_SpinningSaberAnim( anim ) )
 			{
-				*animSpeed *= 0.75;
+				if (gent
+					&& gent->client
+					&& gent->client->ps.forceUpperAnimSpeed)
+				{
+					*animSpeed *= gent->client->ps.forceUpperAnimSpeed;
+				}
+				else
+				{
+					*animSpeed *= 0.75;
+				}
 			}
 			return;
 		}
@@ -4512,7 +4539,16 @@ void PM_SaberStartTransAnim( int saberAnimLevel, int anim, float *animSpeed, gen
 			{//his fast attacks are slower
 				if ( !PM_SpinningSaberAnim( anim ) )
 				{
-					*animSpeed *= 0.75;
+					if (gent
+						&& gent->client
+						&& gent->client->ps.forceUpperAnimSpeed)
+					{
+						*animSpeed *= gent->client->ps.forceUpperAnimSpeed;
+					}
+					else
+					{
+						*animSpeed *= 0.75;
+					}
 				}
 				return;
 			}
@@ -4528,11 +4564,29 @@ void PM_SaberStartTransAnim( int saberAnimLevel, int anim, float *animSpeed, gen
 	{
 		if ( saberAnimLevel == FORCE_LEVEL_1 || saberAnimLevel == FORCE_LEVEL_5 )
 		{//FIXME: should not be necc for FORCE_LEVEL_1's
-			*animSpeed *= 1.5;
+			if (gent
+				&& gent->client
+				&& gent->client->ps.forceUpperAnimSpeed)
+			{
+				*animSpeed *= gent->client->ps.forceUpperAnimSpeed;
+			}
+			else
+			{
+				*animSpeed *= 1.5;
+			}
 		}
 		else if ( saberAnimLevel == FORCE_LEVEL_3 )
 		{
-			*animSpeed *= 0.75;
+			if (gent
+				&& gent->client
+				&& gent->client->ps.forceUpperAnimSpeed)
+			{
+				*animSpeed *= gent->client->ps.forceUpperAnimSpeed;
+			}
+			else
+			{
+				*animSpeed *= 0.75;
+			}
 		}
 	}
 }
@@ -4954,6 +5008,11 @@ void PM_SetAnimFinal(int *torsoAnim,int *legsAnim,
 			animCurrent = torsCurrent;
 		}
 
+		if (gent->client->ps.forceUpperAnimSpeed)
+		{
+			animSpeed *= gent->client->ps.forceUpperAnimSpeed;
+		}
+
 		gi.G2API_SetAnimIndex(&gent->ghoul2[gent->playerModel], curAnim.glaIndex);
 		gi.G2API_SetBoneAnimIndex(&gent->ghoul2[gent->playerModel], torsBone,
 			animStart,
@@ -4995,6 +5054,11 @@ void PM_SetAnimFinal(int *torsoAnim,int *legsAnim,
 		if (bodyOnAnimNow && !animRestart && !bodyMatchTorsFrame)
 		{
 			animCurrent = bodyCurrent;
+		}
+
+		if (gent->client->ps.forceLowerAnimSpeed)
+		{
+			animSpeed *= gent->client->ps.forceLowerAnimSpeed;
 		}
 
 		gi.G2API_SetAnimIndex(&gent->ghoul2[gent->playerModel], curAnim.glaIndex);
@@ -5515,24 +5579,12 @@ void PM_TorsoAnimLightsaber()
 
 qboolean NoSaberTwirlCharacter(gentity_t* ent)
 {
-	if (ent == player)
-	{
-		if (!Q_stricmp("anakin_dark", g_char_model->string)
-			|| !Q_stricmp("oldben", g_char_model->string)
-			|| !Q_stricmp("am_vader", g_char_model->string)
-			|| !Q_stricmp("anakin_apprentice", g_char_model->string))
-			return qtrue;
-	}
-	else
-	{
-		if (!Q_stricmp(EP3_VADER, ent->NPC_type)
-			|| !Q_stricmp(BEN_KENOBI, ent->NPC_type)
-			|| !Q_stricmp(VADER, ent->NPC_type)
-			|| !Q_stricmp(ANAKIN_INFINITIES, ent->NPC_type))
-			return qtrue;
-	}
-
+	// This should override everything, even if the character is allowed to twirl their saber
 	if (!g_allowSaberTwirling->integer)
+		return qtrue;
+
+	// Main deciding point now
+	if (ent->attrFlags & ATTR_NO_TWIRL)
 		return qtrue;
 
 	return qfalse;
@@ -5907,6 +5959,46 @@ void PM_TorsoAnimation( void )
 				//FIXME: or just use whatever's currently playing?
 				//PM_SetAnim( pm, SETANIM_TORSO, pm->ps->legsAnim, SETANIM_FLAG_NORMAL );
 			}
+			// Had to move this outside of the switch statement.
+			else if (CG_IsWeaponPistol(pm->gent))
+			{
+				if ( pm->gent && pm->gent->weaponModel[1] > 0 )
+				{//dual pistols
+					if ( weaponBusy )
+					{
+						PM_SetAnim(pm,SETANIM_TORSO,BOTH_GUNSIT1,SETANIM_FLAG_NORMAL);
+					}
+					else if ( PM_RunningAnim( pm->ps->legsAnim )
+						|| PM_WalkingAnim( pm->ps->legsAnim )
+						|| PM_JumpingAnim( pm->ps->legsAnim )
+						|| PM_SwimmingAnim( pm->ps->legsAnim ) )
+					{//running w/1-handed weapon uses full-body anim
+						PM_SetAnim(pm,SETANIM_TORSO,pm->ps->legsAnim,SETANIM_FLAG_NORMAL);
+					}
+					else
+					{
+						PM_SetAnim(pm,SETANIM_TORSO,BOTH_STAND6,SETANIM_FLAG_NORMAL);
+					}
+				}
+				else
+				{//single pistols
+					if ( pm->ps->weaponstate == WEAPON_CHARGING_ALT || weaponBusy )
+					{
+						PM_SetAnim(pm,SETANIM_TORSO,TORSO_WEAPONREADY2,SETANIM_FLAG_NORMAL);
+					}
+					else if ( PM_RunningAnim( pm->ps->legsAnim )
+						|| PM_WalkingAnim( pm->ps->legsAnim )
+						|| PM_JumpingAnim( pm->ps->legsAnim )
+						|| PM_SwimmingAnim( pm->ps->legsAnim ) )
+					{//running w/1-handed weapon uses full-body anim
+						PM_SetAnim(pm,SETANIM_TORSO,pm->ps->legsAnim,SETANIM_FLAG_NORMAL);
+					}
+					else
+					{
+						PM_SetAnim(pm,SETANIM_TORSO,TORSO_WEAPONREADY2,SETANIM_FLAG_NORMAL);
+					}
+				}
+			}
 			else
 			{
 				switch(pm->ps->weapon)
@@ -5939,48 +6031,6 @@ void PM_TorsoAnimation( void )
 					else
 					{
 						PM_SetAnim(pm,SETANIM_TORSO,TORSO_WEAPONREADY2,SETANIM_FLAG_NORMAL);
-					}
-					break;
-				case WP_BLASTER_PISTOL:
-				case WP_REY:
-				case WP_JANGO:
-				case WP_CLONEPISTOL:
-					if ( pm->gent
-						&& pm->gent->weaponModel[1] > 0 )
-					{//dual pistols
-						if ( weaponBusy )
-						{
-							PM_SetAnim(pm,SETANIM_TORSO,BOTH_GUNSIT1,SETANIM_FLAG_NORMAL);
-						}
-						else if ( PM_RunningAnim( pm->ps->legsAnim )
-							|| PM_WalkingAnim( pm->ps->legsAnim )
-							|| PM_JumpingAnim( pm->ps->legsAnim )
-							|| PM_SwimmingAnim( pm->ps->legsAnim ) )
-						{//running w/1-handed weapon uses full-body anim
-							PM_SetAnim(pm,SETANIM_TORSO,pm->ps->legsAnim,SETANIM_FLAG_NORMAL);
-						}
-						else
-						{
-							PM_SetAnim(pm,SETANIM_TORSO,BOTH_STAND6,SETANIM_FLAG_NORMAL);
-						}
-					}
-					else
-					{//single pistols
-						if ( pm->ps->weaponstate == WEAPON_CHARGING_ALT || weaponBusy )
-						{
-							PM_SetAnim(pm,SETANIM_TORSO,TORSO_WEAPONREADY2,SETANIM_FLAG_NORMAL);
-						}
-						else if ( PM_RunningAnim( pm->ps->legsAnim )
-							|| PM_WalkingAnim( pm->ps->legsAnim )
-							|| PM_JumpingAnim( pm->ps->legsAnim )
-							|| PM_SwimmingAnim( pm->ps->legsAnim ) )
-						{//running w/1-handed weapon uses full-body anim
-							PM_SetAnim(pm,SETANIM_TORSO,pm->ps->legsAnim,SETANIM_FLAG_NORMAL);
-						}
-						else
-						{
-							PM_SetAnim(pm,SETANIM_TORSO,TORSO_WEAPONREADY2,SETANIM_FLAG_NORMAL);
-						}
 					}
 					break;
 				case WP_NONE:
@@ -6030,11 +6080,12 @@ void PM_TorsoAnimation( void )
 
 				case WP_BLASTER:
 				case WP_THEFIRSTORDER:
-				case WP_REBELBLASTER:
+				case WP_SBD:
 					PM_SetAnim(pm,SETANIM_TORSO,TORSO_WEAPONREADY3,SETANIM_FLAG_NORMAL);
 					//PM_SetAnim(pm,SETANIM_LEGS,BOTH_ATTACK2,SETANIM_FLAG_NORMAL);
 					break;
 				case WP_DISRUPTOR:
+				case WP_CIS_SNIPER:
 				case WP_TUSKEN_RIFLE:
 					if ( (pm->ps->weaponstate != WEAPON_FIRING
 							&& pm->ps->weaponstate != WEAPON_CHARGING
@@ -6110,9 +6161,7 @@ void PM_TorsoAnimation( void )
 					}
 					break;
 				case WP_REPEATER:
-				case WP_BATTLEDROID:
 				case WP_CLONECARBINE:
-				case WP_CLONERIFLE:
 				case WP_CLONECOMMANDO:
 				case WP_REBELRIFLE:
 				case WP_BOBA:
@@ -6219,21 +6268,57 @@ void PM_TorsoAnimation( void )
 				&& pm->ps->weapon != WP_FLECHETTE
 				&& pm->ps->weapon != WP_ROCKET_LAUNCHER
 				&& pm->ps->weapon != WP_CONCUSSION
-				&& pm->ps->weapon != WP_BATTLEDROID
 				&& pm->ps->weapon != WP_CLONECARBINE
-				&& pm->ps->weapon != WP_CLONERIFLE
 				&& pm->ps->weapon != WP_CLONECOMMANDO
 				&& pm->ps->weapon != WP_REBELRIFLE
 				&& pm->ps->weapon != WP_BOBA
-				&& pm->ps->weapon != WP_REY
-				&& pm->ps->weapon != WP_JANGO
-				&& pm->ps->weapon != WP_CLONEPISTOL
+				&& pm->ps->weapon != WP_CIS_SNIPER
 				&& ( PM_RunningAnim( pm->ps->legsAnim )
 					|| (PM_WalkingAnim( pm->ps->legsAnim ) && (pm->ps->clientNum < MAX_CLIENTS||PM_ControlledByPlayer()))
 					|| PM_JumpingAnim( pm->ps->legsAnim )
 					|| PM_SwimmingAnim( pm->ps->legsAnim ) ) )
 			{//running w/1-handed or light 2-handed weapon uses full-body anim if you're not using the weapon right now
 				PM_SetAnim(pm,SETANIM_TORSO,pm->ps->legsAnim,SETANIM_FLAG_NORMAL);
+			}
+			// Had to move this outside of the switch statement.
+			else if (CG_IsWeaponPistol(pm->gent))
+			{
+				if (pm->gent && pm->gent->weaponModel[1] > 0)
+				{//dual pistols
+					if ( weaponBusy )
+					{
+						PM_SetAnim(pm,SETANIM_TORSO,BOTH_GUNSIT1,SETANIM_FLAG_NORMAL);
+					}
+					else if ( PM_RunningAnim( pm->ps->legsAnim )
+						|| PM_WalkingAnim( pm->ps->legsAnim )
+						|| PM_JumpingAnim( pm->ps->legsAnim )
+						|| PM_SwimmingAnim( pm->ps->legsAnim ) )
+					{//running w/1-handed weapon uses full-body anim
+						PM_SetAnim(pm,SETANIM_TORSO,pm->ps->legsAnim,SETANIM_FLAG_NORMAL);
+					}
+					else
+					{
+						PM_SetAnim(pm,SETANIM_TORSO,BOTH_STAND1,SETANIM_FLAG_NORMAL);
+					}
+				}
+				else
+				{//single pistols
+					if ( pm->ps->weaponstate == WEAPON_CHARGING_ALT || weaponBusy )
+					{
+						PM_SetAnim(pm,SETANIM_TORSO,TORSO_WEAPONREADY2,SETANIM_FLAG_NORMAL);
+					}
+					else if ( PM_RunningAnim( pm->ps->legsAnim )
+							|| PM_WalkingAnim( pm->ps->legsAnim )
+							|| PM_JumpingAnim( pm->ps->legsAnim )
+							|| PM_SwimmingAnim( pm->ps->legsAnim ) )
+					{//running w/1-handed weapon uses full-body anim
+						PM_SetAnim(pm,SETANIM_TORSO,pm->ps->legsAnim,SETANIM_FLAG_NORMAL);
+					}
+					else
+					{
+						PM_SetAnim(pm,SETANIM_TORSO,TORSO_WEAPONIDLE2,SETANIM_FLAG_NORMAL);
+					}
+				}
 			}
 			else
 			{
@@ -6260,48 +6345,6 @@ void PM_TorsoAnimation( void )
 					else
 					{
 						PM_SetAnim(pm,SETANIM_TORSO,TORSO_WEAPONIDLE2,SETANIM_FLAG_NORMAL);
-					}
-					break;
-				case WP_BLASTER_PISTOL:
-				case WP_REY:
-				case WP_JANGO:
-				case WP_CLONEPISTOL:
-					if ( pm->gent
-						&& pm->gent->weaponModel[1] > 0 )
-					{//dual pistols
-						if ( weaponBusy )
-						{
-							PM_SetAnim(pm,SETANIM_TORSO,BOTH_GUNSIT1,SETANIM_FLAG_NORMAL);
-						}
-						else if ( PM_RunningAnim( pm->ps->legsAnim )
-							|| PM_WalkingAnim( pm->ps->legsAnim )
-							|| PM_JumpingAnim( pm->ps->legsAnim )
-							|| PM_SwimmingAnim( pm->ps->legsAnim ) )
-						{//running w/1-handed weapon uses full-body anim
-							PM_SetAnim(pm,SETANIM_TORSO,pm->ps->legsAnim,SETANIM_FLAG_NORMAL);
-						}
-						else
-						{
-							PM_SetAnim(pm,SETANIM_TORSO,BOTH_STAND1,SETANIM_FLAG_NORMAL);
-						}
-					}
-					else
-					{//single pistols
-						if ( pm->ps->weaponstate == WEAPON_CHARGING_ALT || weaponBusy )
-						{
-							PM_SetAnim(pm,SETANIM_TORSO,TORSO_WEAPONREADY2,SETANIM_FLAG_NORMAL);
-						}
-						else if ( PM_RunningAnim( pm->ps->legsAnim )
-								|| PM_WalkingAnim( pm->ps->legsAnim )
-								|| PM_JumpingAnim( pm->ps->legsAnim )
-								|| PM_SwimmingAnim( pm->ps->legsAnim ) )
-						{//running w/1-handed weapon uses full-body anim
-							PM_SetAnim(pm,SETANIM_TORSO,pm->ps->legsAnim,SETANIM_FLAG_NORMAL);
-						}
-						else
-						{
-							PM_SetAnim(pm,SETANIM_TORSO,TORSO_WEAPONIDLE2,SETANIM_FLAG_NORMAL);
-						}
 					}
 					break;
 
@@ -6359,6 +6402,7 @@ void PM_TorsoAnimation( void )
 					break;
 
 				case WP_BLASTER:
+				case WP_SBD:
 					if ( weaponBusy )
 					{
 						PM_SetAnim(pm,SETANIM_TORSO,TORSO_WEAPONREADY3,SETANIM_FLAG_NORMAL);
@@ -6370,6 +6414,7 @@ void PM_TorsoAnimation( void )
 					break;
 
 				case WP_DISRUPTOR:
+				case WP_CIS_SNIPER:
 				case WP_TUSKEN_RIFLE:
 					if ( (pm->ps->weaponstate != WEAPON_FIRING
 							&& pm->ps->weaponstate != WEAPON_CHARGING
@@ -6427,10 +6472,8 @@ void PM_TorsoAnimation( void )
 					break;
 
 				case WP_REPEATER:
-				case WP_BATTLEDROID:
 				case WP_THEFIRSTORDER:
 				case WP_CLONECARBINE:
-				case WP_REBELBLASTER:
 					if (pm->gent && pm->gent->client && pm->gent->client->NPC_class == CLASS_GALAKMECH)
 					{
 						if (pm->gent->alt_fire)

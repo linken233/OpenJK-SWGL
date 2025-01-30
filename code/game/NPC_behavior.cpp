@@ -1467,6 +1467,7 @@ qboolean NPC_CanSurrender( void )
 		case CLASS_HAZARD_TROOPER:
 		case CLASS_PLAYER:
 		case CLASS_VEHICLE:
+		case CLASS_DROIDEKA:
 			return qfalse;
 			break;
 		default:

@@ -159,6 +159,10 @@ void CG_MissionFailed(void)
 				text = "@SP_INGAME_MISSIONFAILED_QUEEN";
 				break;
 
+			case MISSIONFAILED_DEATHSTAR:
+				text = "@SP_INGAME_MISSIONFAILED_DEATHSTAR";
+				break;
+
 			default:
 				text = "@SP_INGAME_MISSIONFAILED_UNKNOWN";
 					break;

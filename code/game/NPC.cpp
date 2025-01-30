@@ -55,6 +55,7 @@ extern void Boba_Update();
 extern bool Boba_Flee();
 extern bool Boba_Tactics();
 extern void BubbleShield_Update();
+extern void DekaShield_Update();
 extern qboolean PM_LockedAnim( int anim );
 extern void NPC_BSGM_Default(void);
 
@@ -875,7 +876,7 @@ static void DeadThink ( void )
 				class_t	npc_class = NPC->client->NPC_class;
 				// check for droids
 				if ( npc_class == CLASS_SEEKER || npc_class == CLASS_REMOTE || npc_class == CLASS_PROBE || npc_class == CLASS_MOUSE ||
-					 npc_class == CLASS_GONK || npc_class == CLASS_R2D2 || npc_class == CLASS_R5D2 ||
+					 npc_class == CLASS_GONK || npc_class == CLASS_R2D2 || npc_class == CLASS_R5D2 || npc_class == CLASS_DROIDEKA ||
 					 npc_class == CLASS_MARK2 || npc_class == CLASS_SENTRY )//npc_class == CLASS_PROTOCOL ||
 				{
 					NPC->client->ps.eFlags |= EF_NODRAW;
@@ -2046,6 +2047,11 @@ void NPC_RunBehavior( int team, int bState )
 			if (NPC->client->NPC_class==CLASS_ASSASSIN_DROID)
 			{
 				BubbleShield_Update();
+			}
+
+			if (NPC->client->NPC_class == CLASS_DROIDEKA)
+			{
+				DekaShield_Update();
 			}
 
 			if (NPC_IsTrooper(NPC))

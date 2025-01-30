@@ -31,6 +31,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 weaponData_t weaponData[WP_NUM_WEAPONS];
 ammoData_t ammoData[AMMO_MAX];
+dynamicWpnData_t dynamicWpnData[DYN_WP_NUM_WEAPONS];
 
 extern void WP_LoadWeaponParms (void);
 

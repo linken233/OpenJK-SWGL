@@ -354,6 +354,8 @@ vmCvar_t	cg_SFXSabers;
 vmCvar_t	cg_SFXSabersGlowSize;
 vmCvar_t	cg_SFXSabersCoreSize;
 
+vmCvar_t    cg_ignitionSpeed;
+
 vmCvar_t	cg_dualWielding;
 
 vmCvar_t	cg_trueguns;
@@ -368,9 +370,8 @@ vmCvar_t		cg_trueeyeposition;
 vmCvar_t		cg_trueinvertsaber;
 vmCvar_t		cg_truefov;
 vmCvar_t        cg_truebobbing;
-
 vmCvar_t		cg_hudRatio;
-
+vmCvar_t        cg_switchDynWpnMdl;
 
 typedef struct {
 	vmCvar_t	*vmCvar;
@@ -495,6 +496,9 @@ static cvarTable_t cvarTable[] = {
 	{ &cg_SFXSabersGlowSize,	"cg_SFXSabersGlowSize",	"1.0", CVAR_ARCHIVE },
 	{ &cg_SFXSabersCoreSize,	"cg_SFXSabersCoreSize",	"1.0", CVAR_ARCHIVE },
 
+
+	{ &cg_ignitionSpeed,	"cg_ignitionSpeed",	"1.0", CVAR_ARCHIVE },
+
 	{ &cg_dualWielding,	"cg_dualWielding",	"0", CVAR_ARCHIVE },
 
 	//True View Control cvars
@@ -509,9 +513,10 @@ static cvarTable_t cvarTable[] = {
 	{ &cg_trueinvertsaber,	"cg_trueinvertsaber",	"0", CVAR_ARCHIVE},
 	{ &cg_truefov,	"cg_truefov",	"80", CVAR_ARCHIVE},
     { &cg_truebobbing,	"cg_truebobbing",	"1", CVAR_ARCHIVE},
-
 	{ &r_ratioFix, "r_ratioFix", "", 0 },
 	{ &cg_hudRatio, "cg_hudRatio", "1", CVAR_ARCHIVE },
+	// Must use CVAR_TEMP to avoid bugs.
+	{ &cg_switchDynWpnMdl, "cg_switchDynWpnMdl", "0", CVAR_TEMP },
 };
 
 static const size_t cvarTableSize = ARRAY_LEN( cvarTable );
@@ -1349,15 +1354,24 @@ but those are in special circumstances.
 */
 static qboolean CG_IsWeaponUsablePlayer(int weaponNum)
 {
-    if (weaponNum == WP_ATST_MAIN || weaponNum == WP_ATST_SIDE || weaponNum == WP_EMPLACED_GUN
-        || weaponNum == WP_BOT_LASER || weaponNum == WP_TURRET || weaponNum == WP_TIE_FIGHTER
-        || weaponNum == WP_RAPID_FIRE_CONC || weaponNum == WP_JAWA || weaponNum == WP_TUSKEN_RIFLE
-        || weaponNum == WP_TUSKEN_STAFF || weaponNum == WP_SCEPTER || weaponNum == WP_NOGHRI_STICK)
-    {
-        return qfalse;
-    }
-
-    return qtrue;
+	switch (weaponNum)
+	{
+		case WP_ATST_MAIN:
+		case WP_ATST_SIDE:
+		case WP_EMPLACED_GUN:
+		case WP_BOT_LASER:
+		case WP_TURRET:
+		case WP_TIE_FIGHTER:
+		case WP_RAPID_FIRE_CONC:
+		case WP_JAWA:
+		case WP_TUSKEN_RIFLE:
+		case WP_TUSKEN_STAFF:
+		case WP_SCEPTER:
+		case WP_NOGHRI_STICK:
+			return qfalse;
+		default:
+			return qtrue;
+	}
 }
 
 extern void CG_NPC_Precache ( gentity_t *spawner );
@@ -1792,21 +1806,35 @@ Ghoul2 Insert End
 	{
 		if (CG_IsWeaponUsablePlayer(i))
 		{
-			CG_RegisterWeapon(i);
-
 			// We are going to register the current weapon twice
 			// as we need to register the secondary model.
 			if (weaponData[i].weaponMdl2[0])
 			{
 				// Enabling it so the secondary model can be registered.
 				weaponData[i].secondaryMdl = qtrue;
-				cg_weapons[i].registered = qfalse;
 
 				CG_RegisterWeapon(i);
 				
 				// Since it was registered, turn if off.
 				weaponData[i].secondaryMdl = qfalse;
+				cg_weapons[i].registered = qfalse;
 			}
+
+			// We are going to register all of the
+			// dynamic weapons too.
+			if (CG_IsWeaponDynamic(i))
+			{
+				for (int j = 1; j <= CG_GetMaxDynWpn(i); j++)
+				{
+					player->client->ps.dynWpnVals[i] = j;
+					CG_RegisterWeapon(i);
+					cg_weapons[i].registered = qfalse;
+				}
+
+				player->client->ps.dynWpnVals[i] = DYN_WP_NONE;
+			}
+
+			CG_RegisterWeapon(i);
 		}
 	}
 

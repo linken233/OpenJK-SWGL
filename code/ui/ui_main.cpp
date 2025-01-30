@@ -113,11 +113,15 @@ void			UI_UpdateVideoSetup ( void );
 static void		UI_UpdateCharacterCvars ( void );
 static void		UI_GetCharacterCvars ( void );
 static void		UI_GetCharacterCustomization( void );
+static void		UI_RandomSkin(void);
+static void		UI_RandomRGB(void);
 static void		UI_RGBSaberCvars(void);
 static void		UI_UpdateSaberCvars ( void );
 static void		UI_GetSaberCvars ( void );
 static void		UI_ResetSaberCvars ( void );
 static void		UI_InitAllocForcePowers ( const char *forceName );
+static void		UI_InitAllocSaberStyle( const char *saberStyle );
+static void		UI_SwitchSaberStyle( const char * saberStyle);
 static void		UI_AffectForcePowerLevel ( const char *forceName );
 static void		UI_ShowForceLevelDesc ( const char *forceName );
 static void		UI_ResetForceLevels ( void );
@@ -197,6 +201,8 @@ static void UI_ApplySaberStyles(void);
 
 static void UI_ShowMissionInfo(void);
 
+static void UI_CharacterDefaultSkin(void);
+
 // Movedata Sounds
 enum
 {
@@ -262,7 +268,7 @@ typedef struct
 
 typedef struct missionData
 {
-	const char *title;
+	const char* title;
 	const char *missionNum;
 	const char *picCode;
 	const char *mapCode;
@@ -423,7 +429,8 @@ static missionTopicData_t missionTopicData[1][MAX_MISSION_TOPIC] =
 
 static missionData_t missionData[MAX_MISSION_TOPIC][MAX_MISSION] =
 {
-	// Phantom Menace
+
+// Phantom Menace
 {
 	{ "@SWGLMISSIONS_EPI_DOTF",			"0",		"Ep1_DotF", NULL, "@SWGLMISSIONS_EP1_DOTF_DESC", qtrue},
 	{ NULL,			NULL,		NULL, NULL, NULL, qfalse},
@@ -458,7 +465,6 @@ static missionData_t missionData[MAX_MISSION_TOPIC][MAX_MISSION] =
 	{ NULL,			NULL,		NULL, NULL, NULL, qfalse},
 	{ NULL,			NULL,		NULL, NULL, NULL, qfalse},
 },
-// Attack of the Clones
 // Revenge of the Sith
 {
 	{ "@SWGLMISSIONS_EPIII_TODP",		"0",			"Ep3_ToDP", "ep3_todp_ani", "@SWGLMISSIONS_EP3_TODP_DESC",},
@@ -665,6 +671,7 @@ static missionData_t missionData[MAX_MISSION_TOPIC][MAX_MISSION] =
 	{ "@SWGLMISSIONS_YAVIN_COURTYARD",	"23",				"levelshots/yavin_courtyard", "yavin_courtyard", "@SWGLMISSIONS_YAVIN_COURTYARD_DESC"},
 	{ "@SWGLMISSIONS_YAVIN_FINAL",		"24",			"levelshots/yavin_final", "yavin_final", "@SWGLMISSIONS_YAVIN_FINAL_DESC"},
 	{ "@SWGLMISSIONS_JODEMO",			"25",		"levelshots/jodemo", "jodemo", "@SWGLMISSIONS_JODEMO_DESC"},
+
 	{ NULL,			NULL,		NULL, NULL, NULL, qfalse},
 	{ NULL,			NULL,		NULL, NULL, NULL, qfalse},
 	{ NULL,			NULL,		NULL, NULL, NULL, qfalse},
@@ -705,6 +712,27 @@ static missionData_t missionData[MAX_MISSION_TOPIC][MAX_MISSION] =
 	{ NULL,			NULL,		NULL, NULL, NULL, qfalse},
 	{ NULL,			NULL,		NULL, NULL, NULL, qfalse},
 },
+};
+
+
+stringID_table_t SaberStyleTable[] =
+{
+	{ "NULL",SS_NONE },
+	ENUM2STRING(SS_FAST),
+	{ "fast",SS_FAST },
+	ENUM2STRING(SS_MEDIUM),
+	{ "medium",SS_MEDIUM },
+	ENUM2STRING(SS_STRONG),
+	{ "strong",SS_STRONG },
+	ENUM2STRING(SS_DESANN),
+	{ "desann",SS_DESANN },
+	ENUM2STRING(SS_TAVION),
+	{ "tavion",SS_TAVION },
+	ENUM2STRING(SS_DUAL),
+	{ "dual",SS_DUAL },
+	ENUM2STRING(SS_STAFF),
+	{ "staff",SS_STAFF },
+	{ "", 0 },
 };
 
 static int gamecodetoui[] = {4,2,3,0,5,1,6};
@@ -798,6 +826,7 @@ vmCvar_t	ui_npc_weapon;
 vmCvar_t	ui_npc_spawnscript;
 vmCvar_t	ui_npc_fleescript;
 vmCvar_t	ui_npc_deathscript;
+vmCvar_t	ui_npc_model;
 vmCvar_t	ui_npc_menu;
 vmCvar_t	ui_mission_topic;
 vmCvar_t	ui_mission;
@@ -919,6 +948,7 @@ static cvarTable_t cvarTable[] =
 	{ &ui_npc_spawnscript,		"ui_npc_spawnscript",	"spawnscripts/no_follow", NULL, CVAR_ARCHIVE},
 	{ &ui_npc_fleescript,		"ui_npc_fleescript",	"fleescripts/surrender", NULL, CVAR_ARCHIVE},
 	{ &ui_npc_deathscript,		"ui_npc_deathscript",	"deathscripts/losehead", NULL, CVAR_ARCHIVE},
+	{ &ui_npc_model,			"ui_npc_model",			"stormtrooper", NULL, CVAR_ARCHIVE},
 	{ &ui_saber_edit,			"ui_saber_edit",		"0", NULL},
 	{ &ui_char_model_angle, "ui_char_model_angle", "180", NULL, 0},
 	{ &ui_npc_menu, "ui_npc_menu", "0", NULL, 0},
@@ -1758,6 +1788,10 @@ static qboolean UI_RunMenuScript ( const char **args )
 		{
 			UI_UpdateCharacterSkin();
 		}
+		else if (Q_stricmp(name, "char_default_skin") == 0)
+		{
+			UI_CharacterDefaultSkin();
+		}
 		else if (Q_stricmp(name, "saber_type") == 0)
 		{
 			UI_UpdateSaberType();
@@ -1795,6 +1829,14 @@ static qboolean UI_RunMenuScript ( const char **args )
 		else if (Q_stricmp(name, "getcharcvars") == 0)
 		{
 			UI_GetCharacterCvars();
+		}
+		else if (Q_stricmp(name, "random_skin") == 0)
+		{
+			UI_RandomSkin();
+		}
+		else if (Q_stricmp(name, "random_rgb") == 0)
+		{
+			UI_RandomRGB();
 		}
 		else if (Q_stricmp(name, "savePage") == 0)
 		{
@@ -1852,6 +1894,20 @@ static qboolean UI_RunMenuScript ( const char **args )
 			String_Parse(args, &forceName);
 
 			UI_InitAllocForcePowers(forceName);
+		}
+		else if (Q_stricmp(name, "initallocsaberstyle") == 0)
+		{
+			const char *saberStyle;
+			String_Parse(args, &saberStyle);
+
+			UI_InitAllocSaberStyle(saberStyle);
+		}
+		else if (Q_stricmp(name, "switchsaberstyle") == 0)
+		{
+			const char *saberStyle;
+			String_Parse(args, &saberStyle);
+
+			UI_SwitchSaberStyle(saberStyle);
 		}
 		else if (Q_stricmp(name, "getNPCcode") == 0)
 		{
@@ -3469,18 +3525,7 @@ static void UI_BuildPlayerModel_List(qboolean inGameLoad)
 				continue;
 			}
 			uiInfo.playerSpeciesCount++;
-			/*if (!inGameLoad && ui_PrecacheModels.integer)
-			{
-				CGhoul2Info_v ghoul2;
-				Com_sprintf(fpath, sizeof(fpath), "models/players/%s/model.glm", dirptr);
-				int g2Model = DC->g2_InitGhoul2Model(ghoul2, fpath, 0, 0, 0, 0, 0);
-				if (g2Model >= 0)
-				{
-					DC->g2_RemoveGhoul2Model(ghoul2, 0);
-				}
-			}*/
 		}
-
 	}
 
 
@@ -5241,6 +5286,7 @@ static void UI_UpdateCharacterCvars ( void )
 static void UI_UpdateNPCCvars()
 {
 	Cvar_Set("g_NPCtype", Cvar_VariableString("ui_npc_type"));
+	Cvar_Set("g_NPCmodel", Cvar_VariableString("ui_char_model"));
 	Cvar_Set("g_NPChead", Cvar_VariableString("ui_char_skin_head"));
 	Cvar_Set("g_NPCtorso", Cvar_VariableString("ui_char_skin_torso"));
 	Cvar_Set("g_NPClegs", Cvar_VariableString("ui_char_skin_legs"));
@@ -5255,6 +5301,9 @@ static void UI_UpdateNPCCvars()
 	Cvar_Set("g_NPCfleescript", Cvar_VariableString("ui_npc_fleescript"));
 	Cvar_Set("g_NPCdeathscript", Cvar_VariableString("ui_npc_deathscript"));
 	Cvar_Set("g_NPChealth", Cvar_VariableString("ui_npc_health"));
+	Cvar_Set("g_npc_color_red", Cvar_VariableString("ui_char_color_red"));
+	Cvar_Set("g_npc_color_green", Cvar_VariableString("ui_char_color_green"));
+	Cvar_Set("g_npc_color_blue", Cvar_VariableString("ui_char_color_blue"));
 }
 
 static void UI_GetCharacterCvars ( void )
@@ -5278,6 +5327,36 @@ static void UI_GetCharacterCvars ( void )
 	}
 }
 
+static void UI_RandomSkin(void)
+{
+	for (int i = 0; i < uiInfo.playerSpeciesCount; i++)
+	{
+		if (!Q_stricmp(Cvar_VariableString("ui_char_model"), uiInfo.playerSpecies[i].Name))
+		{
+			// Usual menu and item variables
+			menuDef_t* menu;
+			itemDef_t* item;
+			menu = Menu_GetFocused();
+			item = (itemDef_s*)Menu_FindItemByName(menu, "character");
+
+			// Update the feeders so they'll reflect whatever is picked. Passing a random number since we don't need to store or save anything.
+			UI_FeederSelection(FEEDER_PLAYER_SKIN_HEAD, Q_irand(0, uiInfo.playerSpecies[uiInfo.playerSpeciesIndex].SkinHeadCount - 1), item);
+			UI_FeederSelection(FEEDER_PLAYER_SKIN_TORSO, Q_irand(0, uiInfo.playerSpecies[uiInfo.playerSpeciesIndex].SkinTorsoCount - 1), item);
+			UI_FeederSelection(FEEDER_PLAYER_SKIN_LEGS, Q_irand(0, uiInfo.playerSpecies[uiInfo.playerSpeciesIndex].SkinLegCount - 1), item);
+
+			return;
+			
+		}
+	}
+}
+
+static void UI_RandomRGB(void)
+{
+	Cvar_Set("ui_char_color_red", va("%i", Q_irand(0, 255)));
+	Cvar_Set("ui_char_color_green", va("%i", Q_irand(0, 255)));
+	Cvar_Set("ui_char_color_blue", va("%i", Q_irand(0, 255)));
+}
+
 static void UI_GetCharacterCustomization(void)
 {
 	for (int i = 0; i < uiInfo.playerSpeciesCount; i++)
@@ -5293,6 +5372,7 @@ extern saber_colors_t TranslateSaberColor( const char *name );
 
 static void UI_UpdateSaberCvars ( void )
 {
+
 	if (!Cvar_VariableIntegerValue("ui_saber_edit") && !Cvar_VariableIntegerValue("ui_npc_menu"))
 	{
 		Cvar_Set("g_saber_type", Cvar_VariableString("ui_saber_type"));
@@ -5302,19 +5382,20 @@ static void UI_UpdateSaberCvars ( void )
 		Cvar_Set("g_saber2_color", Cvar_VariableString("ui_saber2_color"));
 	}
 
+
 	if (TranslateSaberColor(Cvar_VariableString("ui_saber_color")) >= SABER_RGB)
 	{
 		char rgbColor[8];
 		Com_sprintf(rgbColor, 8, "x%02x%02x%02x", Cvar_VariableIntegerValue("ui_rgb_saber_red"),
 					(Cvar_VariableIntegerValue("ui_rgb_saber_green")),
 					(Cvar_VariableIntegerValue("ui_rgb_saber_blue")));
-		if (!Cvar_VariableIntegerValue("ui_npc_saber"))
+		if (!Cvar_VariableIntegerValue("ui_npc_menu"))
 		{
 			Cvar_Set("g_saber_color", rgbColor);
 		}
 		else
 		{
-			Cvar_Set("ui_npc_saberonecolor", rgbColor);
+			Cvar_Set("g_NPCSaberColor", rgbColor);
 		}
 	}
 
@@ -5324,13 +5405,13 @@ static void UI_UpdateSaberCvars ( void )
 		Com_sprintf(rgbColor, 8, "x%02x%02x%02x", Cvar_VariableIntegerValue("ui_rgb_saber2_red"),
 					(Cvar_VariableIntegerValue("ui_rgb_saber2_green")),
 					(Cvar_VariableIntegerValue("ui_rgb_saber2_blue")));
-		if (!Cvar_VariableIntegerValue("ui_npc_saber"))
+		if (!Cvar_VariableIntegerValue("ui_npc_menu"))
 		{
 			Cvar_Set( "g_saber2_color", rgbColor );
 		}
 		else
 		{
-			Cvar_Set("ui_npc_sabertwocolor", rgbColor);
+			Cvar_Set("g_NPCSaberTwoColor", rgbColor);
 		}
 	}
 
@@ -5544,6 +5625,98 @@ static qboolean UI_GetForcePowerIndex ( const char *forceName, short *forcePower
 	*forcePowerI = FP_UPDATED_NONE;	// Didn't find it
 
 	return(qfalse);
+}
+
+// Set the fields for the allocation of Saber Style(Used by Force Power Allocation screen)
+static void UI_InitAllocSaberStyle(const char* saberStyle) {
+
+	menuDef_t* menu;
+	itemDef_t* item;
+	short	stanceIndex = GetIDForString(SaberStyleTable, saberStyle);;
+
+	menu = Menu_GetFocused();	// Get current menu
+
+	if (!menu)
+	{
+		return;
+	}
+
+	if (stanceIndex <= 0 || stanceIndex >= SS_NUM_SABER_STYLES)
+	{
+		return;
+	}
+
+	client_t* cl = &svs.clients[0];	// 0 because only ever us as a player
+	if (!cl) {
+		return;
+	}
+	playerState_t* pState = cl->gentity->client;
+	bool hasStance = (pState->saberStylesKnown & 1 << stanceIndex) != 0;
+	bool isSingleSaber = !Q_stricmp(Cvar_VariableString("g_saber_type"), "single");
+
+	char itemName[128];
+	Com_sprintf(itemName, sizeof(itemName), "%s_switch", saberStyle);
+	item = (itemDef_s*)Menu_FindItemByName(menu, itemName);
+
+	if (item)
+	{
+		char itemGraphic[128];
+		Com_sprintf(itemGraphic, sizeof(itemGraphic), "gfx/menus/stance_switch_%s", hasStance ? "on" : "off");
+		item->window.background = ui.R_RegisterShaderNoMip(itemGraphic);
+		item->disabled = isSingleSaber? qfalse : qtrue;
+		item->disabledHidden = qfalse;
+	}
+}
+
+// Switch the value of a Saber Style then call update method to update UI(Used by Force Power Allocation screen)
+static void UI_SwitchSaberStyle(const char* saberStyle) {
+
+	menuDef_t* menu;
+	short	stanceIndex = GetIDForString(SaberStyleTable, saberStyle);
+	menu = Menu_GetFocused();
+
+	if (!menu)
+	{
+		return;
+	}
+
+	if (stanceIndex <= 0 || stanceIndex >= SS_NUM_SABER_STYLES)
+	{
+		return;
+	}
+
+	/* Should the player be allowed to play with this in with dual or staff saber? May be it could be interesting to have Fast/Strong + Staff/Dual but
+		I don't think the engine would allow this. Cycle Saber Attack should be updated to reflect this kind of changes first*/
+	if (!(Q_stricmp(Cvar_VariableString("g_saber_type"), "single") || Q_stricmp(Cvar_VariableString("g_saber_type"), ""))) {
+		return;
+	}
+
+	client_t* cl = &svs.clients[0];	// 0 because only ever us as a player
+	if (!cl) {
+		return;
+	}
+
+	playerState_t* pState = cl->gentity->client;
+	bool hasStance = (pState->saberStylesKnown & (1 << stanceIndex) ) != 0;
+	//Add or remove the stance
+	if (hasStance) {
+		int newStanceMap = pState->saberStylesKnown & ~(1 << stanceIndex);
+		if (newStanceMap > 1) {
+			pState->saberStylesKnown = newStanceMap;
+			//If the actual saber style is removed, we need to switch to another.
+			if (pState->saberAnimLevel == stanceIndex) {
+				//Right shift because there is always a left shift before setting. also Sometimes the player start with 1 in this map?
+				int newStance = Q_FindFirstBitIndex(newStanceMap>>1) ;
+				pState->saberAnimLevel = newStance;
+			}
+		}
+		
+	}
+	else {
+		pState->saberStylesKnown |= (1 << stanceIndex);
+	}
+
+	return UI_InitAllocSaberStyle(saberStyle);
 }
 
 // Set the fields for the allocation of force powers (Used by Force Power Allocation screen)
@@ -7591,6 +7764,91 @@ static void UI_UpdateCharacterSkin( void )
 				);
 
 	ItemParse_model_g2skin_go( item, skin );
+}
+
+static void UI_CharacterDefaultSkin(void)
+{
+	menuDef_t* menu;
+	itemDef_t* item;
+	char skin[MAX_QPATH];
+
+	menu = Menu_GetFocused();	// Get current menu
+
+	if (!menu)
+	{
+		return;
+	}
+	
+	item = (itemDef_s*)Menu_FindItemByName(menu, "character");
+
+	if (!item)
+	{
+		Com_Error(ERR_FATAL, "UI_CharacterDefaultSkin: Could not find item (character) in menu (%s)", menu->window.name);
+	}
+
+	// Two possibilities for characters. Either they have custom skins or they don't.
+	for (int i = 0; i < uiInfo.playerSpeciesCount; i++)
+	{
+		if (!Q_stricmp(Cvar_VariableString("ui_char_model"), uiInfo.playerSpecies[i].Name))
+		{
+			uiInfo.playerSpeciesIndex = i;
+			if (uiInfo.playerSpecies[i].SkinHeadCount > 0
+				&& uiInfo.playerSpecies[i].SkinTorsoCount > 0
+				&& uiInfo.playerSpecies[i].SkinLegCount > 0)
+			{
+				// Just have the head, torso, and legs set to the first possible selection to make things easier.
+				UI_FeederSelection(FEEDER_PLAYER_SKIN_HEAD, 0, item);
+				UI_FeederSelection(FEEDER_PLAYER_SKIN_TORSO, 0, item);
+				UI_FeederSelection(FEEDER_PLAYER_SKIN_LEGS, 0, item);
+
+				// Show and Hide certain items
+				Menu_ShowItemByName(menu, "heads", qtrue);
+				Menu_ShowItemByName(menu, "torso", qfalse);
+				Menu_ShowItemByName(menu, "lower", qfalse);
+				Menu_ShowItemByName(menu, "Customization", qtrue);
+				Menu_ShowItemByName(menu, "Presets", qtrue);
+				Menu_ShowItemByName(menu, "SkinTitle", qfalse);
+				Menu_ShowItemByName(menu, "SkinList", qfalse);
+				Menu_ShowItemByName(menu, "Skins", qfalse);
+				break;
+			}
+			else
+			{
+				// Just in case a model doesn't have a "default" skin, we still pick the 1st element anyway.
+				UI_FeederSelection(FEEDER_MODEL_SKINS, 0, item);
+
+				for (int j = 0; j < uiInfo.playerSpecies[i].SkinCount; j++)
+				{
+					if (!Q_stricmp(uiInfo.playerSpecies[i].Skin[j].name, "model_default"))
+					{						
+						UI_FeederSelection(FEEDER_MODEL_SKINS, j, item);
+						break;
+					}
+				}
+				// Show and Hide certain items
+				Menu_ShowItemByName(menu, "heads", qfalse);
+				Menu_ShowItemByName(menu, "torso", qfalse);
+				Menu_ShowItemByName(menu, "lower", qfalse);
+				Menu_ShowItemByName(menu, "Customization", qfalse);
+				Menu_ShowItemByName(menu, "Presets", qfalse);
+				Menu_ShowItemByName(menu, "SkinTitle", qtrue);
+				Menu_ShowItemByName(menu, "SkinList", qtrue);
+				Menu_ShowItemByName(menu, "Skins", qfalse);
+			}
+			break;
+			
+
+		}
+	}
+
+	Com_sprintf(skin, sizeof(skin), "models/players/%s/|%s|%s|%s",
+		Cvar_VariableString("ui_char_model"),
+		Cvar_VariableString("ui_char_skin_head"),
+		Cvar_VariableString("ui_char_skin_torso"),
+		Cvar_VariableString("ui_char_skin_legs")
+	);
+
+	ItemParse_model_g2skin_go(item, skin);
 }
 
 static void UI_UpdateCharacter( qboolean changedModel )

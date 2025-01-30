@@ -6808,10 +6808,10 @@ void Item_ListBox_Paint(itemDef_t *item)
 	}
 	else if (item->special == FEEDER_MODEL_SKINS)
 	{
-		float x = 0.0f, y = 0.0f;
-		int count = 0, i = 0, thumb = 0;
-		qhandle_t image = NULL_HANDLE;
-		qhandle_t optionalImage = NULL_HANDLE;
+		float size, sizeWidth, i2, sizeHeight;
+		int count, i, thumb, startPos;
+		qhandle_t image;
+		qhandle_t optionalImage;
 		listBoxDef_t* listPtr = (listBoxDef_t*)item->typeData;
 
 		// the listbox is horizontal or vertical and has a fixed size scroll bar going either direction
@@ -6871,7 +6871,7 @@ void Item_ListBox_Paint(itemDef_t *item)
 					startPos = listPtr->startPos;
 					x = item->window.rect.x + 1;
 					y = item->window.rect.y + 1;
-
+					int j = startPos;
 					// Next row
 					for (i2 = startPos; i2 < count; i2++)
 					{
@@ -7003,6 +7003,7 @@ void Item_ListBox_Paint(itemDef_t *item)
 					{
 						x = item->window.rect.x + 1;
 						y = item->window.rect.y + 1;
+						int j = listPtr->startPos;
 						for (i = listPtr->startPos; i < count; i++)
 						{
 
@@ -7052,6 +7053,8 @@ void Item_ListBox_Paint(itemDef_t *item)
 
 						for (j = 0; j < listPtr->numColumns; j++)
 						{
+							char	temp[MAX_STRING_CHARS];
+							int imageStartX = listPtr->columnInfo[j].pos;
 							text = DC->feederItemText(item->special, i, j, &optionalImage);
 							if (text[0] == '@')
 							{
@@ -11730,6 +11733,7 @@ qboolean Item_Slider_HandleKey_Rotate(itemDef_t* item, int key, qboolean down) {
 			if (editDef) {
 				int intValue = 0;
 				float angleDiff = 0.0f;
+
 				float curAngle = DC->getCVarValue(item->cvar);
 				if (key == A_MWHEELDOWN)
 					angleDiff = -editDef->range / 18.0f; //seems a decent step?

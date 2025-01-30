@@ -120,6 +120,17 @@ void AddScore( gentity_t *ent, int score ) {
 	ent->client->ps.persistant[PERS_SCORE] += score;
 }
 
+static qboolean IsWeaponDroppable(int weapon)
+{
+	switch (weapon)
+	{
+		case WP_SBD:
+			return qfalse;
+		default:
+			return qtrue;
+	}
+}
+
 /*
 =================
 TossClientItems
@@ -136,13 +147,13 @@ gentity_t* TossClientItems_Configurable(gentity_t* self,  bool dropOneSaber)
 	gentity_t	*dropped2 = NULL;
 	gitem_t		*item = NULL;
 	int			weapon;
-	qboolean 	is_pistol = qfalse;
 
 	if ( self->client->NPC_class == CLASS_SEEKER
 		|| self->client->NPC_class == CLASS_REMOTE
 		|| self->client->NPC_class == CLASS_SABER_DROID
 		|| self->client->NPC_class == CLASS_VEHICLE
-		|| self->client->NPC_class == CLASS_ATST)
+		|| self->client->NPC_class == CLASS_ATST
+		|| self->client->NPC_class == CLASS_DROIDEKA)
 	{
 		// these things are so small that they shouldn't bother throwing anything
 		return NULL;
@@ -150,10 +161,6 @@ gentity_t* TossClientItems_Configurable(gentity_t* self,  bool dropOneSaber)
 
 	// drop the weapon if not a saber or enemy-only weapon
 	weapon = self->s.weapon;
-	is_pistol = (qboolean)(self->weaponModel[1] > 0 && (weapon == WP_BLASTER_PISTOL
-							|| weapon == WP_REY
-							|| weapon == WP_JANGO
-							|| weapon == WP_CLONEPISTOL));
 
 	if ( weapon == WP_SABER )
 	{
@@ -220,9 +227,17 @@ gentity_t* TossClientItems_Configurable(gentity_t* self,  bool dropOneSaber)
 		}
 		else
 		{// find the item type for this weapon
-			item = FindItemForWeapon( (weapon_t) weapon );
+			if (self->client->ps.dynWpnVals[weapon])
+			{
+				int dynWpnNum = CG_GetDynWpnNum(weapon, self->client->ps.dynWpnVals[weapon]);
+				item = FindItemForDynWeapon((dynamicWeapon_t)dynWpnNum);
+			}
+			else
+			{
+				item = FindItemForWeapon( (weapon_t) weapon );
+			}
 		}
-		if ( item && !dropped )
+		if ( item && !dropped && IsWeaponDroppable(weapon) )
 		{
 			// spawn the item
 			dropped = Drop_Item( self, item, 0, qtrue );
@@ -248,6 +263,7 @@ gentity_t* TossClientItems_Configurable(gentity_t* self,  bool dropOneSaber)
 					dropped->count = 15;
 					break;
 				case WP_DISRUPTOR:
+				case WP_CIS_SNIPER:
 					dropped->count = 20;
 					break;
 				case WP_BOWCASTER:
@@ -286,17 +302,11 @@ gentity_t* TossClientItems_Configurable(gentity_t* self,  bool dropOneSaber)
 				case WP_NOGHRI_STICK:
 					dropped->count = 15;
 					break;
-				case WP_BATTLEDROID:
 				case WP_THEFIRSTORDER:
 				case WP_CLONECARBINE:
-				case WP_REBELBLASTER:
-				case WP_CLONERIFLE:
 				case WP_CLONECOMMANDO:
 				case WP_REBELRIFLE:
-				case WP_REY:
-				case WP_JANGO:
 				case WP_BOBA:
-				case WP_CLONEPISTOL:
 					dropped->count = 50;
 					break;
 				default:
@@ -314,7 +324,7 @@ gentity_t* TossClientItems_Configurable(gentity_t* self,  bool dropOneSaber)
 			}
 		}
 
-		if (item && !dropped2 && is_pistol)
+		if (item && !dropped2 && self->weaponModel[1] > 0 && CG_IsWeaponPistol(self))
 		{
 			dropped2 = Drop_Item(self, item, 45, qtrue);
 			dropped2->e_ThinkFunc = thinkF_NULL;
@@ -330,11 +340,6 @@ gentity_t* TossClientItems_Configurable(gentity_t* self,  bool dropOneSaber)
 				{
 					case WP_BLASTER_PISTOL:
 						dropped2->count = 20;
-						break;
-					case WP_REY:
-					case WP_JANGO:
-					case WP_CLONEPISTOL:
-						dropped2->count = 50;
 						break;
 					default:
 						dropped2->count = 0;
@@ -803,6 +808,12 @@ void DeathFX( gentity_t *ent )
 		G_PlayEffect( "env/med_explode", effectPos );
 		break;
 
+	case CLASS_DROIDEKA:
+		G_SoundOnEnt(ent, CHAN_AUTO, "sound/chars/sentry/misc/sentry_explo");
+		VectorCopy(ent->currentOrigin, effectPos);
+		G_PlayEffect("env/med_explode", effectPos);
+		break;
+
 	default:
 		break;
 
@@ -975,7 +986,8 @@ qboolean G_GetHitLocFromSurfName( gentity_t *ent, const char *surfName, int *hit
 			|| ent->client->NPC_class == CLASS_MOUSE
 			|| ent->client->NPC_class == CLASS_SENTRY
 			|| ent->client->NPC_class == CLASS_INTERROGATOR
-			|| ent->client->NPC_class == CLASS_PROBE ) )
+			|| ent->client->NPC_class == CLASS_PROBE
+			|| ent->client->NPC_class == CLASS_DROIDEKA) )
 	{//we don't care about per-surface hit-locations or dismemberment for these guys
 		return qfalse;
 	}
@@ -1304,6 +1316,10 @@ qboolean G_GetHitLocFromSurfName( gentity_t *ent, const char *surfName, int *hit
 		dismember = qtrue;
 	}
 	else if ( ent->client && ent->client->NPC_class == CLASS_ASSASSIN_DROID )
+	{
+		dismember = qtrue;
+	}
+	else if (ent->client && ent->client->NPC_class == CLASS_DROIDEKA)
 	{
 		dismember = qtrue;
 	}
@@ -3840,6 +3856,15 @@ void player_die( gentity_t *self, gentity_t *inflictor, gentity_t *attacker, int
 			self->client->ps.powerups[PW_GALAK_SHIELD] = 0;
 			gi.G2API_SetSurfaceOnOff( &self->ghoul2[self->playerModel], "force_shield", TURN_OFF );
 		}
+		// Remove The Shield From The Droideka
+		if (self->client && self->client->NPC_class == CLASS_DROIDEKA && (self->flags & FL_SHIELDED))
+		{
+			self->flags &= ~FL_SHIELDED;
+			self->client->ps.stats[STAT_ARMOR] = 0;
+			self->client->ps.powerups[PW_GALAK_SHIELD] = 0;
+			// Few difference surfaces on the model
+			gi.G2API_SetSurfaceOnOff(&self->ghoul2[self->playerModel], "force_shield", TURN_OFF);
+		}
 
 		if (self->client && self->client->NPC_class==CLASS_HOWLER)
 		{
@@ -4285,6 +4310,14 @@ extern void RunEmplacedWeapon( gentity_t *ent, usercmd_t **ucmd );
 			NPC_SetAnim( self, SETANIM_BOTH, anim, SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD );
 		}
 	}
+	else if (self->client->NPC_class == CLASS_DROIDEKA)
+	{
+		anim = PM_PickAnim(self, BOTH_DEATH1, BOTH_DEATH2); //initialize to good data
+		if (anim != -1)
+		{
+			NPC_SetAnim(self, SETANIM_BOTH, anim, SETANIM_FLAG_OVERRIDE | SETANIM_FLAG_HOLD);
+		}
+	}
 	else if ( self->s.number && self->message && meansOfDeath != MOD_SNIPER && meansOfDeath != MOD_HIGH_POWERED_SHOT )
 	{//imp with a key on his arm
 		//pick a death anim that leaves key visible
@@ -4588,9 +4621,9 @@ extern void RunEmplacedWeapon( gentity_t *ent, usercmd_t **ucmd );
 				self->NPC->timeOfDeath = level.time + 10000;
 			}
 		}
-		else if ( meansOfDeath == MOD_SNIPER 
+		else if ( (meansOfDeath == MOD_SNIPER 
 			|| meansOfDeath == MOD_DESTRUCTION
-			|| meansOfDeath == MOD_HIGH_POWERED_SHOT)
+			|| meansOfDeath == MOD_HIGH_POWERED_SHOT) && (self->client->NPC_class != CLASS_VEHICLE || (self->client->NPC_class == CLASS_VEHICLE && self->m_pVehicle->m_pVehicleInfo->type == VH_ANIMAL)))
 		{
 			gentity_t	*tent;
 			vec3_t		spot;
@@ -4936,7 +4969,42 @@ int CheckArmor (gentity_t *ent, int damage, int dflags, int mod)
 		}
 	}
 
-	if (client->NPC_class==CLASS_ASSASSIN_DROID)
+	// Droideka damage rules
+	if (client->NPC_class == CLASS_DROIDEKA)
+	{
+		// Droideka isn't affected by some things, regardless if they have the shield or not
+		if (mod==MOD_GAS ||	mod==MOD_IMPACT || mod==MOD_LAVA || mod==MOD_SLIME || mod==MOD_WATER ||
+			mod == MOD_FORCE_GRIP || mod == MOD_FORCE_DRAIN || mod == MOD_SEEKER || mod == MOD_MELEE)
+		{
+			return damage;
+		}
+
+		// The Demp and Force Lightning Completely Destroy The Shield
+		//-----------------------------------------
+		if (mod == MOD_DEMP2 || mod == MOD_DEMP2_ALT || mod == MOD_FORCE_LIGHTNING)
+		{
+			client->ps.stats[STAT_ARMOR] = 0;
+			return 0;
+		}
+		
+		// No shield, no protection
+		if (!(ent->flags & FL_SHIELDED))
+		{
+			return 0;
+		}
+
+		// Otherwise, The Shield Absorbs As Much Damage As Possible
+		//----------------------------------------------------------
+		int	previousArmor = client->ps.stats[STAT_ARMOR];
+		client->ps.stats[STAT_ARMOR] -= damage;
+		if (client->ps.stats[STAT_ARMOR] < 0)
+		{
+			client->ps.stats[STAT_ARMOR] = 0;
+		}
+		return (previousArmor - client->ps.stats[STAT_ARMOR]);
+	}
+
+	if (client->NPC_class == CLASS_ASSASSIN_DROID)
 	{
 		// The Assassin Always Completely Ignores These Damage Types
 		//-----------------------------------------------------------
@@ -4993,8 +5061,6 @@ int CheckArmor (gentity_t *ent, int damage, int dflags, int mod)
 		}
 		return (previousArmor - client->ps.stats[STAT_ARMOR]);
 	}
-
-
 
 	if ( client->NPC_class == CLASS_GALAKMECH)
 	{//special case
@@ -5471,16 +5537,9 @@ void G_TrackWeaponUsage( gentity_t *self, gentity_t *inflictor, int add, int mod
 		case MOD_BLASTER:
 		case MOD_BLASTER_ALT:
 			weapon = WP_BLASTER;
-			weapon = WP_THEFIRSTORDER;
-			weapon = WP_CLONECARBINE;
 			break;
-		case MOD_CLONERIFLE:
-		case MOD_CLONERIFLE_ALT:
-			weapon = WP_CLONERIFLE;
-			break;
-		case MOD_REBELBLASTER:
-		case MOD_REBELBLASTER_ALT:
-			weapon = WP_REBELBLASTER;
+		case MOD_SBD:
+			weapon = WP_SBD;
 			break;
 		case MOD_CLONECOMMANDO:
 		case MOD_CLONECOMMANDO_ALT:
@@ -5490,21 +5549,13 @@ void G_TrackWeaponUsage( gentity_t *self, gentity_t *inflictor, int add, int mod
 		case MOD_REBELRIFLE_ALT:
 			weapon = WP_REBELRIFLE;
 			break;
-		case MOD_REY:
-		case MOD_REY_ALT:
-			weapon = WP_REY;
-			break;
-		case MOD_CLONEPISTOL:
-		case MOD_CLONEPISTOL_ALT:
-			weapon = WP_CLONEPISTOL;
-			break;
-		case MOD_JANGO:
-		case MOD_JANGO_ALT:
-			weapon = WP_JANGO;
-			break;
 		case MOD_BOBA:
 		case MOD_BOBA_ALT:
 			weapon = WP_BOBA;
+			break;
+		case MOD_CIS_SNIPER:
+		case MOD_CIS_SNIPER_ALT:
+			weapon = WP_CIS_SNIPER;
 			break;
 		}
 	}
@@ -5571,7 +5622,8 @@ qboolean G_ImmuneToGas( gentity_t *ent )
 		|| ent->client->NPC_class == CLASS_SABER_DROID
 		|| ent->client->NPC_class == CLASS_ASSASSIN_DROID
 		|| ent->client->NPC_class == CLASS_HAZARD_TROOPER
-		|| ent->client->NPC_class == CLASS_VEHICLE )
+		|| ent->client->NPC_class == CLASS_VEHICLE
+		|| ent->client->NPC_class == CLASS_DROIDEKA)
 	{
 		return qtrue;
 	}
@@ -5635,6 +5687,10 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker, const
 		if( (mod != MOD_SNIPER && mod != MOD_DESTRUCTION && mod != MOD_HIGH_POWERED_SHOT) || (targ->flags & FL_DISINTEGRATED))
 		return;
 	}
+
+	// Aquatic people can't drown! IT'S. NOT. CANON!!!! (And makes no sense)
+	if (mod == MOD_WATER && targ->attrFlags & ATTR_AQUATIC)
+		return;
 
 	// if we are the player and we are locked to an emplaced gun, we have to reroute damage to the gun....sigh.
 	if ( targ->s.eFlags & EF_LOCKED_TO_WEAPON
@@ -5764,6 +5820,23 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker, const
 		}
 	}
 
+	// Heroes deal more damage and receive reduced damage (but not heavy weapons)
+	if (attacker && attacker->attrFlags & ATTR_HERO)
+	{
+		if (mod != MOD_CONC && mod != MOD_CONC_ALT && mod != MOD_DETPACK && mod != MOD_EMPLACED 
+		&& mod != MOD_EXPLOSIVE && mod != MOD_EXPLOSIVE_SPLASH && mod != MOD_ROCKET 
+		&& mod != MOD_ROCKET_ALT && mod != MOD_THERMAL && mod != MOD_THERMAL_ALT 
+		&& mod != MOD_REPEATER_ALT && mod != MOD_FLECHETTE_ALT)
+		{
+			damage *= 5.0f;
+		}
+	}
+
+	if (targ && targ->attrFlags & ATTR_HERO)
+	{
+		damage *= 0.5f;
+	}
+
 	// no more weakling allies!
 //	if ( attacker->s.number != 0 && damage >= 2 && targ->s.number != 0 && attacker->client && attacker->client->playerTeam == TEAM_PLAYER )
 //	{//player-helpers do only half damage to enemies
@@ -5788,6 +5861,12 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker, const
 	}
 	if ( dflags&DAMAGE_NO_DAMAGE )
 	{
+		// Droideka shields don't last forever and can take a beating from most weapons. But should offer a good bit of protection.
+		if (targ && targ->client && targ->client->NPC_class == CLASS_DROIDEKA)
+		{
+			targ->client->ps.stats[STAT_ARMOR] -= 6 - g_spskill->integer;
+		}
+
 		damage = 0;
 	}
 
@@ -5824,6 +5903,14 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker, const
 		}
 	}
 
+	// Spinning inquisitor sabers have a damage debuff for balancing.
+	if (attacker && attacker->client &&
+		attacker->client->ps.saber->type == SABER_INQUISITOR
+		&& attacker->client->ps.saber->inquisitor_spin && mod == MOD_SABER)
+	{
+		damage *= 0.5f;
+	}
+
 	if ( client && PM_InOnGroundAnim( &client->ps ))
 	{
 		dflags |= DAMAGE_NO_KNOCKBACK;
@@ -5850,7 +5937,8 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker, const
 			client->NPC_class == CLASS_R2D2 ||
 			client->NPC_class == CLASS_R5D2 ||
 			client->NPC_class == CLASS_SEEKER ||
-			client->NPC_class == CLASS_INTERROGATOR
+			client->NPC_class == CLASS_INTERROGATOR ||
+			client->NPC_class == CLASS_DROIDEKA
 		)
 	   )
 	{
@@ -6035,22 +6123,6 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker, const
 				case MOD_BLASTER:
 				case MOD_BLASTER_ALT:
 				case MOD_REPEATER:
-				case MOD_REBELBLASTER:
-				case MOD_REBELBLASTER_ALT
-				case MOD_CLONERIFLE:
-				case MOD_CLONERIFLE_ALT
-				case MOD_CLONECOMMANDO:
-				case MOD_CLONECOMMANDO_ALT
-				case MOD_REBELRIFLE:
-				case MOD_REBELRIFLE_ALT
-				case MOD_REY:
-				case MOD_REY_ALT
-				case MOD_JANGO:
-				case MOD_JANGO_ALT
-				case MOD_BOBA:
-				case MOD_BOBA_ALT
-				case MOD_CLONEPISTOL:
-				case MOD_CLONEPISTOL_ALT
 				case MOD_FLECHETTE:
 				case MOD_WATER:
 				case MOD_SLIME:
@@ -6108,22 +6180,15 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker, const
 				case MOD_BRYAR_ALT:
 				case MOD_BLASTER:
 				case MOD_BLASTER_ALT:
-				case MOD_REBELBLASTER:
-				case MOD_REBELBLASTER_ALT:
-				case MOD_CLONERIFLE:
-				case MOD_CLONERIFLE_ALT:
 				case MOD_CLONECOMMANDO:
 				case MOD_CLONECOMMANDO_ALT:
 				case MOD_REBELRIFLE:
 				case MOD_REBELRIFLE_ALT:
-				case MOD_REY:
-				case MOD_REY_ALT:
-				case MOD_CLONEPISTOL:
-				case MOD_CLONEPISTOL_ALT:
-				case MOD_JANGO:
-				case MOD_JANGO_ALT:
 				case MOD_BOBA:
 				case MOD_BOBA_ALT:
+				case MOD_SBD:
+				case MOD_CIS_SNIPER:
+				case MOD_CIS_SNIPER_ALT:
 				case MOD_REPEATER:
 				case MOD_FLECHETTE:
 				case MOD_WATER:
@@ -6846,6 +6911,7 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker, const
 		//	}
 
 			if ( (targTeam != attackerTeam || targTeam == TEAM_SOLO)
+				|| (targTeam == TEAM_FREE && attackerTeam == TEAM_FREE && attacker->enemy == targ && attacker->enemy->client == targ->client)
 				|| (targ->s.number < MAX_CLIENTS && targTeam == TEAM_FREE)//evil player hit
 				|| (attacker && attacker->s.number < MAX_CLIENTS && attackerTeam == TEAM_FREE) )//evil player attacked
 			{//on opposite team
@@ -6871,12 +6937,51 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker, const
 							G_ActivateBehavior( targ, BSET_DEATH );
 						}
 						targ->health = 1;
-						if (!Q_stricmp(SION, targ->NPC_type)
-							|| !Q_stricmp(SION_TFU, targ->NPC_type))
+					//	if (!Q_stricmp(SION, targ->NPC_type)
+							//|| !Q_stricmp(SION_TFU, targ->NPC_type))
+						if(targ->attrFlags & ATTR_HELD_BY_HATRED)
 						{
 							NPC_SetAnim(targ, SETANIM_BOTH, BOTH_FORCE_RAGE, SETANIM_FLAG_OVERRIDE | SETANIM_FLAG_RESTART | SETANIM_FLAG_HOLD);
-							targ->health = ((targ->max_health/(Q_irand(1,4)))+1);
-							if (!Q_irand(0, 2))
+							targ->client->ps.powerups[PW_INVINCIBLE] = level.time + targ->client->ps.torsoAnimTimer;
+							if (targ == player)
+							{
+								switch (g_spskill->integer)
+								{
+								case 0:
+									targ->max_health -= (targ->max_health * 0.2f);
+									break;
+								case 1:
+									targ->max_health -= (targ->max_health * 0.3f);
+									break;
+								case 2:
+									targ->max_health -= (targ->max_health * 0.5f);
+									break;
+								default:
+									targ->max_health -= (targ->max_health * 0.6f);
+									break;
+								}
+							}
+							else
+							{
+								switch (g_spskill->integer)
+								{
+								case 0:
+									targ->max_health -= (targ->max_health * 0.6f);
+									break;
+								case 1:
+									targ->max_health -= (targ->max_health * 0.5f);
+									break;
+								case 2:
+									targ->max_health -= (targ->max_health * 0.3f);
+									break;
+								default:
+									targ->max_health -= (targ->max_health * 0.6f);
+									break;
+								}
+							}
+
+							targ->health = targ->max_health;
+							if (targ->max_health < 100)
 							{
 								targ->flags &= ~FL_UNDYING;
 								targ->client->dismembered = qtrue;
@@ -7082,19 +7187,17 @@ int KnightfallDamage(int damage, gentity_t* attacker, gentity_t* targ, int mod)
 		if ((attacker && attacker->client)
 			&& (targ && targ->client))
 		{
-		
-		// Trying to stop friendly fire between the player and the clones
-		if (attacker->client->playerTeam == targ->client->playerTeam)
-			damage = 0;
-		// 2x damage from clones to Jedi (so they're actually helpful)
-		else if ((mod == MOD_CLONERIFLE || mod == MOD_CLONERIFLE_ALT) && targ->client->NPC_class == CLASS_JEDI && !IsKnightfallBoss(targ))
-			damage *= 2.0f;
-		}
-		else if (IsKnightfallBoss(attacker) && targ != player)
-		{
-			damage *= 3.0f;
-		}
 
+			// Trying to stop friendly fire between the player and the clones
+			if (attacker->client->playerTeam == targ->client->playerTeam)
+				damage = 0;
+			// 2x damage from clones to Jedi (so they're actually helpful)
+			else if ((mod == MOD_BLASTER || mod == MOD_BLASTER_ALT) && targ->client->NPC_class == CLASS_JEDI && !IsKnightfallBoss(targ))
+				damage *= 2.0f;
+			else if (IsKnightfallBoss(attacker) && targ != player)
+				damage *= 3.0f;
+
+		}
 	}
 
 	return damage;

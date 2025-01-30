@@ -1038,6 +1038,10 @@ void G_FreeEntity(gentity_t *ed) {
 	{
 		gi.Free(ed->NPC_LightningVictim);
 	}
+	if (ed->NPC_model && gi.bIsFromZone(ed->NPC_model, TAG_G_ALLOC))
+	{
+		gi.Free(ed->NPC_model);
+	}
 	if (ed->classname && gi.bIsFromZone(ed->classname, TAG_G_ALLOC)) {
 		gi.Free(ed->classname);
 	}

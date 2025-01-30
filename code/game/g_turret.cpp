@@ -2519,7 +2519,7 @@ void SP_misc_panel_turret( gentity_t *self )
 
 	self->s.weapon = WP_TURRET;
 
-	RegisterItem( FindItemForWeapon( WP_EMPLACED_GUN ));
+	RegisterItem( FindItemForWeapon( WP_TIE_FIGHTER )); // Would be WP_EMPLACED_GUN, but this somehow "fixes" the guns in Jedi Outcast *visible confusion*
 	gi.linkentity( self );
 
 	self->e_UseFunc = useF_panel_turret_use;

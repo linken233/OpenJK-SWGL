@@ -236,6 +236,7 @@ static consoleCommand_t	commands[] = {
 	{ "nextskin",			CG_TestModelNextSkin_f },
 	{ "prevframe",			CG_TestModelPrevFrame_f },
 	{ "prevskin",			CG_TestModelPrevSkin_f },
+	{ "switchdynwpnmdl",	CG_SwitchDynWpnMdl_f },
 	{ "tcmd",				CG_TargetCommand_f },
 	{ "testG2Model",		CG_TestG2Model_f},
 	{ "testanglespost",		CG_TestModelSetAnglespost_f},

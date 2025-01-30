@@ -1170,11 +1170,26 @@ qboolean G2API_GetBoneAnimIndex(CGhoul2Info *ghlInfo, const int iBoneIndex, cons
 	}
 	if (!ret)
 	{
-		*endFrame=1;
-		*startFrame=0;
-		*flags=0;
-		*currentFrame=0.0f;
-		*animSpeed=1.0f;
+		if (endFrame)
+		{
+			*endFrame=1;
+		}
+		if (startFrame)
+		{
+			*startFrame=0;
+		}
+		if (flags)
+		{
+			*flags=0;
+		}
+		if (currentFrame)
+		{
+			*currentFrame=0.0f;
+		}
+		if (animSpeed)
+		{
+			*animSpeed=1.0f;
+		}
 	}
 	G2NOTE(ret,"G2API_GetBoneAnimIndex Failed");
 	return ret;

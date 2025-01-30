@@ -1,6 +1,17 @@
 #ifndef NPC_SWGL_H
 #define NPC_SWGL_H
 
+// NPC Attributes
+#define ATTR_HELD_BY_HATRED 0x00000001 // Too angry to die initially. Loses maximum health and heals to their full upon defeat. If maximum health is lower than 100, make them defeatable.
+#define ATTR_HERO 0x00000002 // Hero character. Can't be mind tricked, disarmed, takes reduced damage from everything, and deals increased damage.
+#define ATTR_AQUATIC 0x00000004 // Can't die from drowning
+#define ATTR_PRECISE_LIGHTNING 0x00000008 // Uses the lightning effects from levels 1 and 2 instead of wide lightning.
+#define ATTR_INQUISITOR 0x00000010 // Member of the Inquisitorious
+#define ATTR_CASUAL_WALK 0x00000020 // Walks normally (like Kyle Katarn in Jedi Outcast) instead of the other saber animations.
+#define ATTR_NO_TWIRL 0x00000040 // Doesn't saber twirl.
+#define ATTR_COMMANDO 0x00000080 // Commandos can pull a few tricks out of their sleeves
+#define ATTR_BRAWLER 0x00000100 // Uses Kyle's melee attacks while fighting
+
 // Old Republic
 #define HAVOC_MAJOR "Havoc_Major"
 
@@ -41,6 +52,7 @@
 #define DOOKU_RITUAL "Count_Dooku_Ritual"
 #define DOOKU_JEDI "Count_Dooku_Jedi"
 #define GRIEVOUS_FOUR "General_Grievous_FourArms"
+#define DROIDEKA "Destroyer_Droid"
 
 
 
@@ -119,6 +131,7 @@
 #define CAL_KESTIS_INQUISITOR "Cal_Kestis_Inquisitor"
 #define ABELOTH "abeloth"
 #define VALKORION "valkorion"
+#define DAGAN "Dagan_Gera"
 
 
 

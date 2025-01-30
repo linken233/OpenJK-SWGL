@@ -721,6 +721,7 @@ void NPC_BSSniper_Attack( void )
 	if ( enemyDist < 16384 )//128 squared
 	{//too close, so switch to primary fire
 		if ( NPC->client->ps.weapon == WP_DISRUPTOR
+			|| NPC->client->ps.weapon == WP_CIS_SNIPER
 			|| NPC->client->ps.weapon == WP_TUSKEN_RIFLE )
 		{//sniping... should be assumed
 			if ( NPCInfo->scriptFlags & SCF_ALT_FIRE )
@@ -742,6 +743,7 @@ void NPC_BSSniper_Attack( void )
 	else if ( enemyDist > 65536 )//256 squared
 	{
 		if ( NPC->client->ps.weapon == WP_DISRUPTOR
+			|| NPC->client->ps.weapon == WP_CIS_SNIPER
 			|| NPC->client->ps.weapon == WP_TUSKEN_RIFLE )
 		{//sniping... should be assumed
 			if ( !(NPCInfo->scriptFlags&SCF_ALT_FIRE) )

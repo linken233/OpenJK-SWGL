@@ -236,8 +236,13 @@ void G_Give( gentity_t *ent, const char *name, const char *args, int argc )
 			ent->client->ps.weapons[i] = 1;
 		}
 		// Skip the unusable weapons, add in extra weapons.
-		for (int i = WP_BATTLEDROID; i < WP_NUM_WEAPONS; i++)
+		for (int i = WP_THEFIRSTORDER; i < WP_NUM_WEAPONS; i++)
 		{
+			if (i == WP_SBD)
+			{
+				continue;
+			}
+
 			ent->client->ps.weapons[i] = 1;
 		}
 		if ( !give_all )
@@ -1604,6 +1609,14 @@ void ClientCommand( int clientNum ) {
 		if ( addStyle > SS_NONE && addStyle < SS_STAFF )
 		{
 			ent->client->ps.saberStylesKnown |= (1<<addStyle);
+		}
+	}
+	/* For UI -> CG Synchronisation */
+	else if (Q_stricmp(cmd, "syncsaberstyle") == 0)
+	{
+		ent = G_GetSelfForPlayerCmd();
+		if (ent->client->ps.saberAnimLevel != cg.saberAnimLevelPending) {
+			cg.saberAnimLevelPending = ent->client->ps.saberAnimLevel;
 		}
 	}
 	else if (Q_stricmp (cmd, "removesaberstyle") == 0)

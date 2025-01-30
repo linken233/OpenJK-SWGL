@@ -424,6 +424,7 @@ qhandle_t RE_RegisterSkin( const char *name) {
 			// If using a model_ skin, we'll register the head (which shouldn't be cut off). Otherwise, keep the original behavior for the custom skins.
 			char* skin;
 			skin = strrchr(skinhead, '/');
+			skin = strrchr(skinlower, '/');
 			if(!strncmp(skin, "/model_", 7))
 				hSkin = RE_RegisterIndividualSkin(skinhead, hSkin);
 			else

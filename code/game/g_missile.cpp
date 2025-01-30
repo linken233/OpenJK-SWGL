@@ -744,6 +744,15 @@ void G_MissileImpact( gentity_t *ent, trace_t *trace, int hitLoc=HL_NONE )
 
 		G_BounceMissile( ent, trace );
 
+		if (other == player && player->client->NPC_class == CLASS_DROIDEKA && other->flags & ~FL_GODMODE)
+		{
+			// Still take damage from blasters bouncing off the shield
+			if (player->client->ps.stats[STAT_ARMOR] > 0)
+			{
+				player->client->ps.stats[STAT_ARMOR] -= 1 + g_spskill->integer;
+			}
+		}
+
 		if ( ent->owner )//&& ent->owner->s.number == 0 )
 		{
 			G_MissileAddAlerts( ent );
@@ -759,8 +768,8 @@ void G_MissileImpact( gentity_t *ent, trace_t *trace, int hitLoc=HL_NONE )
 	{
 		if ( !(other->contents&CONTENTS_LIGHTSABER)
 			|| g_spskill->integer <= 0//on easy, it reflects all shots
-			|| (g_spskill->integer == 1 && ent->s.weapon != WP_FLECHETTE && ent->s.weapon != WP_DEMP2 )//on medium it won't reflect flechette or demp shots
-			|| (g_spskill->integer >= 2 && ent->s.weapon != WP_FLECHETTE && ent->s.weapon != WP_DEMP2 && ent->s.weapon != WP_BOWCASTER && ent->s.weapon != WP_REPEATER )//on hard it won't reflect flechette, demp, repeater or bowcaster shots
+			|| (g_spskill->integer == 1 && ent->s.weapon != WP_FLECHETTE && ent->s.weapon != WP_DEMP2 && ent->s.weapon != WP_CIS_SNIPER )//on medium it won't reflect flechette, E-5 sniper or demp shots
+			|| (g_spskill->integer >= 2 && ent->s.weapon != WP_FLECHETTE && ent->s.weapon != WP_DEMP2 && ent->s.weapon != WP_CIS_SNIPER && ent->s.weapon != WP_BOWCASTER && ent->s.weapon != WP_REPEATER )//on hard it won't reflect flechette, demp, repeater or bowcaster shots
 			)
 		{
 			G_BounceMissile( ent, trace );
