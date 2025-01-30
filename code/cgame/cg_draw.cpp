@@ -287,11 +287,17 @@ static void CG_DrawSaberStyle(const centity_t	*cent,const int xPos,const int yPo
 	else if (cg.saberAnimLevelPending == SS_TAVION) {
 		index = OHB_SABERSTYLE_TAVION;
 	}
-	else if (cg.saberAnimLevelPending == SS_MEDIUM
-		|| cg.saberAnimLevelPending == SS_DUAL
-		|| cg.saberAnimLevelPending == SS_STAFF )
+	else if (cg.saberAnimLevelPending == SS_MEDIUM)
 	{
 		index = OHB_SABERSTYLE_MEDIUM;
+	}
+	else if (cg.saberAnimLevelPending == SS_DUAL)
+	{
+		index = OHB_SABERSTYLE_DUAL;
+	}
+	else if (cg.saberAnimLevelPending == SS_STAFF )
+	{
+		index = OHB_SABERSTYLE_STAFF;
 	}
 	else if (cg.saberAnimLevelPending == SS_DESANN) {
 		index = OHB_SABERSTYLE_DESANN;
