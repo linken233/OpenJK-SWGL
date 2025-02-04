@@ -280,8 +280,8 @@ static void CG_DrawSaberStyle(const centity_t	*cent,const int xPos,const int yPo
 	}
 
 	// don't need to draw ammo, but we will draw the current saber style in this window
-	if (cg.saberAnimLevelPending == SS_FAST
-		|| cg.saberAnimLevelPending == SS_TAVION )
+	if (cg.saberAnimLevelPending == SS_FAST)
+		//|| cg.saberAnimLevelPending == SS_TAVION )
 	{
 		index = OHB_SABERSTYLE_FAST;
 	}
@@ -290,6 +290,14 @@ static void CG_DrawSaberStyle(const centity_t	*cent,const int xPos,const int yPo
 		|| cg.saberAnimLevelPending == SS_STAFF )
 	{
 		index = OHB_SABERSTYLE_MEDIUM;
+	}
+	else if (cg.saberAnimLevelPending == SS_DESANN)
+	{
+		index = OHB_SABERSTYLE_DESANN;
+	}
+	else if (cg.saberAnimLevelPending == SS_TAVION)
+	{
+		index = OHB_SABERSTYLE_TAVION;
 	}
 	else
 	{
