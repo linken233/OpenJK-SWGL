@@ -1268,8 +1268,8 @@ static void Jedi_AdjustSaberAnimLevel( gentity_t *self, int newLevel )
 		return;
 	}
 	else
-	{//go ahead and set it		
-		self->client->ps.saberAnimLevel = newLevel;		
+	{//go ahead and set it
+		self->client->ps.saberAnimLevel = newLevel;
 	}
 
 	if ( d_JediAI->integer )
@@ -7314,7 +7314,7 @@ qboolean Rosh_TwinNearBy( gentity_t *self )
 			}
 		}
 	}
-	
+
 	return qfalse;
 }
 
@@ -7399,7 +7399,7 @@ qboolean Kothos_HealRosh( void )
 				TIMER_Set( NPC, "healRoshDebounce", Q_irand( 5000, 10000 ) );
 				NPC->count = 100;
 			}
-			
+
 			if (!Q_stricmp(LOOMIS, NPC->NPC_type) || !Q_stricmp(SAREK, NPC->NPC_type))
 			{
 				// Sarek and Loomis lose their shields when Shakkra is being healed.
@@ -7642,7 +7642,7 @@ qboolean Jedi_InSpecialMove( void )
 			if ( !NPC->client->leader )
 			{
 				if (!Q_stricmp("dkothos", NPC->NPC_type) || !Q_stricmp("vkothos", NPC->NPC_type))
-				{	
+				{
 					//find Rosh
 					NPC->client->leader = G_Find(NULL, FOFS(NPC_type), "rosh_dark");
 				}
@@ -7717,7 +7717,7 @@ qboolean Jedi_InSpecialMove( void )
 				else if ( NPC->enemy && DistanceSquared( NPC->enemy->currentOrigin, NPC->currentOrigin ) < Twins_DangerDist() )
 				{
 					NPC->client->ps.SaberActivate();
-					
+
 					if ( NPC->enemy && Kothos_Retreat() )
 					{
 						NPC_FaceEnemy( qtrue );
@@ -7938,7 +7938,7 @@ void NPC_BSJedi_Default( void )
 			saber_colors_t currentColor = NPC->client->ps.saber[0].blade[0].color;
 
 			WP_SetSaber(NPC, 0, "cal_kestis_single");
-			
+
 			NPC->client->ps.saber[0].blade[0].color = currentColor;
 		}
 		else if (!Q_stricmp("cal_kestis_single", NPC->client->ps.saber[0].name))
@@ -7948,7 +7948,7 @@ void NPC_BSJedi_Default( void )
 
 			NPC->client->ps.saber[0].blade[0].color = currentColor;
 			NPC->client->ps.saber[0].blade[1].color = currentColor;
-			
+
 		}
 		else if (!Q_stricmp("dagan_gera_staff", NPC->client->ps.saber[0].name))
 		{

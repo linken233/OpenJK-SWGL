@@ -834,6 +834,10 @@ void Touch_Item (gentity_t *ent, gentity_t *other, trace_t *trace) {
 		gi.Printf( "Touch_Item: %s is not an item!\n", ent->classname);
 		return;
 	}
+	//If the item was just dropped, should not be picked up before 1s
+	if (level.time - ent->s.time <= 1000) {
+		return;
+	}
 
 	if ( ent->item->giType == IT_WEAPON
 		&& ent->item->giTag == WP_SABER )

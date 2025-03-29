@@ -120,6 +120,8 @@ static void		UI_UpdateSaberCvars ( void );
 static void		UI_GetSaberCvars ( void );
 static void		UI_ResetSaberCvars ( void );
 static void		UI_InitAllocForcePowers ( const char *forceName );
+static void		UI_InitAllocSaberStyle( const char *saberStyle );
+static void		UI_SwitchSaberStyle( const char * saberStyle);
 static void		UI_AffectForcePowerLevel ( const char *forceName );
 static void		UI_ShowForceLevelDesc ( const char *forceName );
 static void		UI_ResetForceLevels ( void );
@@ -710,6 +712,27 @@ static missionData_t missionData[MAX_MISSION_TOPIC][MAX_MISSION] =
 	{ NULL,			NULL,		NULL, NULL, NULL, qfalse},
 	{ NULL,			NULL,		NULL, NULL, NULL, qfalse},
 },
+};
+
+
+stringID_table_t SaberStyleTable[] =
+{
+	{ "NULL",SS_NONE },
+	ENUM2STRING(SS_FAST),
+	{ "fast",SS_FAST },
+	ENUM2STRING(SS_MEDIUM),
+	{ "medium",SS_MEDIUM },
+	ENUM2STRING(SS_STRONG),
+	{ "strong",SS_STRONG },
+	ENUM2STRING(SS_DESANN),
+	{ "desann",SS_DESANN },
+	ENUM2STRING(SS_TAVION),
+	{ "tavion",SS_TAVION },
+	ENUM2STRING(SS_DUAL),
+	{ "dual",SS_DUAL },
+	ENUM2STRING(SS_STAFF),
+	{ "staff",SS_STAFF },
+	{ "", 0 },
 };
 
 static int gamecodetoui[] = {4,2,3,0,5,1,6};
@@ -1871,6 +1894,20 @@ static qboolean UI_RunMenuScript ( const char **args )
 			String_Parse(args, &forceName);
 
 			UI_InitAllocForcePowers(forceName);
+		}
+		else if (Q_stricmp(name, "initallocsaberstyle") == 0)
+		{
+			const char *saberStyle;
+			String_Parse(args, &saberStyle);
+
+			UI_InitAllocSaberStyle(saberStyle);
+		}
+		else if (Q_stricmp(name, "switchsaberstyle") == 0)
+		{
+			const char *saberStyle;
+			String_Parse(args, &saberStyle);
+
+			UI_SwitchSaberStyle(saberStyle);
 		}
 		else if (Q_stricmp(name, "getNPCcode") == 0)
 		{
@@ -5590,6 +5627,98 @@ static qboolean UI_GetForcePowerIndex ( const char *forceName, short *forcePower
 	return(qfalse);
 }
 
+// Set the fields for the allocation of Saber Style(Used by Force Power Allocation screen)
+static void UI_InitAllocSaberStyle(const char* saberStyle) {
+
+	menuDef_t* menu;
+	itemDef_t* item;
+	short	stanceIndex = GetIDForString(SaberStyleTable, saberStyle);;
+
+	menu = Menu_GetFocused();	// Get current menu
+
+	if (!menu)
+	{
+		return;
+	}
+
+	if (stanceIndex <= 0 || stanceIndex >= SS_NUM_SABER_STYLES)
+	{
+		return;
+	}
+
+	client_t* cl = &svs.clients[0];	// 0 because only ever us as a player
+	if (!cl) {
+		return;
+	}
+	playerState_t* pState = cl->gentity->client;
+	bool hasStance = (pState->saberStylesKnown & 1 << stanceIndex) != 0;
+	bool isSingleSaber = !Q_stricmp(Cvar_VariableString("g_saber_type"), "single");
+
+	char itemName[128];
+	Com_sprintf(itemName, sizeof(itemName), "%s_switch", saberStyle);
+	item = (itemDef_s*)Menu_FindItemByName(menu, itemName);
+
+	if (item)
+	{
+		char itemGraphic[128];
+		Com_sprintf(itemGraphic, sizeof(itemGraphic), "gfx/menus/stance_switch_%s", hasStance ? "on" : "off");
+		item->window.background = ui.R_RegisterShaderNoMip(itemGraphic);
+		item->disabled = isSingleSaber? qfalse : qtrue;
+		item->disabledHidden = qfalse;
+	}
+}
+
+// Switch the value of a Saber Style then call update method to update UI(Used by Force Power Allocation screen)
+static void UI_SwitchSaberStyle(const char* saberStyle) {
+
+	menuDef_t* menu;
+	short	stanceIndex = GetIDForString(SaberStyleTable, saberStyle);
+	menu = Menu_GetFocused();
+
+	if (!menu)
+	{
+		return;
+	}
+
+	if (stanceIndex <= 0 || stanceIndex >= SS_NUM_SABER_STYLES)
+	{
+		return;
+	}
+
+	/* Should the player be allowed to play with this in with dual or staff saber? May be it could be interesting to have Fast/Strong + Staff/Dual but
+		I don't think the engine would allow this. Cycle Saber Attack should be updated to reflect this kind of changes first*/
+	if (!(Q_stricmp(Cvar_VariableString("g_saber_type"), "single") || Q_stricmp(Cvar_VariableString("g_saber_type"), ""))) {
+		return;
+	}
+
+	client_t* cl = &svs.clients[0];	// 0 because only ever us as a player
+	if (!cl) {
+		return;
+	}
+
+	playerState_t* pState = cl->gentity->client;
+	bool hasStance = (pState->saberStylesKnown & (1 << stanceIndex) ) != 0;
+	//Add or remove the stance
+	if (hasStance) {
+		int newStanceMap = pState->saberStylesKnown & ~(1 << stanceIndex);
+		if (newStanceMap > 1) {
+			pState->saberStylesKnown = newStanceMap;
+			//If the actual saber style is removed, we need to switch to another.
+			if (pState->saberAnimLevel == stanceIndex) {
+				//Right shift because there is always a left shift before setting. also Sometimes the player start with 1 in this map?
+				int newStance = Q_FindFirstBitIndex(newStanceMap>>1) ;
+				pState->saberAnimLevel = newStance;
+			}
+		}
+		
+	}
+	else {
+		pState->saberStylesKnown |= (1 << stanceIndex);
+	}
+
+	return UI_InitAllocSaberStyle(saberStyle);
+}
+
 // Set the fields for the allocation of force powers (Used by Force Power Allocation screen)
 static void UI_InitAllocForcePowers ( const char *forceName )
 {
@@ -5631,11 +5760,11 @@ static void UI_InitAllocForcePowers ( const char *forceName )
 	if (item)
 	{
 		char itemGraphic[128];
-		Com_sprintf (itemGraphic, sizeof(itemGraphic), "gfx/menus/hex_pattern_%d",forcelevel >= 4 ? 3 : forcelevel);
+		Com_sprintf (itemGraphic, sizeof(itemGraphic), "gfx/menus/hex_pattern_%d",forcelevel >= 6 ? 5 : forcelevel);
 		item->window.background = ui.R_RegisterShaderNoMip(itemGraphic);
 
 		// If maxed out on power - don't allow update
-		if (forcelevel>=3)
+		if (forcelevel>=5)
 		{
 			Com_sprintf (itemName, sizeof(itemName), "%s_fbutton", powerEnums[forcePowerI].title);
 			item = (itemDef_s *) Menu_FindItemByName(menu, itemName);
