@@ -13496,10 +13496,10 @@ static void PM_Weapon( void )
 	int attackIndex = CG_GetAttackIndex(pm->gent, altFire);
 	weaponAttackData_t* attackData = &weaponData[weapon].attackData[attackIndex];
 
-	int firing_type = weaponData[pm->ps->weapon].attackData[attackIndex].fireOption[FIRING_TYPE];
-	int fire_time = weaponData[pm->ps->weapon].attackData[attackIndex].fireTime;
-	int burst_shots = weaponData[pm->ps->weapon].attackData[attackIndex].fireOption[SHOTS_PER_BURST];
-	int burst_fire_delay = weaponData[pm->ps->weapon].attackData[attackIndex].fireOption[BURST_FIRE_DELAY];
+	int firing_type = weaponData[weapon].attackData[attackIndex].fireOption[FIRING_TYPE];
+	int fire_time = weaponData[weapon].attackData[attackIndex].fireTime;
+	int burst_shots = weaponData[weapon].attackData[attackIndex].fireOption[SHOTS_PER_BURST];
+	int burst_fire_delay = weaponData[weapon].attackData[attackIndex].fireOption[BURST_FIRE_DELAY];
 
 
 
@@ -13518,7 +13518,7 @@ static void PM_Weapon( void )
 	{//draining
 		return;
 	}
-	if (pm->ps->weapon == WP_SABER && (cg.zoomMode==3||!cg.zoomMode||pm->ps->clientNum) )		// WP_LIGHTSABER
+	if (weapon == WP_SABER && (cg.zoomMode==3||!cg.zoomMode||pm->ps->clientNum) )		// WP_LIGHTSABER
 	{	// Separate logic for lightsaber, but not for player when zoomed
 		PM_WeaponLightsaber();
 		if ( pm->gent && pm->gent->client && pm->ps->saber[0].Active() && pm->ps->saberInFlight )
@@ -13536,7 +13536,7 @@ static void PM_Weapon( void )
 	}
 #pragma region generic_kick
 	//Has player Requested a kick with +kick?
-	if (pm->ps->weapon != WP_SABER && PM_CheckPlayerKickAttack()
+	if (weapon!= WP_SABER && PM_CheckPlayerKickAttack()
 		&&(cg.zoomMode == 3 || !cg.zoomMode)
 		)
 	{
@@ -13545,7 +13545,7 @@ static void PM_Weapon( void )
 		return;
 	}
 	//When Anim is finished, clean the SaberMove
-	if (pm->ps->weapon != WP_SABER && !(pm->cmd.buttons & BUTTON_KICK)
+	if (weapon!= WP_SABER && !(pm->cmd.buttons & BUTTON_KICK)
 		&& (pm->ps->clientNum < MAX_CLIENTS || PM_ControlledByPlayer())
 		&& (cg.zoomMode == 3 || !cg.zoomMode)
 		&& PM_KickMove(pm->ps->saberMove)
@@ -13556,7 +13556,7 @@ static void PM_Weapon( void )
 		pm->ps->saberMove = LS_NONE;
 	}
 	//Don't Interrupt the kick with a fire
-	if (pm->ps->weapon != WP_SABER && PM_KickingAnim(pm->ps->torsoAnim)
+	if (weapon!= WP_SABER && PM_KickingAnim(pm->ps->torsoAnim)
 		&& (pm->ps->clientNum < MAX_CLIENTS || PM_ControlledByPlayer())
 		&& (cg.zoomMode == 3 || !cg.zoomMode)
 		)
@@ -13587,7 +13587,7 @@ static void PM_Weapon( void )
 			pm->gent->client->fireDelay -= pml.msec;
 			if(pm->gent->client->fireDelay <= 0)
 			{//just finished delay timer
-				if ( pm->ps->clientNum && pm->ps->weapon == WP_ROCKET_LAUNCHER )
+				if ( pm->ps->clientNum && baseWeapon == WP_ROCKET_LAUNCHER )
 				{
 					G_SoundOnEnt( pm->gent, CHAN_WEAPON, "sound/weapons/rocket/lock.wav" );
 					pm->cmd.buttons |= BUTTON_ALT_ATTACK;
@@ -13595,18 +13595,15 @@ static void PM_Weapon( void )
 				pm->gent->client->fireDelay = 0;
 				delayed_fire = qtrue;
 				if ( (pm->ps->clientNum < MAX_CLIENTS||PM_ControlledByPlayer())
-					&& pm->ps->weapon == WP_THERMAL
+					&& baseWeapon == WP_THERMAL
 					&& pm->gent->alt_fire )
 				{
 					pm->cmd.buttons |= BUTTON_ALT_ATTACK;
 				}
 			}
-			else
+			else if ( pm->ps->clientNum && baseWeapon == WP_ROCKET_LAUNCHER && Q_irand( 0, 1 ) )
 			{
-				if ( pm->ps->clientNum && pm->ps->weapon == WP_ROCKET_LAUNCHER && Q_irand( 0, 1 ) )
-				{
-					G_SoundOnEnt( pm->gent, CHAN_WEAPON, "sound/weapons/rocket/tick.wav" );
-				}
+				G_SoundOnEnt( pm->gent, CHAN_WEAPON, "sound/weapons/rocket/tick.wav" );
 			}
 		}
 	}
@@ -13621,7 +13618,7 @@ static void PM_Weapon( void )
 	{
 		if ( pm->gent && pm->gent->client )
 		{
-			pm->ps->weapon = WP_NONE;
+			weapon = WP_NONE;
 		}
 
 		if ( pm->gent )
@@ -13643,7 +13640,7 @@ static void PM_Weapon( void )
 	// check for weapon change
 	// can't change if weapon is firing, but can change again if lowering or raising
 	if ((pm->ps->weaponTime <= 0 || pm->ps->weaponstate != WEAPON_FIRING) && pm->ps->weaponstate != WEAPON_CHARGING_ALT && pm->ps->weaponstate != WEAPON_CHARGING) {
-		if (pm->ps->weapon != pm->cmd.weapon && (!pm->ps->viewEntity || pm->ps->viewEntity >= ENTITYNUM_WORLD) && !PM_DoChargedWeapons()) {
+		if (weapon != pm->cmd.weapon && (!pm->ps->viewEntity || pm->ps->viewEntity >= ENTITYNUM_WORLD) && !PM_DoChargedWeapons()) {
 			PM_BeginWeaponChange(pm->cmd.weapon);
 		}
 	}
@@ -13695,7 +13692,7 @@ static void PM_Weapon( void )
 		return;
 	}
 
-	if ( pm->ps->weapon == WP_NONE )
+	if ( baseWeapon == WP_NONE )
 	{
 		return;
 	}
@@ -13730,7 +13727,7 @@ static void PM_Weapon( void )
 
 	if ( pm->gent )
 	{//ready to throw thermal again, add it
-		if ( pm->ps->weapon == WP_THERMAL
+		if ( baseWeapon == WP_THERMAL
 			&& pm->gent->weaponModel[0] == -1 )
 		{//add the thermal model back in our hand
 			// remove anything if we have anything already
@@ -13757,7 +13754,7 @@ static void PM_Weapon( void )
 		{
 			if ( !pm->gent->client->fireDelay//not already waiting to fire
 				&& (pm->ps->clientNum < MAX_CLIENTS||PM_ControlledByPlayer())//player
-				&& pm->ps->weapon == WP_THERMAL//holding thermal
+				&& baseWeapon == WP_THERMAL//holding thermal
 				&& pm->gent//gent
 				&& pm->gent->client//client
 				&& (pm->cmd.buttons&(BUTTON_ATTACK|BUTTON_ALT_ATTACK)) )//holding fire
@@ -13778,7 +13775,7 @@ static void PM_Weapon( void )
 
 	if (!delayed_fire)
 	{
-		if (pm->ps->weapon == WP_MELEE && (pm->ps->clientNum < MAX_CLIENTS || PM_ControlledByPlayer()))
+		if (weapon== WP_MELEE && (pm->ps->clientNum < MAX_CLIENTS || PM_ControlledByPlayer()))
 		{//melee
 			if ((pm->cmd.buttons & (BUTTON_ATTACK | BUTTON_ALT_ATTACK)) != (BUTTON_ATTACK | BUTTON_ALT_ATTACK))
 			{//not holding both buttons
@@ -13811,7 +13808,7 @@ static void PM_Weapon( void )
 				}
 			}
 
-			if (pm->ps->weapon == WP_MELEE
+			if (weapon == WP_MELEE
 				&& (pm->ps->clientNum < MAX_CLIENTS || PM_ControlledByPlayer())
 				&& PM_KickMove(pm->ps->saberMove))
 			{//melee, not attacking, clear move
@@ -14144,7 +14141,7 @@ static void PM_Weapon( void )
 		return;
 	}
 
-	if ( pm->ps->weapon == WP_EMPLACED_GUN )
+	if ( baseWeapon == WP_EMPLACED_GUN )
 	{
 		if ( pm->gent
 			&& pm->gent->owner
@@ -14159,9 +14156,9 @@ static void PM_Weapon( void )
 			addTime = weaponData[pm->ps->weapon].attackData[attackIndex].fireTime;
 		}
 	}
-	else if ( (pm->ps->weapon == WP_MELEE && (pm->ps->clientNum>=MAX_CLIENTS||!g_debugMelee->integer) )
-		|| pm->ps->weapon == WP_TUSKEN_STAFF
-		|| (pm->ps->weapon == WP_TUSKEN_RIFLE&&!(pm->cmd.buttons&BUTTON_ALT_ATTACK))  )
+	else if ( (baseWeapon== WP_MELEE && (pm->ps->clientNum>=MAX_CLIENTS||!g_debugMelee->integer) )
+		|| baseWeapon == WP_TUSKEN_STAFF
+		|| (baseWeapon == WP_TUSKEN_RIFLE&&!(pm->cmd.buttons&BUTTON_ALT_ATTACK))  )
 	{
 		PM_AddEvent( EV_FIRE_WEAPON );
 		addTime = pm->ps->torsoAnimTimer;
@@ -14175,7 +14172,7 @@ static void PM_Weapon( void )
 			PM_AddEvent(EV_ALT_FIRE);
 		}
 		addTime = weaponData[pm->ps->weapon].attackData[attackIndex].fireTime;
-		if ( pm->ps->weapon == WP_THERMAL )
+		if ( baseWeapon == WP_THERMAL )
 		{//threw our thermal
 			if ( pm->gent )
 			{// remove the thermal model if we had it.
@@ -14191,7 +14188,7 @@ static void PM_Weapon( void )
 	{
 		if ( pm->ps->clientNum //NPC
 			&& !PM_ControlledByPlayer() //not under player control
-			&& pm->ps->weapon == WP_THERMAL //using thermals
+			&& baseWeapon == WP_THERMAL //using thermals
 			&& pm->ps->torsoAnim != BOTH_ATTACK10 )//not in the throw anim
 		{//oops, got knocked out of the anim, don't throw the thermal
 			return;
@@ -14307,7 +14304,7 @@ static void PM_Weapon( void )
 	// HACK!!!!!
 	if ( pm->ps->ammo[weaponData[pm->ps->weapon].ammoIndex] <= 0 )
 	{
-		if ( pm->ps->weapon == WP_THERMAL || pm->ps->weapon == WP_TRIP_MINE )
+		if ( baseWeapon == WP_THERMAL || baseWeapon == WP_TRIP_MINE )
 		{
 			// because these weapons have the ammo attached to the hand, we should switch weapons when the last one is thrown, otherwise it will look silly
 			//	NOTE: could also switch to an empty had version, but was told we aren't getting any new models at this point
