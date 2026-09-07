@@ -3902,7 +3902,7 @@ qboolean NPC_ParseParms( const char *NPCName, gentity_t *NPC )
 						{
 							NPC->client->ps.saberStylesKnown |= NPC->client->ps.saber[1].singleBladeStyle;
 						}
-						if ((NPC->client->ps.saber[1].saberFlags & SFL_TWO_HANDED))
+						if ((NPC->client->ps.saber[1].saberFlags & SFL_TWO_HANDED) || (!Q_stricmp(value, "empty")))
 						{//tsk tsk, can't use a twoHanded saber as second saber
 							WP_RemoveSaber(NPC, 1);
 						}
@@ -4084,7 +4084,7 @@ qboolean NPC_ParseParms( const char *NPCName, gentity_t *NPC )
 				{
 					value = NPC->NPC_SaberTwo;
 				}
-				if ( !(NPC->client->ps.saber[0].saberFlags&SFL_TWO_HANDED) )
+				if ( !(NPC->client->ps.saber[0].saberFlags&SFL_TWO_HANDED) && !(!Q_stricmp(value, "empty")) )
 				{//can't use a second saber if first one is a two-handed saber...?
 					char *saberName = G_NewString( value );
 					WP_SaberParseParms( saberName, &NPC->client->ps.saber[1] );
@@ -4096,7 +4096,7 @@ qboolean NPC_ParseParms( const char *NPCName, gentity_t *NPC )
 					{
 						NPC->client->ps.saberStylesKnown |= NPC->client->ps.saber[1].singleBladeStyle;
 					}
-					if ( (NPC->client->ps.saber[1].saberFlags&SFL_TWO_HANDED) )
+					if ( (NPC->client->ps.saber[1].saberFlags&SFL_TWO_HANDED) || (!Q_stricmp(value, "empty")) )
 					{//tsk tsk, can't use a twoHanded saber as second saber
 						WP_RemoveSaber( NPC, 1 );
 					}
@@ -4538,13 +4538,37 @@ qboolean NPC_ParseParms( const char *NPCName, gentity_t *NPC )
 			{
 				if (NPC->NPC_SaberStyles >= 0)
 				{
-					NPC->client->ps.saberStylesKnown = NPC->NPC_SaberStyles;
 					int i;
+
+					if (NPC->NPC_SaberStyles & Get_SaberStyleValue(SS_DUAL))
+					{
+						if (NPC->client->ps.dualSabers)
+						{
+							NPC->client->ps.saberAnimLevel = SS_DUAL;
+							NPC->client->ps.saberStylesKnown = SS_DUAL;
+							NPC->NPC_SaberStyles |= Get_SaberStyleValue(SS_DUAL);
+						}
+						else
+						{
+							NPC->client->ps.saberStylesKnown &= ~SS_DUAL;
+							NPC->NPC_SaberStyles &= ~Get_SaberStyleValue(SS_DUAL);
+						}
+					}
+					else
+					{
+						NPC->client->ps.saberStylesKnown &= ~SS_DUAL;
+					}
+
 					for (i = SS_FAST; i < SS_STAFF; i++)
 					{
 						if (NPC->NPC_SaberStyles & Get_SaberStyleValue(i))
 						{
 							NPC->client->ps.saberAnimLevel = i;
+							NPC->client->ps.saberStylesKnown |= i;
+						}
+						else
+						{
+							NPC->client->ps.saberStylesKnown &= ~i;
 						}
 					}
 					continue;
@@ -4588,14 +4612,36 @@ qboolean NPC_ParseParms( const char *NPCName, gentity_t *NPC )
 
 		if (NPC->NPC_SaberStyles >= 0)
 		{
-			NPC->client->ps.saberStylesKnown = NPC->NPC_SaberStyles;
 			int i;
+
+			if (NPC->NPC_SaberStyles & Get_SaberStyleValue(SS_DUAL))
+			{
+				if (NPC->client->ps.dualSabers)
+				{
+					NPC->client->ps.saberAnimLevel = SS_DUAL;
+					NPC->client->ps.saberStylesKnown = SS_DUAL;
+				}
+				else
+				{
+					NPC->client->ps.saberStylesKnown &= ~SS_DUAL;
+					NPC->NPC_SaberStyles &= ~Get_SaberStyleValue(SS_DUAL);
+				}
+			}
+			else
+			{
+				NPC->client->ps.saberStylesKnown &= ~SS_DUAL;
+			}
 
 			for (i = SS_NONE; i < SS_STAFF; i++)
 			{
 				if (NPC->NPC_SaberStyles & Get_SaberStyleValue(i))
 				{
 					NPC->client->ps.saberAnimLevel = i;
+					NPC->client->ps.saberStylesKnown |= i;
+				}
+				else
+				{
+					NPC->client->ps.saberStylesKnown &= ~i;
 				}
 			}
 		}

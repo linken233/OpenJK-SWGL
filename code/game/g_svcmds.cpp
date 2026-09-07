@@ -679,6 +679,8 @@ static void Svcmd_Spawn_f(void)
 	NPCspawner->NPC_type = g_NPCtype->string;
 	NPCspawner->NPC_skin = "default";
 
+	NPCspawner->NPC_SaberTwo = "empty"; 
+
 	std::string newSkin;
 
 	newSkin.append(g_NPChead->string);
