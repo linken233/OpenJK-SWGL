@@ -1,0 +1,5 @@
+/build
+/install*
+/.vs
+/.kilo
+*.user
