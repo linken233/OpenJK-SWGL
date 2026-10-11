@@ -24,6 +24,12 @@ int			UI_LightEdit_FeederCount( void );
 const char	*UI_LightEdit_FeederItemText( int index, int column );
 void		UI_LightEdit_FeederSelection( int index );
 
-// Ownerdraw items UI_LIGHTEDIT_SWATCH and UI_LIGHTEDIT_STATS.
+// Feeder FEEDER_LIGHTEDIT_EMI: the emissive shaders.
+int			UI_LightEdit_EmiFeederCount( void );
+const char	*UI_LightEdit_EmiFeederItemText( int index, int column );
+void		UI_LightEdit_EmiFeederSelection( int index );
+
+// Ownerdraw items UI_LIGHTEDIT_SWATCH, UI_LIGHTEDIT_STATS and UI_LIGHTEDIT_SKY.
 void		UI_LightEdit_DrawSwatch( float x, float y, float w, float h );
 void		UI_LightEdit_DrawStats( float x, float y, float scale, const vec4_t color, int fontIndex );
+void		UI_LightEdit_DrawSky( float x, float y, float scale, const vec4_t color, int fontIndex );

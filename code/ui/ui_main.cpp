@@ -1438,6 +1438,10 @@ const char *UI_FeederItemText(float feederID, int index, int column, qhandle_t *
 	{
 		return UI_LightEdit_FeederItemText(index, column);
 	}
+	else if (feederID == FEEDER_LIGHTEDIT_EMI)
+	{
+		return UI_LightEdit_EmiFeederItemText(index, column);
+	}
 	else if (feederID == FEEDER_ANIM_OVERRIDES)
 	{
 		if (index < 0 || index >= (int)uiAnimOverrides.size())
@@ -3214,6 +3218,10 @@ static int UI_FeederCount(float feederID)
 	{
 		return UI_LightEdit_FeederCount();
 	}
+	else if (feederID == FEEDER_LIGHTEDIT_EMI)
+	{
+		return UI_LightEdit_EmiFeederCount();
+	}
 	else if (feederID == FEEDER_PLAYER_SPECIES)
 	{
 		return uiInfo.playerSpeciesCount;
@@ -3486,6 +3494,10 @@ static void UI_FeederSelection(float feederID, int index, itemDef_t *item)
 	else if (feederID == FEEDER_LIGHTEDIT)
 	{
 		UI_LightEdit_FeederSelection(index);
+	}
+	else if (feederID == FEEDER_LIGHTEDIT_EMI)
+	{
+		UI_LightEdit_EmiFeederSelection(index);
 	}
 	else if (feederID == FEEDER_PLAYER_SKIN_HEAD)
 	{
@@ -5631,6 +5643,10 @@ static void UI_OwnerDraw(float x, float y, float w, float h, float text_x, float
 
 		case UI_LIGHTEDIT_STATS:
 			UI_LightEdit_DrawStats(x, y, scale, color, iFontIndex);
+			break;
+
+		case UI_LIGHTEDIT_SKY:
+			UI_LightEdit_DrawSky(x, y, scale, color, iFontIndex);
 			break;
 
 		case UI_ALLMAPS_SELECTION://saved game thumbnail

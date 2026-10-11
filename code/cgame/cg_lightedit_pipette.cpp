@@ -28,9 +28,10 @@ void LE_PipetteInit( void )
 }
 
 // The clipboard as a preset for a new light: type, colour, intensity, radius, direction and cones.
+// An emissive surface is not a preset: its factor is not an intensity.
 qboolean LE_PipettePreset( rtxLightDesc_t *d )
 {
-	if ( !s_clipValid )
+	if ( !s_clipValid || s_clip.type == RTX_LTYPE_SURFACE )
 	{
 		return qfalse;
 	}
@@ -66,32 +67,52 @@ static void LE_PipetteCopy( void )
 	s_clip.flags = 0;
 	VectorClear( s_clip.origin );
 	s_clip.name[0] = 0;
+	s_clipValid = qtrue;
+	if ( src.type == RTX_LTYPE_SURFACE )
+	{
+		LE_Msg( "light edit: copied emissive surface %d (factor %.3g, tint %.2f %.2f %.2f, style %d)", src.id, src.intensity,
+			src.color[0], src.color[1], src.color[2], src.style );
+		return;
+	}
 	if ( scaleSrc > 0.0f && scaleNew > 0.0f )
 	{
 		s_clip.intensity = src.intensity * scaleSrc / scaleNew;
 	}
-	s_clipValid = qtrue;
 	LE_CreateSetType( src.type );
 	LE_Msg( "light edit: copied light %d (%s, intensity %.1f); tool 2 uses it as its preset", src.id,
 		LE_TypeName( src.type ), s_clip.intensity );
 }
 
 // Gives d the clipboard values that the filter selects. The intensity goes back to the units of the target.
-static void LE_PipetteApply( rtxLightDesc_t *d )
+// An emissive surface and a light share the colour and the style only; two surfaces share the factor too.
+// Returns qfalse when nothing applies.
+static qboolean LE_PipetteApply( rtxLightDesc_t *d )
 {
+	const qboolean	toSurface = (qboolean)( d->type == RTX_LTYPE_SURFACE );
+	const qboolean	fromSurface = (qboolean)( s_clip.type == RTX_LTYPE_SURFACE );
+	qboolean		applied = qfalse;
+
 	if ( s_filter == LEF_ALL || s_filter == LEF_COLOR )
 	{
 		VectorCopy( s_clip.color, d->color );
+		applied = qtrue;
 	}
-	if ( s_filter == LEF_ALL || s_filter == LEF_INTENSITY )
+	if ( ( s_filter == LEF_ALL || s_filter == LEF_INTENSITY ) && toSurface && fromSurface )
+	{
+		d->intensity = s_clip.intensity;
+		applied = qtrue;
+	}
+	else if ( ( s_filter == LEF_ALL || s_filter == LEF_INTENSITY ) && !toSurface && !fromSurface )
 	{
 		const float	scaleNew = s_api->IntensityScale( -1 );
 		const float	scaleDst = s_api->IntensityScale( d->id );
 
 		d->intensity = ( scaleNew > 0.0f && scaleDst > 0.0f ) ? s_clip.intensity * scaleNew / scaleDst : s_clip.intensity;
+		applied = qtrue;
 	}
-	if ( s_filter == LEF_ALL || s_filter == LEF_SHAPE )
+	if ( ( s_filter == LEF_ALL || s_filter == LEF_SHAPE ) && !toSurface && !fromSurface )
 	{
+		applied = qtrue;
 		if ( s_clip.type != d->type )
 		{
 			if ( s_clip.type != RTX_LTYPE_SPHERE )
@@ -117,13 +138,15 @@ static void LE_PipetteApply( rtxLightDesc_t *d )
 	if ( s_filter == LEF_ALL )
 	{
 		d->style = s_clip.style;
+		applied = qtrue;
 	}
+	return applied;
 }
 
 static void LE_PipettePaste( void )
 {
 	std::vector<int>	ids;
-	int					done = 0;
+	int					done = 0, refused = 0;
 
 	if ( !s_clipValid )
 	{
@@ -148,7 +171,11 @@ static void LE_PipettePaste( void )
 			{
 				continue;
 			}
-			LE_PipetteApply( &d );
+			if ( !LE_PipetteApply( &d ) )
+			{
+				refused++;
+				continue;
+			}
 			if ( LE_DoSet( ids[i], &d, "paste" ) )
 			{
 				done++;
@@ -159,6 +186,11 @@ static void LE_PipettePaste( void )
 	if ( done )
 	{
 		LE_Msg( "light edit: pasted %s on %d light%s", s_filterNames[s_filter], done, done > 1 ? "s" : "" );
+	}
+	if ( refused )
+	{
+		LE_Msg( "light edit: %d target%s took nothing: an emissive surface and a light share the colour and the style only",
+			refused, refused > 1 ? "s" : "" );
 	}
 }
 
@@ -183,7 +215,7 @@ void LE_PipetteHelp( const char **name, const char **fire, const char **alt, cha
 	static char	altBuf[96];
 
 	*name = "6 Pipette";
-	*fire = "copy the aimed light; it becomes the preset of tool 2";
+	*fire = "copy the aimed light (it becomes the preset of tool 2) or emissive surface (factor, tint, style)";
 	if ( s_clipValid )
 	{
 		Com_sprintf( altBuf, sizeof( altBuf ), "paste %s on the aimed light (the selection if it is a member)", s_filterNames[s_filter] );

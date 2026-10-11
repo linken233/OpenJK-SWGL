@@ -31,6 +31,7 @@ by the Free Software Foundation.
 #define LFILE_MIN_RADIUS	0.5f
 #define LFILE_CHECK_RANGE	1.0f
 #define LFILE_EPSILON		0.001f
+#define LFILE_MAX_FACTOR	100.0f	// factor of an emissive surface, as the factor of a shader
 
 struct fileKV_t {
 	std::string					key;
@@ -48,6 +49,7 @@ struct fileData_t {
 	std::vector<fileBlock_t>	added;
 	std::vector<fileBlock_t>	other;		// unknown source
 	std::vector<fileBlock_t>	emissive;	// factor of an emissive shader
+	std::vector<fileBlock_t>	surfaces;	// edits of one emissive surface
 	std::vector<fileBlock_t>	global;		// sky and sun of the map
 };
 
@@ -67,7 +69,8 @@ static std::vector<fileBlock_t>	g_passLgt;		// lgt blocks of a map that has enti
 static std::vector<fileBlock_t>	g_pendEnt;		// read, not applied yet
 static std::vector<fileBlock_t>	g_pendAdded;
 static std::vector<fileBlock_t>	g_pendEmissive;	// read, not applied yet
-static std::vector<fileBlock_t>	g_passOther;	// unknown blocks and entity overrides that do not match
+static std::vector<fileBlock_t>	g_pendSurfaces;	// read, not applied yet
+static std::vector<fileBlock_t>	g_passOther;	// unknown blocks and overrides that do not match
 static std::vector<int>			g_disabledLgt;	// ids of the lgt lights to switch off after the load
 static qboolean					g_hasEntityLights = qfalse;
 static qboolean					g_fileRead = qfalse;
@@ -75,6 +78,7 @@ static int						g_numLgt = 0;
 static int						g_numOverrides = 0;
 static int						g_numAdded = 0;
 static int						g_numEmissive = 0;
+static int						g_numSurfaces = 0;
 static int						g_numIgnored = 0;
 
 /*
@@ -142,6 +146,8 @@ static void ClassifyBlock( const fileBlock_t &blk, fileData_t &out )
 		out.added.push_back( blk );
 	else if ( !Q_stricmp( source, "emissive" ) )
 		out.emissive.push_back( blk );
+	else if ( !Q_stricmp( source, "emissive_surface" ) )
+		out.surfaces.push_back( blk );
 	else if ( !Q_stricmp( source, "global" ) )
 		out.global.push_back( blk );
 	else
@@ -436,6 +442,7 @@ static void ClearState( void )
 	g_pendEnt.clear();
 	g_pendAdded.clear();
 	g_pendEmissive.clear();
+	g_pendSurfaces.clear();
 	g_passOther.clear();
 	g_disabledLgt.clear();
 	g_hasEntityLights = qfalse;
@@ -444,6 +451,7 @@ static void ClearState( void )
 	g_numOverrides = 0;
 	g_numAdded = 0;
 	g_numEmissive = 0;
+	g_numSurfaces = 0;
 	g_numIgnored = 0;
 }
 
@@ -480,6 +488,7 @@ void RTX_LightFile_Load( world_t &w, qboolean hasEntityLights )
 	g_pendEnt = data.ent;
 	g_pendAdded = data.added;
 	g_pendEmissive = data.emissive;
+	g_pendSurfaces = data.surfaces;
 	g_passOther = data.other;
 	g_numIgnored += (int)data.other.size();
 
@@ -595,6 +604,58 @@ static void ApplyAddedBlock( const fileBlock_t &b )
 	RTX_LightEdit_ApplyRecord( rec );
 }
 
+// Finds the emissive surface by shader and rank, checks its centre, and gives it the edits of the block.
+// Gives qfalse when the block matches no surface of the BSP.
+static qboolean ApplySurfaceBlock( const fileBlock_t &b )
+{
+	const char			*shader = GetS( b, "shader", "" );
+	const int			rank = (int)GetF( b, "face", 0, -1.0f );
+	const int			id = shader[0] ? RTX_LightEmissive_FindRecord( shader, rank ) : -1;
+	rtxLightRecord_t	*rec = id >= 0 ? RTX_LightEdit_GetRecordRaw( id ) : NULL;
+	vec3_t				v;
+
+	if ( rec && GetV3( b, "check", v ) )
+	{
+		const char	*key;
+		int			groupRank;
+		float		centre[3];
+
+		RTX_LightEmissive_GroupKey( rec->emiGroup, &key, &groupRank, centre );
+
+		for ( int k = 0; k < 3; k++ )
+		{
+			if ( fabsf( v[k] - centre[k] ) > LFILE_CHECK_RANGE )
+				rec = NULL;
+
+			if ( !rec )
+				break;
+		}
+	}
+
+	if ( !rec )
+	{
+		Com_Printf( "light edit: emissive surface %s face %i does not match the BSP, ignored\n", shader, rank );
+		return qfalse;
+	}
+
+	rec->intensity = MAX( 0.0f, MIN( GetF( b, "scale", 0, 1.0f ), LFILE_MAX_FACTOR ) );
+
+	if ( GetV3( b, "color", v ) )
+	{
+		for ( int k = 0; k < 3; k++ )
+			rec->color[k] = MAX( 0.0f, MIN( v[k], 1.0f ) );
+	}
+
+	rec->style = MAX( 0, MIN( (int)GetF( b, "style", 0, 0.0f ), RTX_LSTYLE_MAX - 1 ) );
+
+	if ( GetF( b, "disabled", 0, 0.0f ) != 0.0f )
+		rec->flags |= RTX_LFLAG_DISABLED;
+
+	RTX_LightEdit_ApplyRecord( rec );
+
+	return qtrue;
+}
+
 // Applies the pending blocks and empties the lists. Gives the number of lights it changed.
 static int ApplyPending( void )
 {
@@ -634,17 +695,32 @@ static int ApplyPending( void )
 			g_numIgnored++;
 	}
 
+	for ( size_t i = 0; i < g_pendSurfaces.size(); i++ )
+	{
+		if ( ApplySurfaceBlock( g_pendSurfaces[i] ) )
+		{
+			g_numSurfaces++;
+			changed++;
+		}
+		else
+		{
+			g_passOther.push_back( g_pendSurfaces[i] );
+			g_numIgnored++;
+		}
+	}
+
 	g_pendEnt.clear();
 	g_pendAdded.clear();
 	g_pendEmissive.clear();
+	g_pendSurfaces.clear();
 
 	return changed;
 }
 
 static void PrintSummary( const char *mapname )
 {
-	Com_Printf( "light edit: maps/%s.lgt: %i lgt, %i overrides, %i added, %i emissive, %i ignored\n",
-		mapname, g_numLgt, g_numOverrides, g_numAdded, g_numEmissive, g_numIgnored );
+	Com_Printf( "light edit: maps/%s.lgt: %i lgt, %i overrides, %i added, %i emissive, %i emissive surfaces, %i ignored\n",
+		mapname, g_numLgt, g_numOverrides, g_numAdded, g_numEmissive, g_numSurfaces, g_numIgnored );
 }
 
 void RTX_LightFile_Apply( world_t &w )
@@ -939,6 +1015,39 @@ static void WriteEmissiveBlock( std::string &s, const std::string &shader, float
 	s += "}\n";
 }
 
+// An emissive surface: no origin and no intensity key, so that a v1 parser skips the block.
+static void WriteSurfaceRecord( std::string &s, const rtxLightRecord_t *rec )
+{
+	const char	*shader;
+	int			rank;
+	float		check[3];
+
+	RTX_LightEmissive_GroupKey( rec->emiGroup, &shader, &rank, check );
+
+	s += "{\n\tsource emissive_surface\n\tshader " + Quote( shader ) + "\n";
+	Appendf( s, "\tface %i\n", rank );
+	PutVec( s, "check", check );
+
+	if ( fabsf( rec->intensity - 1.0f ) > LFILE_EPSILON )
+		PutNum( s, "scale", rec->intensity );
+
+	if ( fabsf( rec->color[0] - 1.0f ) > LFILE_EPSILON || fabsf( rec->color[1] - 1.0f ) > LFILE_EPSILON
+		|| fabsf( rec->color[2] - 1.0f ) > LFILE_EPSILON )
+		PutVec( s, "color", rec->color );
+
+	PutStyle( s, rec, 0 );
+
+	if ( rec->flags & RTX_LFLAG_DISABLED )
+		s += "\tdisabled 1\n";
+
+	s += "}\n";
+}
+
+static qboolean SurfaceNeedsBlock( const rtxLightRecord_t *rec )
+{
+	return (qboolean)( RTX_LightEdit_IsModified( rec ) || ( rec->flags & RTX_LFLAG_DISABLED ) );
+}
+
 static qboolean EntityNeedsBlock( const rtxLightRecord_t *rec )
 {
 	return (qboolean)( RTX_LightEdit_IsModified( rec ) || ( rec->flags & RTX_LFLAG_DISABLED ) || !NameIsDefault( rec ) );
@@ -991,7 +1100,7 @@ qboolean RTX_LightFile_Save( void )
 	char		path[MAX_QPATH];
 	const int	count = RTX_LightEdit_NumRecords();
 
-	std::vector<const rtxLightRecord_t *>	lgt, ent, added;
+	std::vector<const rtxLightRecord_t *>	lgt, ent, added, surfaces;
 
 	for ( int id = 0; id < count; id++ )
 	{
@@ -1004,6 +1113,11 @@ qboolean RTX_LightFile_Save( void )
 			if ( EntityNeedsBlock( rec ) )
 				ent.push_back( rec );
 		}
+		else if ( rec->source == RTX_LSRC_EMISSIVE )
+		{
+			if ( SurfaceNeedsBlock( rec ) )
+				surfaces.push_back( rec );
+		}
 		else if ( !( rec->flags & RTX_LFLAG_DELETED ) )
 			added.push_back( rec );
 	}
@@ -1014,7 +1128,7 @@ qboolean RTX_LightFile_Save( void )
 
 	std::string text;
 
-	Appendf( text, "version 2\n// light edit file of %s; lgt blocks, entity overrides, added lights\n", mapname );
+	Appendf( text, "version 2\n// light edit file of %s; lgt blocks, entity overrides, added lights, emissive surfaces\n", mapname );
 	Appendf( text, "lights %i\n", (int)( lgt.size() + g_passLgt.size() ) );
 
 	for ( size_t i = 0; i < lgt.size(); i++ )
@@ -1036,6 +1150,9 @@ qboolean RTX_LightFile_Save( void )
 
 	for ( size_t i = 0; i < scales.size(); i++ )
 		WriteEmissiveBlock( text, scales[i].first, scales[i].second );
+
+	for ( size_t i = 0; i < surfaces.size(); i++ )
+		WriteSurfaceRecord( text, surfaces[i] );
 
 	if ( RTX_LightSky_GetForSave( &sky ) )
 		RTX_LightFile_FormatSkyBlock( text, sky );
@@ -1079,8 +1196,8 @@ qboolean RTX_LightFile_Save( void )
 	RTX_LightSky_Saved();
 	RTX_LightEdit_CountChange( 0 );
 
-	Com_Printf( "light edit: wrote %s (%i lgt, %i overrides, %i added, %i emissive, sky %s)\n", path,
-		(int)( lgt.size() + g_passLgt.size() ), (int)ent.size(), (int)added.size(), (int)scales.size(),
+	Com_Printf( "light edit: wrote %s (%i lgt, %i overrides, %i added, %i emissive, %i emissive surfaces, sky %s)\n", path,
+		(int)( lgt.size() + g_passLgt.size() ), (int)ent.size(), (int)added.size(), (int)scales.size(), (int)surfaces.size(),
 		RTX_LightSky_GetForSave( &sky ) ? "set" : "global" );
 
 	return qtrue;
@@ -1115,7 +1232,7 @@ static void ResetRecord( rtxLightRecord_t *rec )
 	rec->roll = rec->origRoll;
 	rec->twoSided = rec->origTwoSided;
 	rec->style = rec->origStyle;
-	rec->flags &= ~RTX_LFLAG_DISABLED;
+	rec->flags &= ~( RTX_LFLAG_DISABLED | RTX_LFLAG_COMPACTED );
 	rec->edited = 0;
 }
 
@@ -1167,6 +1284,7 @@ qboolean RTX_LightFile_Reload( void )
 	g_pendEnt.clear();
 	g_pendAdded.clear();
 	g_pendEmissive.clear();
+	g_pendSurfaces.clear();
 	g_passOther.clear();
 	g_disabledLgt.clear();
 	g_fileRead = qtrue;
@@ -1174,6 +1292,7 @@ qboolean RTX_LightFile_Reload( void )
 	g_numOverrides = 0;
 	g_numAdded = 0;
 	g_numEmissive = 0;
+	g_numSurfaces = 0;
 	g_numIgnored = 0;
 
 	RTX_LightEmissive_ResetScales();
@@ -1222,6 +1341,7 @@ qboolean RTX_LightFile_Reload( void )
 	g_pendEnt = data.ent;
 	g_pendAdded = data.added;
 	g_pendEmissive = data.emissive;
+	g_pendSurfaces = data.surfaces;
 	g_passOther = data.other;
 	g_numIgnored += (int)data.other.size();
 
@@ -1254,7 +1374,7 @@ qboolean RTX_LightFile_CheckRegenerate( const char *mapname, qboolean force )
 	if ( !ReadFileData( mapname, data ) )
 		return qtrue;
 
-	qboolean edits = (qboolean)( !data.emissive.empty() || !data.global.empty()
+	qboolean edits = (qboolean)( !data.emissive.empty() || !data.surfaces.empty() || !data.global.empty()
 		|| ( data.version >= 2 && ( !data.ent.empty() || !data.added.empty() ) ) );
 
 	for ( size_t i = 0; i < data.lgt.size() && !edits; i++ )
@@ -1294,6 +1414,9 @@ std::string RTX_LightFile_KeptBlocks( const char *mapname )
 
 	for ( size_t i = 0; i < data.emissive.size(); i++ )
 		WriteRawBlock( text, data.emissive[i] );
+
+	for ( size_t i = 0; i < data.surfaces.size(); i++ )
+		WriteRawBlock( text, data.surfaces[i] );
 
 	if ( !data.global.empty() )
 	{

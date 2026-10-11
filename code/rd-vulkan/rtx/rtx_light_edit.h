@@ -10,8 +10,9 @@ by the Free Software Foundation.
 
 // Light edit core of the RTX renderer. Include after tr_local.h.
 //
-// Records describe the editable lights. A record maps to one slot of world->light_polys.
-// A slot never moves and is never reused during a session. See rtx_light_edit.cpp.
+// Records describe the editable lights and the emissive surfaces. A record maps to one or more slots of
+// world->light_polys. A slot stays with its record until Compact releases the slots of a removed record.
+// Compact can move a live record to a lower slot. See rtx_light_edit.cpp.
 
 #pragma once
 
@@ -21,6 +22,7 @@ by the Free Software Foundation.
 #define RTX_MAX_LIGHTS_PER_CLUSTER	1024
 
 // A record uses up to this many slots: a sphere or a spot one, a rectangle two or four.
+// An emissive surface uses one slot per polygon: see RTX_LightEdit_SlotCapacity.
 #define RTX_LIGHT_MAX_SLOTS			4
 
 // Slots kept for sabers, dlights and brush model lights. Records use the others.
@@ -31,9 +33,10 @@ typedef struct {
 	int			source;				// rtxLightSource_t
 	int			sourceKey;			// -1 for added lights
 	int			type;				// rtxLightType_t
-	int			flags;				// RTX_LFLAG_DISABLED, _DELETED, _IN_SOLID, _MUTED only
+	int			flags;				// RTX_LFLAG_DISABLED, _DELETED, _IN_SOLID, _MUTED, _COMPACTED only
 	int			lightIndex;			// first slot in world->light_polys, or -1
 	int			extraSlots[RTX_LIGHT_MAX_SLOTS - 1];	// more slots of a rectangle, -1 when none
+	int			emiGroup;			// emissive surface: group of rtx_light_emissive.cpp, which holds the slots; else -1
 
 	vec3_t		origin;
 	vec3_t		color;				// 0..1
@@ -89,6 +92,7 @@ void	RTX_LightEdit_Restore_f( void );
 void	RTX_LightEdit_Stats_f( void );
 void	RTX_LightEdit_Mute_f( void );
 void	RTX_LightEdit_Solo_f( void );
+void	RTX_LightEdit_Compact_f( void );
 void	*RTX_LightEdit_GetExtension( const char *name );
 
 // Helpers for rtx_light_file.cpp. All of them need RTX_LightEdit_IsReady().
@@ -101,11 +105,13 @@ rtxLightRecord_t	*RTX_LightEdit_GetRecord( int id );
 int					RTX_LightEdit_NewRecord( int source, int sourceKey );
 
 // Gives the record all the slots its type needs (spare ones when it has none). qfalse when no
-// slot is free. Slots of a record stay its own for the session.
+// slot is free. Slots of a record stay its own until Compact releases them.
 qboolean			RTX_LightEdit_EnsureSlot( rtxLightRecord_t *rec );
 
 // Number of slots the record uses now, and the pointer to its slot number i (-1 when none).
+// SlotCapacity is the number of pointers that SlotPtr gives: the unused ones stay -1.
 int					RTX_LightEdit_SlotCount( const rtxLightRecord_t *rec );
+int					RTX_LightEdit_SlotCapacity( const rtxLightRecord_t *rec );
 int					*RTX_LightEdit_SlotPtr( rtxLightRecord_t *rec, int i );
 
 // Fills the light_polys from the record: RTX_LightEdit_SlotCount entries, out holds

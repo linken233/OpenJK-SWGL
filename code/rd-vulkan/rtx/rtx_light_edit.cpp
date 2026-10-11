@@ -10,10 +10,11 @@ by the Free Software Foundation.
 
 // Light edit core of the RTX renderer.
 //
-// A record is one editable light. Its slot in world->light_polys is fixed for the session:
-// the shaders use the slot as the ReSTIR identity and as the stride of the light stats
-// buffer. A removed light becomes a tombstone (cluster -1, colour 0). Spare tombstones at the
-// end of the array wait for added lights. The array grows by blocks, with a GPU wait.
+// A record is one editable light. Its slot in world->light_polys stays fixed: the shaders use
+// the slot as the ReSTIR identity and as the stride of the light stats buffer. A removed light
+// becomes a tombstone (cluster -1, colour 0) and keeps its slot until Compact releases it.
+// Spare tombstones at the end of the array wait for added lights. The array grows by blocks,
+// with a GPU wait.
 
 #include "../tr_local.h"
 #include "conversion.h"
@@ -23,6 +24,7 @@ by the Free Software Foundation.
 #include "rtx_light_sky.h"
 
 #include <vector>
+#include <algorithm>
 #include <stdarg.h>
 #include <math.h>
 
@@ -35,12 +37,13 @@ by the Free Software Foundation.
 #define LEDIT_ENTITY_RADIUS		16.0f	// as ENTITY_LIGHT_RADIUS in vk_rtx_bsp.cpp
 #define LEDIT_LGT_RADIUS		4.0f	// as LIGHTGEN_EMITTER_RADIUS in vk_rtx_lightgen.cpp
 #define LEDIT_ADD_RADIUS		8.0f
+#define LEDIT_EMISSIVE_MAX_FACTOR	100.0f	// as EMISSIVE_MAX_SCALE in rtx_light_emissive.cpp
 
 static std::vector<rtxLightRecord_t>	g_records;
 static world_t		*g_world = NULL;
 static qboolean		g_valid = qfalse;
 static int			g_firstFree = 0;		// first slot no record uses
-static int			g_numEmissive = 0;
+static int			g_floor = 0;			// slots below this one may hold a polygon that no record owns
 static int			g_overfull = 0;
 static int			g_rebuilds = 0;
 static int			g_unsaved = 0;
@@ -158,11 +161,22 @@ static void RequestRebuild( void )
 
 int RTX_LightEdit_SlotCount( const rtxLightRecord_t *rec )
 {
+	if ( rec->source == RTX_LSRC_EMISSIVE )
+		return RTX_LightEmissive_SlotCount( rec->emiGroup );
+
 	return rec->type == RTX_LTYPE_RECT ? ( rec->twoSided ? 4 : 2 ) : 1;
+}
+
+int RTX_LightEdit_SlotCapacity( const rtxLightRecord_t *rec )
+{
+	return rec->source == RTX_LSRC_EMISSIVE ? RTX_LightEmissive_SlotCount( rec->emiGroup ) : RTX_LIGHT_MAX_SLOTS;
 }
 
 int *RTX_LightEdit_SlotPtr( rtxLightRecord_t *rec, int i )
 {
+	if ( rec->source == RTX_LSRC_EMISSIVE )
+		return RTX_LightEmissive_SlotPtr( rec->emiGroup, i );
+
 	return i == 0 ? &rec->lightIndex : &rec->extraSlots[i - 1];
 }
 
@@ -266,7 +280,7 @@ void RTX_LightEdit_Reset( world_t &w )
 	g_world = &w;
 	g_valid = qfalse;
 	g_firstFree = 0;
-	g_numEmissive = 0;
+	g_floor = 0;
 	g_overfull = 0;
 	g_rebuilds = 0;
 	g_unsaved = 0;
@@ -304,6 +318,7 @@ int RTX_LightEdit_NewRecord( int source, int sourceKey )
 	rec.sourceKey = source == RTX_LSRC_ADDED ? -1 : sourceKey;
 	rec.type = RTX_LTYPE_SPHERE;
 	rec.lightIndex = -1;
+	rec.emiGroup = -1;
 
 	for ( int k = 0; k < RTX_LIGHT_MAX_SLOTS - 1; k++ )
 		rec.extraSlots[k] = -1;
@@ -349,7 +364,7 @@ int RTX_LightEdit_RegisterLoaded( int source, int sourceKey, const vec3_t origin
 // Reads what the load code made of each light: spot data, emitter radius, class.
 void RTX_LightEdit_FinalizeLoad( world_t &w )
 {
-	int	slotted = 0;
+	std::vector<char>	owned( w.num_light_polys, 0 );
 
 	g_world = &w;
 
@@ -364,8 +379,10 @@ void RTX_LightEdit_FinalizeLoad( world_t &w )
 
 		for ( int k = 0; k < RTX_LIGHT_MAX_SLOTS; k++ )
 		{
-			if ( *RTX_LightEdit_SlotPtr( rec, k ) >= 0 )
-				slotted++;
+			const int slot = *RTX_LightEdit_SlotPtr( rec, k );
+
+			if ( slot >= 0 && slot < w.num_light_polys )
+				owned[slot] = 1;
 		}
 
 		rec->entClass = light->ent_class;
@@ -387,11 +404,34 @@ void RTX_LightEdit_FinalizeLoad( world_t &w )
 		Com_Memcpy( rec->origSpot, rec->spot, sizeof(rec->origSpot) );
 	}
 
-	g_numEmissive = w.num_light_polys - slotted;
+	// The slots that no light record holds are emissive polygons: each BSP surface becomes a record.
+	RTX_LightEmissive_BuildGroups( w, owned );
+
+	// A live polygon that no record holds keeps its slot: Compact never packs below it.
+	for ( size_t i = 0; i < g_records.size(); i++ )
+	{
+		const int capacity = RTX_LightEdit_SlotCapacity( &g_records[i] );
+
+		for ( int k = 0; k < capacity; k++ )
+		{
+			const int slot = *RTX_LightEdit_SlotPtr( &g_records[i], k );
+
+			if ( slot >= 0 && slot < w.num_light_polys )
+				owned[slot] = 1;
+		}
+	}
+
+	g_floor = 0;
+
+	for ( int slot = 0; slot < w.num_light_polys; slot++ )
+	{
+		if ( !owned[slot] && w.light_polys[slot].cluster >= 0 )
+			g_floor = slot + 1;
+	}
+
 	g_firstFree = w.num_light_polys;
 	g_valid = qtrue;
 
-	RTX_LightEmissive_Build( w, g_numEmissive );
 	RTX_LightSky_MapLoaded();
 }
 
@@ -716,11 +756,57 @@ qboolean RTX_LightEdit_EnsureSlot( rtxLightRecord_t *rec )
 	return EnsureSlots( rec, RTX_LightEdit_SlotCount( rec ) );
 }
 
+// Emissive surface: each slot takes its polygon with the factor, the tint and the style of the record,
+// or becomes a tombstone when the record does not emit. A compacted surface has no slot to write.
+static qboolean ApplyEmissive( rtxLightRecord_t *rec )
+{
+	const int		count = RTX_LightEdit_SlotCount( rec );
+	const qboolean	emits = (qboolean)!IsInactive( rec );
+	qboolean		changed = qfalse;
+
+	rec->flags &= ~RTX_LFLAG_IN_SOLID;
+
+	if ( emits )
+	{
+		if ( !EnsureSlots( rec, count ) )
+			return qfalse;
+	}
+	else if ( count == 0 || *RTX_LightEdit_SlotPtr( rec, 0 ) < 0 )
+		return qfalse;
+
+	for ( int i = 0; i < count; i++ )
+	{
+		const int slot = *RTX_LightEdit_SlotPtr( rec, i );
+
+		if ( slot < 0 )
+			continue;
+
+		light_poly_t		*light = g_world->light_polys + slot;
+		const light_poly_t	old = *light;
+
+		if ( emits )
+			RTX_LightEmissive_Fill( rec, i, light );
+		else
+			RTX_LightEdit_Tombstone( slot, rec->origin );
+
+		if ( light->cluster != old.cluster )
+			changed = qtrue;
+		else if ( ( old.type == LIGHT_POLYGON || light->type == LIGHT_POLYGON )
+			&& memcmp( old.positions, light->positions, sizeof(old.positions) ) != 0 )
+			changed = qtrue;
+	}
+
+	return changed;
+}
+
 // Writes the record to all its slots. A slot the type does not use becomes a tombstone but stays
 // the record's. Gives qtrue when the cluster lists need a rebuild: a slot changed cluster, or a
 // polygon changed (the lists cull a cluster behind the plane of a polygon).
 qboolean RTX_LightEdit_ApplyRecord( rtxLightRecord_t *rec )
 {
+	if ( rec->source == RTX_LSRC_EMISSIVE )
+		return ApplyEmissive( rec );
+
 	light_poly_t	tmp[RTX_LIGHT_MAX_SLOTS];
 	const int		cluster = RTX_LightEdit_Convert( rec, tmp );
 	const int		used = RTX_LightEdit_SlotCount( rec );
@@ -787,6 +873,54 @@ static qboolean ClusterFull( int cluster, int extra = 1 )
 			continue;
 
 		if ( w.cluster_light_offsets[c + 1] - w.cluster_light_offsets[c] + extra > RTX_MAX_LIGHTS_PER_CLUSTER )
+			return qtrue;
+	}
+
+	return qfalse;
+}
+
+// True when the polygons of an emissive surface do not fit in the cluster lists they would join:
+// each cluster of the PVS of a polygon takes one more entry for it.
+static qboolean GroupClusterFull( const rtxLightRecord_t *rec )
+{
+	const world_t	&w = *g_world;
+
+	if ( !w.cluster_light_offsets || w.numClusters <= 0 )
+		return qfalse;
+
+	const int			group = rec->emiGroup;
+	const int			count = RTX_LightEmissive_SlotCount( group );
+	std::vector<int>	perCluster( w.numClusters, 0 );
+	std::vector<int>	extra( w.numClusters, 0 );
+
+	for ( int i = 0; i < count; i++ )
+	{
+		const int c = RTX_LightEmissive_BaseCluster( group, i );
+
+		if ( c >= 0 && c < w.numClusters )
+			perCluster[c]++;
+	}
+
+	for ( int c = 0; c < w.numClusters; c++ )
+	{
+		if ( !perCluster[c] )
+			continue;
+
+		const byte *pvs = BSP_GetPvs( g_world, c );
+
+		if ( !pvs )
+			continue;
+
+		for ( int x = 0; x < w.numClusters; x++ )
+		{
+			if ( pvs[x >> 3] & ( 1 << ( x & 7 ) ) )
+				extra[x] += perCluster[c];
+		}
+	}
+
+	for ( int x = 0; x < w.numClusters; x++ )
+	{
+		if ( extra[x] && w.cluster_light_offsets[x + 1] - w.cluster_light_offsets[x] + extra[x] > RTX_MAX_LIGHTS_PER_CLUSTER )
 			return qtrue;
 	}
 
@@ -874,7 +1008,7 @@ static void FillDesc( int id, const rtxLightRecord_t *rec, qboolean original, rt
 	out->source = rec->source;
 	out->sourceKey = rec->sourceKey;
 	out->type = original ? rec->origType : rec->type;
-	out->flags = rec->flags & ( RTX_LFLAG_DISABLED | RTX_LFLAG_DELETED | RTX_LFLAG_IN_SOLID );
+	out->flags = rec->flags & ( RTX_LFLAG_DISABLED | RTX_LFLAG_DELETED | RTX_LFLAG_IN_SOLID | RTX_LFLAG_COMPACTED );
 
 	if ( IsModified( rec ) )
 		out->flags |= RTX_LFLAG_MODIFIED;
@@ -1012,6 +1146,12 @@ static int LE_Add( const rtxLightDesc_t *desc )
 		return -1;
 	}
 
+	if ( desc->type == RTX_LTYPE_SURFACE )
+	{
+		RTX_LightEdit_SetError( "an emissive surface cannot be added" );
+		return -1;
+	}
+
 	const int cluster = PointCluster( desc->origin );
 
 	if ( cluster < 0 )
@@ -1070,6 +1210,31 @@ static qboolean LE_Set( int id, const rtxLightDesc_t *desc )
 	if ( rec->flags & RTX_LFLAG_DELETED )
 	{
 		RTX_LightEdit_SetError( "light %i is deleted", id );
+		return qfalse;
+	}
+
+	if ( rec->source == RTX_LSRC_EMISSIVE )
+	{
+		// The cast light changes; the polygons keep their place, so no cluster check is needed.
+		rec->intensity = ClampF( 0.0f, desc->intensity, LEDIT_EMISSIVE_MAX_FACTOR );
+
+		for ( int k = 0; k < 3; k++ )
+			rec->color[k] = ClampF( 0.0f, desc->color[k], 1.0f );
+
+		rec->style = ClampStyle( desc->style );
+
+		if ( RTX_LightEdit_ApplyRecord( rec ) )
+			ClusterChanged( id );
+
+		RTX_LightEdit_CountChange( 1 );
+		g_generation++;
+
+		return qtrue;
+	}
+
+	if ( desc->type == RTX_LTYPE_SURFACE )
+	{
+		RTX_LightEdit_SetError( "light %i is not an emissive surface", id );
 		return qfalse;
 	}
 
@@ -1141,15 +1306,20 @@ static qboolean LE_Restore( int id )
 		return qfalse;
 	}
 
-	const int cluster = PointCluster( rec->origin );
+	const qboolean	surface = (qboolean)( rec->source == RTX_LSRC_EMISSIVE );
+	const int		cluster = surface ? 0 : PointCluster( rec->origin );
 
-	if ( cluster >= 0 && ClusterFull( cluster, RTX_LightEdit_SlotCount( rec ) ) )
+	if ( surface ? GroupClusterFull( rec ) : ( cluster >= 0 && ClusterFull( cluster, RTX_LightEdit_SlotCount( rec ) ) ) )
 	{
 		RTX_LightEdit_SetError( "cluster full" );
 		return qfalse;
 	}
 
-	rec->flags &= ~( RTX_LFLAG_DELETED | RTX_LFLAG_DISABLED );
+	// A compacted light has no slots. Take them before the flags change: nothing changes on failure.
+	if ( cluster >= 0 && !EnsureSlots( rec, RTX_LightEdit_SlotCount( rec ) ) )
+		return qfalse;
+
+	rec->flags &= ~( RTX_LFLAG_DELETED | RTX_LFLAG_DISABLED | RTX_LFLAG_COMPACTED );
 
 	if ( RTX_LightEdit_ApplyRecord( rec ) )
 		RequestRebuild();
@@ -1158,6 +1328,119 @@ static qboolean LE_Restore( int id )
 	g_generation++;
 
 	return qtrue;
+}
+
+// Releases the slots of every removed light, then packs the used slots to the front of the pool.
+// A live record can move to a lower slot: it loses its ReSTIR history and its light stats.
+static int LE_Compact( int *slotsReleased )
+{
+	struct slotRef_t {
+		int		slot;
+		int		*ptr;
+	};
+
+	std::vector<int>		holes;
+	std::vector<slotRef_t>	live;
+	const vec3_t			zero = { 0.0f, 0.0f, 0.0f };
+	int						lights = 0;
+
+	if ( slotsReleased )
+		*slotsReleased = 0;
+
+	if ( !RTX_LightEdit_IsReady() )
+	{
+		RTX_LightEdit_SetError( "RTX light edit is not available" );
+		return -1;
+	}
+
+	for ( size_t i = 0; i < g_records.size(); i++ )
+	{
+		rtxLightRecord_t *rec = &g_records[i];
+
+		if ( !IsRemoved( rec ) || ( rec->flags & RTX_LFLAG_COMPACTED ) )
+			continue;
+
+		const int capacity = RTX_LightEdit_SlotCapacity( rec );
+
+		for ( int k = 0; k < capacity; k++ )
+		{
+			int *slot = RTX_LightEdit_SlotPtr( rec, k );
+
+			if ( *slot < 0 )
+				continue;
+
+			RTX_LightEdit_Tombstone( *slot, zero );
+			holes.push_back( *slot );
+			*slot = -1;
+		}
+
+		rec->flags |= RTX_LFLAG_COMPACTED;
+		lights++;
+	}
+
+	if ( !lights )
+		return 0;
+
+	// A drag of a compacted light ends: its record has no slot any more.
+	g_dragId = -1;
+
+	std::sort( holes.begin(), holes.end() );
+
+	for ( size_t i = 0; i < g_records.size(); i++ )
+	{
+		const int capacity = RTX_LightEdit_SlotCapacity( &g_records[i] );
+
+		for ( int k = 0; k < capacity; k++ )
+		{
+			int *slot = RTX_LightEdit_SlotPtr( &g_records[i], k );
+
+			if ( *slot >= 0 )
+			{
+				slotRef_t ref = { *slot, slot };
+
+				live.push_back( ref );
+			}
+		}
+	}
+
+	// The highest live slots fill the lowest holes.
+	std::sort( live.begin(), live.end(), []( const slotRef_t &a, const slotRef_t &b ) { return a.slot > b.slot; } );
+
+	size_t	next = 0;
+	int		moved = 0;
+
+	for ( size_t h = 0; h < holes.size() && next < live.size() && live[next].slot > holes[h]; h++, next++ )
+	{
+		g_world->light_polys[holes[h]] = g_world->light_polys[live[next].slot];
+		RTX_LightEdit_Tombstone( live[next].slot, zero );
+		*live[next].ptr = holes[h];
+		moved++;
+	}
+
+	// Every slot below the new boundary is a live slot of a record, or a polygon that no record holds.
+	int first = g_floor;
+
+	for ( size_t i = 0; i < g_records.size(); i++ )
+	{
+		const int capacity = RTX_LightEdit_SlotCapacity( &g_records[i] );
+
+		for ( int k = 0; k < capacity; k++ )
+			first = MAX( first, *RTX_LightEdit_SlotPtr( &g_records[i], k ) + 1 );
+	}
+
+	g_firstFree = first;
+
+	// The stats of a moved slot belong to the light that left it.
+	if ( moved )
+		RecreateLightStats( *g_world );
+
+	RequestRebuild();
+	g_generation++;
+
+	if ( slotsReleased )
+		*slotsReleased = (int)holes.size();
+
+	return lights;
 }
 
 static qboolean LE_Revert( int id )
@@ -1173,7 +1456,7 @@ static qboolean LE_Revert( int id )
 		return qfalse;
 	}
 
-	const int cluster = PointCluster( rec->origOrigin );
+	const int cluster = rec->source == RTX_LSRC_EMISSIVE ? -1 : PointCluster( rec->origOrigin );
 
 	if ( !IsInactive( rec ) && cluster >= 0 )
 	{
@@ -1262,9 +1545,10 @@ static qboolean LE_Mute( int id, qboolean muted )
 	// Unmuting a light that then emits needs room in the cluster lists.
 	if ( !muted && !IsRemoved( rec ) && !IsSoloHidden( rec ) )
 	{
-		const int cluster = PointCluster( rec->origin );
+		const qboolean	surface = (qboolean)( rec->source == RTX_LSRC_EMISSIVE );
+		const int		cluster = surface ? 0 : PointCluster( rec->origin );
 
-		if ( cluster >= 0 && ClusterFull( cluster, RTX_LightEdit_SlotCount( rec ) ) )
+		if ( surface ? GroupClusterFull( rec ) : ( cluster >= 0 && ClusterFull( cluster, RTX_LightEdit_SlotCount( rec ) ) ) )
 		{
 			RTX_LightEdit_SetError( "cluster full" );
 			return qfalse;
@@ -1350,6 +1634,10 @@ static float LE_IntensityScale( int id )
 		if ( !rec )
 			return 0.0f;
 
+		// The factor of an emissive surface multiplies the polygons as they are.
+		if ( rec->source == RTX_LSRC_EMISSIVE )
+			return 1.0f;
+
 		entClass = rec->entClass;
 		source = rec->source;
 	}
@@ -1408,21 +1696,26 @@ static void LE_GetStats( rtxLightStats_t *out )
 			out->numEntity++;
 		else if ( rec->source == RTX_LSRC_LGT )
 			out->numLgt++;
+		else if ( rec->source == RTX_LSRC_EMISSIVE )
+			out->numEmissive++;
 		else if ( !( rec->flags & RTX_LFLAG_DELETED ) )
 			out->numAdded++;
 
 		if ( IsModified( rec ) )
 			out->numModified++;
 
-		if ( rec->flags & RTX_LFLAG_DISABLED )
+		if ( rec->flags & RTX_LFLAG_COMPACTED )
+			out->numCompacted++;
+		else if ( rec->flags & RTX_LFLAG_DISABLED )
 			out->numDisabled++;
 
 		if ( rec->flags & RTX_LFLAG_IN_SOLID )
 			out->numInSolid++;
 	}
 
-	out->numEmissive = g_numEmissive;
+	out->numEmissivePolys = RTX_LightEmissive_NumPolys();
 	out->numLightPolys = g_world->num_light_polys;
+	out->slotsUsed = g_firstFree;
 	out->capacity = g_world->allocated_light_polys;
 	out->overfullClusters = g_overfull;
 	out->rebuilds = g_rebuilds;
@@ -1454,33 +1747,20 @@ static void LE_NormalizeColor( const vec3_t in, vec3_t out )
 		VectorScale( in, 1.0f / m, out );
 }
 
-// The emissive lights are the first g_numEmissive entries of light_polys.
-static int LE_CountEmissive( void )
+static qboolean LE_GetEmissiveSurface( int id, rtxEmissiveSurface_t *out )
 {
-	return RTX_LightEdit_IsReady() ? g_numEmissive : 0;
-}
+	const rtxLightRecord_t *rec = RTX_LightEdit_GetRecord( id );
 
-static qboolean LE_GetEmissive( int index, vec3_t center, vec3_t color )
-{
-	if ( !RTX_LightEdit_IsReady() || index < 0 || index >= g_numEmissive || index >= g_world->num_light_polys )
+	if ( !rec || !out )
 		return qfalse;
 
-	const light_poly_t *light = g_world->light_polys + index;
-
-	if ( !light->material )
-		return qfalse;
-
-	if ( VectorLengthSquared( light->off_center ) > 0.0f )
-		VectorCopy( light->off_center, center );
-	else
+	if ( rec->source != RTX_LSRC_EMISSIVE )
 	{
-		for ( int k = 0; k < 3; k++ )
-			center[k] = ( light->positions[k] + light->positions[3 + k] + light->positions[6 + k] ) / 3.0f;
+		RTX_LightEdit_SetError( "light %i is not an emissive surface", id );
+		return qfalse;
 	}
 
-	LE_NormalizeColor( light->color, color );
-
-	return qtrue;
+	return RTX_LightEmissive_GetSurface( rec, out );
 }
 
 // Spheres and spots give their position in positions[0..2]; polygon lights in off_center.
@@ -1518,11 +1798,6 @@ static int LE_CountEmissiveShaders( void )
 static qboolean LE_GetEmissiveShader( int shader, char *name, int nameSize, float *scale, int *numPolys )
 {
 	return RTX_LightEmissive_Get( shader, name, nameSize, scale, numPolys );
-}
-
-static int LE_EmissiveShaderOf( int emissiveIndex )
-{
-	return RTX_LightEmissive_ShaderOf( emissiveIndex );
 }
 
 static qboolean LE_SetEmissiveScale( int shader, float scale )
@@ -1572,16 +1847,15 @@ static rtxLightEditAPI_t g_api = {
 	LE_GetSolo,
 	LE_Generation,
 	LE_IntensityScale,
-	LE_CountEmissive,
-	LE_GetEmissive,
 	LE_GetDynamic,
 	LE_CountEmissiveShaders,
 	LE_GetEmissiveShader,
-	LE_EmissiveShaderOf,
 	LE_SetEmissiveScale,
 	LE_GetSky,
 	LE_SetSky,
-	LE_ResetSky
+	LE_ResetSky,
+	LE_Compact,
+	LE_GetEmissiveSurface
 };
 
 void *RTX_LightEdit_GetExtension( const char *name )
@@ -1600,7 +1874,7 @@ Console commands
 
 static const char *SourceName( int source )
 {
-	return source == RTX_LSRC_ENTITY ? "entity" : source == RTX_LSRC_LGT ? "lgt" : "added";
+	return source == RTX_LSRC_ENTITY ? "entity" : source == RTX_LSRC_LGT ? "lgt" : source == RTX_LSRC_EMISSIVE ? "emissive" : "added";
 }
 
 void RTX_LightEdit_List_f( void )
@@ -1617,9 +1891,11 @@ void RTX_LightEdit_List_f( void )
 
 		LE_Get( i, &d );
 
-		Com_Printf( "%4i %-6s key %-4i %-6s flags 0x%02x origin %.0f %.0f %.0f intensity %.2f radius %.1f style %i slot %i\n",
-			i, SourceName( d.source ), d.sourceKey, d.type == RTX_LTYPE_SPOT ? "spot" : d.type == RTX_LTYPE_RECT ? "rect" : "sphere",
-			d.flags, d.origin[0], d.origin[1], d.origin[2], d.intensity, d.radius, d.style, g_records[i].lightIndex );
+		Com_Printf( "%4i %-8s key %-4i %-7s flags 0x%02x origin %.0f %.0f %.0f intensity %.2f radius %.1f style %i slot %i\n",
+			i, SourceName( d.source ), d.sourceKey, d.type == RTX_LTYPE_SPOT ? "spot" : d.type == RTX_LTYPE_RECT ? "rect"
+			: d.type == RTX_LTYPE_SURFACE ? "surface" : "sphere",
+			d.flags, d.origin[0], d.origin[1], d.origin[2], d.intensity, d.radius, d.style,
+			RTX_LightEdit_SlotCapacity( &g_records[i] ) > 0 ? *RTX_LightEdit_SlotPtr( &g_records[i], 0 ) : -1 );
 
 		if ( d.type == RTX_LTYPE_RECT )
 		{
@@ -1845,28 +2121,60 @@ void RTX_LightEdit_Stats_f( void )
 
 	LE_GetStats( &s );
 
-	Com_Printf( "map %s: %i records (%i entity, %i lgt, %i added), %i modified, %i disabled, %i in solid, %i emissive\n",
-		s.mapName, s.numRecords, s.numEntity, s.numLgt, s.numAdded, s.numModified, s.numDisabled, s.numInSolid, s.numEmissive );
-	Com_Printf( "slots %i (capacity %i, limit %i), %i full clusters, %i rebuilds, %i unsaved changes\n",
-		s.numLightPolys, s.capacity, s.maxLightPolys, s.overfullClusters, s.rebuilds, s.unsavedChanges );
+	Com_Printf( "map %s: %i records (%i entity, %i lgt, %i added), %i modified, %i disabled, %i compacted, %i in solid, %i emissive\n",
+		s.mapName, s.numRecords, s.numEntity, s.numLgt, s.numAdded, s.numModified, s.numDisabled, s.numCompacted, s.numInSolid, s.numEmissive );
+	Com_Printf( "slots %i used of %i (entries %i, capacity %i), %i full clusters, %i rebuilds, %i unsaved changes\n",
+		s.slotsUsed, s.maxLightPolys, s.numLightPolys, s.capacity, s.overfullClusters, s.rebuilds, s.unsavedChanges );
 }
 
-// pt_ledit_emissive [n]: prints the first n emissive lights and the count.
-void RTX_LightEdit_Emissive_f( void )
+// pt_ledit_compact: releases the slots of the removed lights.
+void RTX_LightEdit_Compact_f( void )
 {
-	const int	total = LE_CountEmissive();
-	const int	n = MIN( total, ri.Cmd_Argc() > 1 ? atoi( ri.Cmd_Argv( 1 ) ) : 10 );
+	int	slots;
+	const int lights = LE_Compact( &slots );
 
-	for ( int i = 0; i < n; i++ )
+	if ( lights < 0 )
 	{
-		vec3_t center, color;
-
-		if ( LE_GetEmissive( i, center, color ) )
-			Com_Printf( "%4i: center %.0f %.0f %.0f colour %.2f %.2f %.2f\n", i,
-				center[0], center[1], center[2], color[0], color[1], color[2] );
+		Com_Printf( "light edit: %s\n", g_lastError );
+		return;
 	}
 
-	Com_Printf( "%i emissive lights\n", total );
+	if ( lights == 0 )
+	{
+		Com_Printf( "light edit: no removed light to compact\n" );
+		return;
+	}
+
+	Com_Printf( "light edit: compacted %i lights, released %i slots, slots used %i/%i\n",
+		lights, slots, g_firstFree, LEDIT_MAX_SLOTS );
+}
+
+// pt_ledit_emissive [n]: prints the first n emissive surfaces and the count.
+void RTX_LightEdit_Emissive_f( void )
+{
+	int			total = 0;
+	const int	limit = ri.Cmd_Argc() > 1 ? atoi( ri.Cmd_Argv( 1 ) ) : 10;
+
+	if ( !LE_IsAvailable() )
+	{
+		Com_Printf( "light edit is not available\n" );
+		return;
+	}
+
+	for ( size_t i = 0; i < g_records.size(); i++ )
+	{
+		rtxEmissiveSurface_t s;
+
+		if ( g_records[i].source != RTX_LSRC_EMISSIVE || !RTX_LightEmissive_GetSurface( &g_records[i], &s ) )
+			continue;
+
+		if ( total++ < limit )
+			Com_Printf( "%4i: face %i rank %i %s, %i polygons, %i slots, centre %.0f %.0f %.0f, factor %g\n", (int)i, s.face,
+				s.rank, s.shaderName, s.numTris, s.numSlots, g_records[i].origin[0], g_records[i].origin[1],
+				g_records[i].origin[2], g_records[i].intensity );
+	}
+
+	Com_Printf( "%i emissive surfaces\n", total );
 }
 
 // pt_ledit_dynamic: prints the dynamic lights of the last frame.

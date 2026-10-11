@@ -209,6 +209,7 @@ typedef struct light_poly_s {
 	float			emissive_factor;
 	int				type;
 	int				ent_class;
+	int				surface;		// emissive polygon: index of its world surface, set by collect_light_polys
 } light_poly_t;
 
 // passes information back from the RTX renderer to the engine for various development maros

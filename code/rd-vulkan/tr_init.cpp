@@ -907,6 +907,7 @@ static consoleCommand_t	commands[] = {
 	{ "pt_ledit_stats",		RTX_LightEdit_Stats_f },
 	{ "pt_ledit_mute",		RTX_LightEdit_Mute_f },
 	{ "pt_ledit_solo",		RTX_LightEdit_Solo_f },
+	{ "pt_ledit_compact",	RTX_LightEdit_Compact_f },
 	{ "pt_ledit_emissive",	RTX_LightEdit_Emissive_f },
 	{ "pt_ledit_dynamic",	RTX_LightEdit_Dynamic_f },
 	{ "pt_ledit_emissive_shaders",	RTX_LightEdit_EmissiveShaders_f },

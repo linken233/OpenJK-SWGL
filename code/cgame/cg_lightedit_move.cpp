@@ -113,6 +113,11 @@ void LE_BeginGrab( int primary, const std::vector<int> &ids, float dist )
 		{
 			continue;
 		}
+		if ( LE_IsSurface( &it.before ) )
+		{
+			LE_Msg( "light edit: an emissive surface is part of the map and cannot be moved" );
+			continue;
+		}
 		it.id = ids[i];
 		VectorSubtract( it.before.origin, p.origin, it.rel );
 		s_items.push_back( it );

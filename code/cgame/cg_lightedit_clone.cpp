@@ -59,6 +59,11 @@ static void LE_CloneSources( std::vector<rtxLightDesc_t> &out )
 
 		if ( LE_GetDesc( ids[i], &d ) && !( d.flags & RTX_LFLAG_DELETED ) )
 		{
+			if ( LE_IsSurface( &d ) )
+			{
+				LE_Msg( "light edit: clone does not apply to an emissive surface" );
+				continue;
+			}
 			out.push_back( d );
 		}
 	}

@@ -1275,23 +1275,30 @@ static void collect_light_polys( world_t &worldData, int model_idx, int* num_lig
 		if ( model_idx < 0 && belongs_to_model( worldData, surf ) )
 			continue;
 
+		const int first_light = *num_lights;
+
 		face = (srfSurfaceFace_t *)surf->data;
 		if ( face->surfaceType == SF_FACE ) {
 			collect_face_light_polys(  face, surf->shader, worldData, model_idx, num_lights, allocated_lights, lights );
-			continue;
+		}
+		else
+		{
+			tris = (srfTriangles_t *)surf->data;
+			if ( tris->surfaceType == SF_TRIANGLES) {
+				collect_tri_light_polys( tris, surf->shader , worldData, model_idx, num_lights, allocated_lights, lights );
+			}
+			else
+			{
+				grid = (srfGridMesh_t *)surf->data;
+				if ( grid->surfaceType == SF_GRID ) {
+					collect_grid_light_polys(  grid, surf->shader, worldData, model_idx, num_lights, allocated_lights, lights );
+				}
+			}
 		}
 
-		tris = (srfTriangles_t *)surf->data;
-		if ( tris->surfaceType == SF_TRIANGLES) {
-			collect_tri_light_polys( tris, surf->shader , worldData, model_idx, num_lights, allocated_lights, lights );
-			continue;
-		}
-
-		grid = (srfGridMesh_t *)surf->data;
-		if ( grid->surfaceType == SF_GRID ) { 
-			collect_grid_light_polys(  grid, surf->shader, worldData, model_idx, num_lights, allocated_lights, lights );
-			continue;
-		}
+		// The light edit groups the polygons by surface.
+		for ( int light = first_light; light < *num_lights; light++ )
+			(*lights)[light].surface = (int)i;
 	}
 }
 

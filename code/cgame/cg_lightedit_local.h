@@ -35,6 +35,7 @@ void		LE_Msg( const char *fmt, ... );
 qboolean	LE_GetDesc( int id, rtxLightDesc_t *d );
 qboolean	LE_DescEqual( const rtxLightDesc_t *a, const rtxLightDesc_t *b );
 qboolean	LE_DoSet( int id, const rtxLightDesc_t *want, const char *label );	// Set plus one undo entry
+const char	*LE_FlagsStr( int flags );							// "MODIFIED DISABLED ..."; valid until the next va call
 
 extern qboolean CG_WorldCoordToScreenCoordFloat( vec3_t worldCoord, float *x, float *y );
 
@@ -228,12 +229,16 @@ void		LE_DrawLabels( void );
 void		LE_DrawExtraLights( void );
 const char	*LE_ShowModeName( void );
 void		LE_CmdWriteBinds( void );							// ledit_writebinds [force]
-int			LE_EmissivePointCount( void );						// cached emissive polygon centres
-const float	*LE_EmissivePoint( int i, int *apiIndex );			// centre, and its index for GetEmissive
 
-// Emissive multiplier per shader (cg_lightedit_emissive.cpp).
+// Emissive surfaces (records of the source RTX_LSRC_EMISSIVE) and the multiplier per shader (cg_lightedit_emissive.cpp).
 void		LE_EmissiveInit( void );							// drops the selection and the caches
-qboolean	LE_EmissivePick( void );							// selects the shader of the dot under the crosshair
+qboolean	LE_IsSurface( const rtxLightDesc_t *d );			// the record is an emissive surface
+qboolean	LE_SurfaceInfo( int id, rtxEmissiveSurface_t *out );	// description of a surface; qfalse (zeroed) when id is not one
+void		LE_SurfaceDrawWires( void );						// outline of the selected surfaces, and of the aimed one
+void		LE_SurfaceText( const rtxLightDesc_t *d, int field, char *out, int size );	// panel line: field 0 shader, 1 polygons, 2 factors
+void		LE_EmissiveSelect( int shader );					// selects a shader and prints it
+int			LE_EmissiveSelected( void );						// selected shader, -1 for none
+void		LE_EmissiveClear( void );							// no shader selected
 qboolean	LE_EmissiveTool( qboolean secDown, int wheel, qboolean fine );	// tool 5 with the emissive selection; qtrue when used
 qboolean	LE_EmissiveHelp( const char **name, const char **fire, const char **alt, char *wheelBuf, int wheelSize );
 void		LE_EmissiveDrawHighlight( void );
@@ -241,6 +246,8 @@ qboolean	LE_EmissiveDrawPanel( int y );						// qfalse when no shader is selecte
 void		LE_CmdEmissiveList( void );							// ledit_emissive_list [filter]
 void		LE_CmdEmissive( void );								// ledit_emissive <index|name> <scale>
 void		LE_CmdEmissiveReset( void );						// ledit_emissive_reset <index|name|all>
+void		LE_CmdEmissiveSelect( void );						// ledit_emissive_select <index|name|none|sel>
+void		LE_CmdEmissiveSurfaces( void );						// ledit_emissive_surfaces [index|name]
 
 // Sky and sun of the map (cg_lightedit_sky.cpp).
 void		LE_SkyInit( void );

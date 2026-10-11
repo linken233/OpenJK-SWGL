@@ -156,7 +156,7 @@ qboolean LE_FilterShows( const rtxLightDesc_t *d )
 	case LEFI_ORIGINAL:
 		return (qboolean)( d->source != RTX_LSRC_ADDED && !( d->flags & RTX_LFLAG_MODIFIED ) );
 	case LEFI_DISABLED:
-		return (qboolean)( ( d->flags & ( RTX_LFLAG_DISABLED | RTX_LFLAG_DELETED ) ) != 0 );
+		return (qboolean)( ( d->flags & ( RTX_LFLAG_DISABLED | RTX_LFLAG_DELETED | RTX_LFLAG_COMPACTED ) ) != 0 );
 	}
 	return qtrue;
 }

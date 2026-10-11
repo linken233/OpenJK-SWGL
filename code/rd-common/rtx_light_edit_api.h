@@ -19,7 +19,7 @@ by the Free Software Foundation.
 #pragma once
 
 #define RTX_LIGHTEDIT_API_NAME		"rtxLightEdit_v1"
-#define RTX_LIGHTEDIT_API_VERSION	4
+#define RTX_LIGHTEDIT_API_VERSION	7
 
 #define RTX_LIGHTEDIT_NAME_LEN		32
 
@@ -27,13 +27,15 @@ by the Free Software Foundation.
 typedef enum {
 	RTX_LSRC_ADDED = 0,		// made in the editor or read from an "added" block of the .lgt
 	RTX_LSRC_ENTITY,		// a `light` entity of the BSP
-	RTX_LSRC_LGT			// a light that pt_lightgen reconstructed from the lightmaps
+	RTX_LSRC_LGT,			// a light that pt_lightgen reconstructed from the lightmaps
+	RTX_LSRC_EMISSIVE		// version 6: the emissive polygons of one BSP surface (face)
 } rtxLightSource_t;
 
 typedef enum {
 	RTX_LTYPE_SPHERE = 0,
 	RTX_LTYPE_SPOT,
-	RTX_LTYPE_RECT			// version 4: a rectangle of two polygon lights (four when two-sided)
+	RTX_LTYPE_RECT,			// version 4: a rectangle of two polygon lights (four when two-sided)
+	RTX_LTYPE_SURFACE		// version 6: an emissive surface; Set copies intensity (factor), color (tint) and style only
 } rtxLightType_t;
 
 // Limits of a rectangle light, in world units.
@@ -52,11 +54,12 @@ typedef enum {
 #define RTX_LFLAG_IN_SOLID		0x0008	// the origin is outside the world; the light emits nothing
 #define RTX_LFLAG_DRAGGING		0x0010	// between BeginDrag and EndDrag
 #define RTX_LFLAG_MUTED			0x0020	// switched off by Mute or Solo; not saved, not an edit
+#define RTX_LFLAG_COMPACTED		0x0040	// removed (DISABLED or DELETED too) and its slots released by Compact; Restore takes new slots
 
 typedef struct {
 	int		id;				// Get only
 	int		source;			// rtxLightSource_t, Get only
-	int		sourceKey;		// rank among the `light` entities, or .lgt block index; -1 for added
+	int		sourceKey;		// rank among the `light` entities, .lgt block index, or rank of the face among those of its shader; -1 for added
 	int		type;			// rtxLightType_t
 	int		flags;			// RTX_LFLAG_*, Get only
 
@@ -78,6 +81,27 @@ typedef struct {
 	int		twoSided;		// rect only: 1 when both sides emit
 	int		style;			// all types: light style, 0 = steady, 1 .. RTX_LSTYLE_MAX - 1
 } rtxLightDesc_t;
+
+// Version 6: an emissive surface is the group of the emissive polygons that one BSP face gave. Its
+// record has the source RTX_LSRC_EMISSIVE and the type RTX_LTYPE_SURFACE. origin is a point of the
+// surface and radius the half size of its box. intensity is the factor of the light it casts, color
+// the tint of that light, style its light style. Only the cast light changes, never the look of the
+// surface. The factor of the shader (SetEmissiveScale) applies on top.
+#define RTX_LEMI_MAX_EDGES		32
+#define RTX_LEMI_SHADER_LEN		64
+
+typedef struct {
+	int		shader;				// index for GetEmissiveShader
+	char	shaderName[RTX_LEMI_SHADER_LEN];
+	float	shaderScale;		// factor of the shader
+	int		face;				// index of the BSP surface
+	int		rank;				// rank of the face among the faces of the shader, in load order
+	int		numTris;			// polygons of the group
+	int		numSlots;			// slots it holds now: numTris, or 0 once compacted
+	vec3_t	mins, maxs;			// box of the polygons
+	int		numEdges;			// outline: the boundary edges of the polygons, or the 12 edges of the box
+	float	edges[RTX_LEMI_MAX_EDGES][6];	// x y z of both ends
+} rtxEmissiveSurface_t;
 
 // Axes of a rectangle light. The renderer and the cgame use this function, so the
 // overlay and the tracer agree. U and V are unit vectors, perpendicular to normal.
@@ -133,6 +157,10 @@ typedef struct {
 	vec3_t	sunColor;		// as sun_color_r/g/b
 	float	sunBrightness;	// as sun_brightness
 	float	sunAngle;		// angular diameter in degrees, 1..10, as sun_angle
+	// Version 7.
+	float	skyDiffuse;		// 0..1: cloud layer. The direct sun scales by (1 - skyDiffuse), the rest is sky light. Modes PHYSICAL and HYBRID only
+	vec3_t	ambientColor;	// 0..1 per component: colour of the ambient floor. It applies in every mode, GLOBAL included
+	float	ambientIntensity;	// 0..100: 0 = no floor
 } rtxSkyDesc_t;
 
 typedef struct {
@@ -141,10 +169,13 @@ typedef struct {
 	int		numLgt;
 	int		numAdded;
 	int		numModified;
-	int		numDisabled;
+	int		numDisabled;		// removed source lights that still hold their slots
+	int		numCompacted;		// removed lights whose slots Compact released (added lights included)
 	int		numInSolid;
-	int		numEmissive;		// polygon lights, not editable
+	int		numEmissive;		// emissive surfaces (records of the source RTX_LSRC_EMISSIVE)
+	int		numEmissivePolys;	// their polygons
 	int		numLightPolys;		// static entries the tracer sees, spare slots included
+	int		slotsUsed;			// entries that records hold (emissive surfaces included); the others are free
 	int		capacity;			// static entries before the next growth
 	int		maxLightPolys;		// hard limit on static entries
 	int		overfullClusters;	// clusters that hit MAX_LIGHTS_PER_CLUSTER at the last rebuild
@@ -223,11 +254,8 @@ typedef struct rtxLightEditAPI_s {
 
 	// Version 3.
 
-	// Emissive polygon lights of the world (read only). center is the polygon centre, color
-	// the emitted colour before the class scale, normalised to max 1.
-	int			(*CountEmissive)( void );
-	qboolean	(*GetEmissive)( int index, vec3_t center, vec3_t color );
-
+	// Version 6 removed CountEmissive, GetEmissive and EmissiveShaderOf: an emissive polygon has no
+	// index any more, its surface is a record (see GetEmissiveSurface).
 	// Dynamic lights of the last traced frame (dlights, sabers, beams), read only. Fills at
 	// most maxCount entries and returns how many it filled.
 	int			(*GetDynamic)( int maxCount, vec3_t *origins, vec3_t *colors );
@@ -235,16 +263,30 @@ typedef struct rtxLightEditAPI_s {
 	// Version 4.
 
 	// Light emission factor of each emissive shader. The factor scales the light that the
-	// polygons of the shader cast; it does not change how bright the surface looks.
+	// polygons of the shader cast and the emission of the surface (within 4% steps).
 	// Shader indices are stable until the next map load. SetEmissiveScale counts as an edit.
 	int			(*CountEmissiveShaders)( void );
 	qboolean	(*GetEmissiveShader)( int shader, char *name, int nameSize, float *scale, int *numPolys );
-	int			(*EmissiveShaderOf)( int emissiveIndex );	// index of GetEmissive -> shader, or -1
 	qboolean	(*SetEmissiveScale)( int shader, float scale );	// 0 .. 100, 1 = unchanged
 
 	// Sky and sun of the map. GetSky gives the values in effect. SetSky applies them now and
-	// counts as an edit. ResetSky removes the setting of the map (mode RTX_SKY_GLOBAL).
+	// counts as an edit. SetSky with mode RTX_SKY_GLOBAL removes the sky setting and keeps the ambient
+	// floor of the desc. ResetSky removes the sky setting and keeps the ambient floor.
 	qboolean	(*GetSky)( rtxSkyDesc_t *out );
 	qboolean	(*SetSky)( const rtxSkyDesc_t *desc );
 	void		(*ResetSky)( void );
+
+	// Version 5.
+
+	// Compact releases the slots of every removed light and packs the used slots. The ids,
+	// the records and the file do not change. The released lights get RTX_LFLAG_COMPACTED;
+	// Restore gives them new slots. Gives the number of lights it compacted, -1 on error.
+	// slotsReleased may be NULL.
+	int			(*Compact)( int *slotsReleased );
+
+	// Version 6.
+
+	// Description of the emissive surface of a record (source RTX_LSRC_EMISSIVE). The other values of
+	// the record come from Get. Compact releases the slots of a removed surface like those of a light.
+	qboolean	(*GetEmissiveSurface)( int id, rtxEmissiveSurface_t *out );
 } rtxLightEditAPI_t;

@@ -42,6 +42,11 @@ const char *LE_PropName( int prop )
 // Cones belong to spots, the rect fields to rects, the emitter radius to the other types. Every other property applies to all.
 qboolean LE_PropApplies( int prop, int type )
 {
+	// An emissive surface has a factor (intensity), a tint and a style.
+	if ( type == RTX_LTYPE_SURFACE )
+	{
+		return (qboolean)( prop == LEP_INTENSITY || prop == LEP_HUE || prop == LEP_SAT || prop == LEP_TEMP || prop == LEP_STYLE );
+	}
 	switch ( prop )
 	{
 	case LEP_RADIUS:
@@ -277,10 +282,25 @@ static qboolean LE_PropCopy( rtxLightDesc_t *dst, const rtxLightDesc_t *src, int
 {
 	float	h, s, v, sh, ss, sv;
 
+	// A surface and a light share the tint and the style. The factor goes between two surfaces only.
+	if ( ( dst->type == RTX_LTYPE_SURFACE || src->type == RTX_LTYPE_SURFACE )
+		&& ( !LE_PropApplies( prop, dst->type ) || !LE_PropApplies( prop, src->type ) ) )
+	{
+		return qfalse;
+	}
+	if ( prop == LEP_INTENSITY && ( dst->type == RTX_LTYPE_SURFACE ) != ( src->type == RTX_LTYPE_SURFACE ) )
+	{
+		return qfalse;
+	}
 	switch ( prop )
 	{
 	case LEP_INTENSITY:
 	{
+		if ( dst->type == RTX_LTYPE_SURFACE )
+		{
+			dst->intensity = src->intensity;
+			return qtrue;
+		}
 		const float	scaleSrc = s_api->IntensityScale( src->id );
 		const float	scaleDst = s_api->IntensityScale( dst->id );
 
@@ -405,7 +425,7 @@ qboolean LE_PropValueApply( rtxLightDesc_t *d, int prop, const float *val, int c
 {
 	float	h, s, v;
 
-	if ( count < 1 )
+	if ( count < 1 || ( d->type == RTX_LTYPE_SURFACE && !LE_PropApplies( prop, d->type ) ) )
 	{
 		return qfalse;
 	}
@@ -626,12 +646,6 @@ void LE_ToolProps( qboolean priDown, qboolean secDown, int wheel, qboolean fine 
 {
 	std::vector<int>	ids;
 
-	// Fire on an emissive dot, with no light aimed, selects the shader of the dot.
-	if ( priDown && s_pickId < 0 && LE_EmissivePick() )
-	{
-		LE_SelClear();
-		return;
-	}
 	LE_ActionTargets( ids );
 	if ( ids.empty() && LE_EmissiveTool( secDown, wheel, fine ) )
 	{
@@ -677,10 +691,6 @@ void LE_PropsHelp( const char **name, const char **fire, const char **alt, char 
 	Com_sprintf( nameBuf, sizeof( nameBuf ), "5 Properties [%s]", LE_PropName( s_prop ) );
 	Com_sprintf( fireBuf, sizeof( fireBuf ), "copy the %s of the aimed light to the selection", LE_PropName( s_prop ) );
 	Com_sprintf( altBuf, sizeof( altBuf ), "reset the %s to its original value", LE_PropName( s_prop ) );
-	if ( s_pickId < 0 && s_selList.empty() )
-	{
-		Q_strcat( fireBuf, sizeof( fireBuf ), "; on an emissive dot: select its shader" );
-	}
 	*name = nameBuf;
 	*fire = fireBuf;
 	*alt = altBuf;

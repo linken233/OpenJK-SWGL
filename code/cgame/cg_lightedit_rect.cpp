@@ -24,6 +24,7 @@ const char *LE_TypeName( int type )
 	{
 	case RTX_LTYPE_SPOT:	return "spot";
 	case RTX_LTYPE_RECT:	return "rect";
+	case RTX_LTYPE_SURFACE:	return "surface";
 	}
 	return "sphere";
 }

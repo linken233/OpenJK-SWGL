@@ -1,4 +1,4 @@
-// Light edit mode: light labels, the emissive and dynamic light dots, and the proposed bind file.
+// Light edit mode: light labels, the dynamic light dots, and the proposed bind file.
 // Everything drawn here goes through the dot and glyph budgets of cg_lightedit.cpp.
 
 #include "cg_headers.h"
@@ -9,16 +9,8 @@
 
 #define LEDIT_LABEL_MAX			24
 #define LEDIT_LABEL_RANGE		1024.0f
-#define LEDIT_EMISSIVE_RANGE	2048.0f
-#define LEDIT_EMISSIVE_DOTS		500
-#define LEDIT_EMISSIVE_MAX		20000
 #define LEDIT_DYNAMIC_MAX		64
 #define LEDIT_BINDS_FILE		"lightedit_binds.cfg"
-
-typedef struct {
-	float	p[3];
-	int		idx;	// index for GetEmissive
-} ledPos_t;
 
 typedef struct {
 	float	d;		// distance to the eye, then the sort key
@@ -26,10 +18,7 @@ typedef struct {
 } ledNear_t;
 
 static vmCvar_t				ledit_label;
-static std::vector<ledPos_t>	s_emi;			// emissive polygon centres, cached per map load
-static int					s_emiCount = -1;	// CountEmissive at the last load of the cache
 
-static const vec4_t	colEmissive	= { 0.60f, 0.60f, 0.60f, 0.80f };
 static const vec4_t	colDynamic	= { 1.00f, 0.20f, 1.00f, 1.00f };
 static const vec4_t	colName		= { 1.00f, 1.00f, 1.00f, 1.00f };
 static const vec4_t	colValue	= { 0.70f, 0.70f, 0.70f, 1.00f };
@@ -37,8 +26,6 @@ static const vec4_t	colSelName	= { 0.30f, 1.00f, 1.00f, 1.00f };
 
 void LE_LabelInit( void )
 {
-	s_emi.clear();
-	s_emiCount = -1;
 	cgi_Cvar_Register( &ledit_label, "ledit_label", "1", CVAR_ARCHIVE );
 }
 
@@ -70,7 +57,7 @@ static void LE_LabelStrings( const rtxLightDesc_t *d, char *name, int nameSize, 
 	char	shape[40];
 
 	LE_ShapeText( d, shape, sizeof( shape ) );
-	Com_sprintf( value, valueSize, "%s %g", shape, d->intensity );
+	Com_sprintf( value, valueSize, d->type == RTX_LTYPE_SURFACE ? "%s x%g" : "%s %g", shape, d->intensity );
 	if ( d->style )
 	{
 		char	style[40];
@@ -83,7 +70,11 @@ static void LE_LabelStrings( const rtxLightDesc_t *d, char *name, int nameSize, 
 	{
 		Q_strcat( value, valueSize, " muted" );
 	}
-	if ( d->flags & RTX_LFLAG_DISABLED )
+	if ( d->flags & RTX_LFLAG_COMPACTED )
+	{
+		Q_strcat( value, valueSize, " compacted" );
+	}
+	else if ( d->flags & RTX_LFLAG_DISABLED )
 	{
 		Q_strcat( value, valueSize, " disabled" );
 	}
@@ -214,116 +205,36 @@ void LE_DrawLabels( void )
 
 /*
 =================
-Emissive and dynamic lights
+Dynamic lights
 =================
 */
-// Loads the emissive polygon centres. They do not change until the next map load.
-static void LE_EmissiveLoad( void )
-{
-	const int	count = s_api->CountEmissive();
-
-	if ( count == s_emiCount )
-	{
-		return;
-	}
-	s_emiCount = count;
-	s_emi.clear();
-	for ( int i = 0; i < count && i < LEDIT_EMISSIVE_MAX; i++ )
-	{
-		vec3_t		c, col;
-		ledPos_t	p;
-
-		if ( s_api->GetEmissive( i, c, col ) )
-		{
-			VectorCopy( c, p.p );
-			p.idx = i;
-			s_emi.push_back( p );
-		}
-	}
-}
-
-// Small grey dots for the emissive lights, small magenta dots for the dynamic lights of the last frame.
+// Small magenta dots for the dynamic lights of the last frame. The emissive surfaces are records: cg_lightedit.cpp draws them.
 void LE_DrawExtraLights( void )
 {
 	const int	mode = LE_ShowMode();
 	const float	*eye = cg.refdef.vieworg;
 	const float	*fwd = cg.refdef.viewaxis[0];
 
-	if ( mode < 2 || !s_api->CountEmissive )
+	if ( mode < 3 )
 	{
 		return;
 	}
 
-	LE_EmissiveLoad();
+	vec3_t	origins[LEDIT_DYNAMIC_MAX], colors[LEDIT_DYNAMIC_MAX];
+	const int	n = s_api->GetDynamic( LEDIT_DYNAMIC_MAX, origins, colors );
+
+	for ( int i = 0; i < n && i < LEDIT_DYNAMIC_MAX && LE_DotsLeft() > 0; i++ )
 	{
-		std::vector<ledNear_t>	cand;
-		const float				r2 = LEDIT_EMISSIVE_RANGE * LEDIT_EMISSIVE_RANGE;
+		vec3_t	rel;
+		float	sx, sy;
 
-		for ( size_t i = 0; i < s_emi.size(); i++ )
+		VectorSubtract( origins[i], eye, rel );
+		if ( DotProduct( rel, fwd ) > 0.0f && CG_WorldCoordToScreenCoordFloat( origins[i], &sx, &sy )
+			&& sx > -4 && sx < 644 && sy > -4 && sy < 484 )
 		{
-			vec3_t		rel;
-			ledNear_t	e;
-
-			VectorSubtract( s_emi[i].p, eye, rel );
-			e.d = DotProduct( rel, rel );
-			if ( e.d <= r2 && DotProduct( rel, fwd ) > 0.0f )
-			{
-				e.i = (int)i;
-				cand.push_back( e );
-			}
-		}
-		if ( (int)cand.size() > LEDIT_EMISSIVE_DOTS )
-		{
-			std::nth_element( cand.begin(), cand.begin() + LEDIT_EMISSIVE_DOTS, cand.end(), LE_NearLess );
-			cand.resize( LEDIT_EMISSIVE_DOTS );
-		}
-		for ( size_t i = 0; i < cand.size() && LE_DotsLeft() > 0; i++ )
-		{
-			vec3_t	p;
-			float	sx, sy;
-
-			VectorCopy( s_emi[cand[i].i].p, p );
-			if ( CG_WorldCoordToScreenCoordFloat( p, &sx, &sy ) && sx > -4 && sx < 644 && sy > -4 && sy < 484 )
-			{
-				LE_Dot( sx, sy, 3.0f, colEmissive );
-			}
+			LE_Dot( sx, sy, 5.0f, colDynamic );
 		}
 	}
-
-	if ( mode >= 3 )
-	{
-		vec3_t	origins[LEDIT_DYNAMIC_MAX], colors[LEDIT_DYNAMIC_MAX];
-		const int	n = s_api->GetDynamic( LEDIT_DYNAMIC_MAX, origins, colors );
-
-		for ( int i = 0; i < n && i < LEDIT_DYNAMIC_MAX && LE_DotsLeft() > 0; i++ )
-		{
-			vec3_t	rel;
-			float	sx, sy;
-
-			VectorSubtract( origins[i], eye, rel );
-			if ( DotProduct( rel, fwd ) > 0.0f && CG_WorldCoordToScreenCoordFloat( origins[i], &sx, &sy )
-				&& sx > -4 && sx < 644 && sy > -4 && sy < 484 )
-			{
-				LE_Dot( sx, sy, 5.0f, colDynamic );
-			}
-		}
-	}
-}
-
-int LE_EmissivePointCount( void )
-{
-	if ( !s_api || !s_api->CountEmissive )
-	{
-		return 0;
-	}
-	LE_EmissiveLoad();
-	return (int)s_emi.size();
-}
-
-const float *LE_EmissivePoint( int i, int *apiIndex )
-{
-	*apiIndex = s_emi[i].idx;
-	return s_emi[i].p;
 }
 
 // Text for the bottom line when the display filter is above 1.

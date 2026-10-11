@@ -17,6 +17,8 @@
 #define LEDIT_PICK_SCALE		0.015f
 #define LEDIT_OCCLUDE_RANGE		3000.0f
 #define LEDIT_MAX_TRACES		1024
+#define LEDIT_SURFACE_RANGE		2048.0f
+#define LEDIT_SURFACE_ICONS		500
 #define LEDIT_FONT_SCALE		0.7f
 #define LEDIT_MSG_TIME			4000
 
@@ -32,6 +34,7 @@ typedef struct {
 typedef struct {
 	int		id;
 	float	t;
+	int		surface;	// an emissive surface: it comes after the lights
 } ledHit_t;
 
 rtxLightEditAPI_t			*s_api = NULL;
@@ -53,6 +56,7 @@ static vec3_t				s_ghostNormal;			// surface normal under the ghost, valid when 
 static qboolean				s_ghostHit = qfalse;
 static qboolean				s_ghostSolid = qfalse;
 static int					s_createType = RTX_LTYPE_SPHERE;	// type that tool 2 makes
+static qboolean				s_restoreMode = qfalse;	// the compacted lights show and tool 8 can restore them
 static rtxLightStats_t		s_stats;
 
 static std::vector<ledRec_t>		s_recs;
@@ -79,6 +83,7 @@ static const vec4_t	colGrey		= { 0.60f, 0.60f, 0.60f, 1.0f };
 static const vec4_t	colDark		= { 0.00f, 0.00f, 0.00f, 0.85f };
 static const vec4_t	colPanel	= { 0.00f, 0.00f, 0.00f, 0.45f };
 static const vec4_t	colCyan		= { 0.30f, 1.00f, 1.00f, 1.0f };
+static const vec4_t	colEmissive	= { 0.70f, 0.70f, 0.70f, 1.0f };
 
 /*
 =================
@@ -136,13 +141,18 @@ static const char *LE_SourceStr( const rtxLightDesc_t *d )
 	{
 		return va( "lgt %d", d->sourceKey );
 	}
+	if ( d->source == RTX_LSRC_EMISSIVE )
+	{
+		return va( "emissive face rank %d", d->sourceKey );
+	}
 	return "added";
 }
 
-static const char *LE_FlagsStr( int flags )
+const char *LE_FlagsStr( int flags )
 {
-	return va( "%s%s%s%s%s%s", ( flags & RTX_LFLAG_MODIFIED ) ? "MODIFIED " : "",
+	return va( "%s%s%s%s%s%s%s", ( flags & RTX_LFLAG_MODIFIED ) ? "MODIFIED " : "",
 		( flags & RTX_LFLAG_DISABLED ) ? "DISABLED " : "", ( flags & RTX_LFLAG_DELETED ) ? "DELETED " : "",
+		( flags & RTX_LFLAG_COMPACTED ) ? "COMPACTED " : "",
 		( flags & RTX_LFLAG_IN_SOLID ) ? "IN_SOLID " : "", ( flags & RTX_LFLAG_DRAGGING ) ? "DRAGGING " : "",
 		( flags & RTX_LFLAG_MUTED ) ? "MUTED" : "" );
 }
@@ -301,7 +311,7 @@ static void LE_DoRemove( const std::vector<int> &ids )
 	}
 }
 
-// Restore on a disabled light, one undo entry.
+// Restore on a disabled or compacted light, one undo entry.
 static void LE_DoRestore( int id )
 {
 	rtxLightDesc_t	before, after;
@@ -310,7 +320,7 @@ static void LE_DoRestore( int id )
 	{
 		return;
 	}
-	if ( !( before.flags & RTX_LFLAG_DISABLED ) )
+	if ( !( before.flags & ( RTX_LFLAG_DISABLED | RTX_LFLAG_COMPACTED ) ) )
 	{
 		LE_Msg( "light edit: light %d is not removed", id );
 		return;
@@ -378,6 +388,7 @@ static void LE_LeaveSide( void )
 		}
 	}
 	s_active = qfalse;
+	s_restoreMode = qfalse;
 	LE_CamLeave( LE_CAM_USER_LIGHTEDIT );
 	LE_GrabReset();
 	s_pickId = -1;
@@ -441,7 +452,7 @@ static qboolean LE_Occluded( const vec3_t eye, const vec3_t org, float dist )
 
 static bool LE_HitLess( const ledHit_t &a, const ledHit_t &b )
 {
-	return a.t < b.t;
+	return a.surface != b.surface ? a.surface < b.surface : a.t < b.t;
 }
 
 // Caches every descriptor, projects the lights and builds the sorted list of lights under the crosshair.
@@ -462,24 +473,46 @@ static void LE_Snapshot( void )
 	for ( int i = 0; i < n; i++ )
 	{
 		ledRec_t	&r = s_recs[i];
-		vec3_t		rel;
-		float		t, pr, d2;
-		qboolean	hit;
 
 		r.valid = qfalse;
 		r.onScreen = qfalse;
 		r.occluded = qfalse;
 		memset( &r.d, 0, sizeof( r.d ) );
-		if ( !s_api->Get( i, &r.d ) || ( r.d.flags & RTX_LFLAG_DELETED ) )
+		if ( !s_api->Get( i, &r.d ) )
+		{
+			continue;
+		}
+		const qboolean	compacted = (qboolean)( ( r.d.flags & RTX_LFLAG_COMPACTED ) != 0 );
+
+		// A compacted light is gone, except in the restore mode. A deleted light is gone.
+		if ( compacted ? !s_restoreMode : ( r.d.flags & RTX_LFLAG_DELETED ) != 0 )
 		{
 			continue;
 		}
 		r.valid = qtrue;
+	}
+
+	// The lights go first: the emissive surfaces come after them and use what is left of the trace budget.
+	for ( int pass = 0; pass < 2; pass++ )
+	for ( int i = 0; i < n; i++ )
+	{
+		ledRec_t	&r = s_recs[i];
+		vec3_t		rel;
+		float		t, pr, d2;
+		qboolean	hit;
+
+		if ( !r.valid || LE_IsSurface( &r.d ) != ( pass == 1 ) )
+		{
+			continue;
+		}
+		const qboolean	compacted = (qboolean)( ( r.d.flags & RTX_LFLAG_COMPACTED ) != 0 );
 
 		VectorSubtract( r.d.origin, eye, rel );
 		t = DotProduct( rel, fwd );
 		r.depth = t;
-		if ( t <= 0.0f )
+
+		// A surface is shown and aimed with ledit_show 2 and more, within the range of the grey dots.
+		if ( t <= 0.0f || ( pass == 1 && ( ledit_show.integer < 2 || VectorLengthSquared( rel ) > LEDIT_SURFACE_RANGE * LEDIT_SURFACE_RANGE ) ) )
 		{
 			continue;
 		}
@@ -508,12 +541,14 @@ static void LE_Snapshot( void )
 			r.occluded = qtrue;
 		}
 
-		if ( hit && !r.occluded )
+		// Only tool 8 aims at a compacted light.
+		if ( hit && !r.occluded && ( !compacted || s_tool == LEDIT_TOOL_DELETE ) )
 		{
 			ledHit_t	h;
 
 			h.id = i;
 			h.t = t;
+			h.surface = pass;
 			s_hits.push_back( h );
 		}
 	}
@@ -580,7 +615,9 @@ static void LE_ToolSelect( qboolean priDown, qboolean secDown )
 		}
 		else
 		{
+			// Nothing aimed: the selection and the selected shader empty.
 			LE_SelClear();
+			LE_EmissiveClear();
 		}
 	}
 	if ( secDown && s_pickId >= 0 )
@@ -720,6 +757,25 @@ static void LE_ToolDelete( qboolean priDown, qboolean secDown )
 	}
 }
 
+// The menu follows the selection of the game through these cvars: ledit_sel is the primary light,
+// ledit_emi_sel the emissive shader; -1 for none. A cvar is written when its value changes.
+static int s_published[2] = { -2, -2 };
+
+static void LE_PublishSelection( void )
+{
+	static const char	*names[2] = { "ledit_sel", "ledit_emi_sel" };
+	const int			want[2] = { s_sel, LE_EmissiveSelected() };
+
+	for ( int i = 0; i < 2; i++ )
+	{
+		if ( want[i] != s_published[i] )
+		{
+			s_published[i] = want[i];
+			cgi_Cvar_Set( names[i], va( "%d", want[i] ) );
+		}
+	}
+}
+
 /*
 =================
 CG_LightEdit_Frame
@@ -835,6 +891,7 @@ void CG_LightEdit_Frame( void )
 		break;
 	}
 	LE_StillAccumFrame( buttons );
+	LE_PublishSelection();
 }
 
 void CG_LightEdit_Init( void )
@@ -842,6 +899,7 @@ void CG_LightEdit_Init( void )
 	// The map change drops the renderer state: nothing to release here.
 	s_api = LE_GetAPI();
 	s_active = qfalse;
+	s_restoreMode = qfalse;
 	LE_CamInit();
 	s_leaving = qfalse;
 	s_tool = LEDIT_TOOL_SELECT;
@@ -867,6 +925,7 @@ void CG_LightEdit_Init( void )
 	LE_EmissiveInit();
 	LE_SkyInit();
 	memset( &s_stats, 0, sizeof( s_stats ) );
+	s_published[0] = s_published[1] = -2;
 	s_recs.clear();
 	s_hits.clear();
 	s_occ.clear();
@@ -1052,6 +1111,65 @@ void LE_Cmd_Deselect( void )
 	{
 		LE_SelClear();
 		LE_Msg( "light edit: selection cleared" );
+	}
+}
+
+// ledit_compact: releases the slots of the removed lights. The lights stay in memory and in the file.
+static void LE_Cmd_Compact( void )
+{
+	int	slots = 0, lights;
+
+	if ( !LE_NeedActive() )
+	{
+		return;
+	}
+	LE_EndGrab();
+	lights = s_api->Compact( &slots );
+	if ( lights < 0 )
+	{
+		LE_Msg( "light edit: compact failed (%s)", s_api->LastError() );
+		return;
+	}
+	if ( lights == 0 )
+	{
+		LE_Msg( "light edit: no removed light to compact" );
+		return;
+	}
+	// A compacted light cannot stay selected.
+	for ( size_t i = 0; i < s_selList.size(); )
+	{
+		rtxLightDesc_t	d;
+
+		if ( LE_GetDesc( s_selList[i], &d ) && ( d.flags & RTX_LFLAG_COMPACTED ) )
+		{
+			LE_SelRemove( s_selList[i] );
+		}
+		else
+		{
+			i++;
+		}
+	}
+	s_api->GetStats( &s_stats );
+	LE_Msg( "light edit: compacted %d light%s, released %d slot%s, slots %d/%d", lights, lights > 1 ? "s" : "",
+		slots, slots != 1 ? "s" : "", s_stats.slotsUsed, s_stats.maxLightPolys );
+}
+
+// ledit_restore [0|1]: shows the compacted lights and lets tool 8 restore them.
+static void LE_Cmd_RestoreMode( void )
+{
+	if ( !LE_NeedActive() )
+	{
+		return;
+	}
+	s_restoreMode = ( cgi_Argc() > 1 ) ? (qboolean)( atoi( CG_Argv( 1 ) ) != 0 ) : (qboolean)!s_restoreMode;
+	if ( s_restoreMode )
+	{
+		LE_Msg( "light edit: restore mode on, %d compacted light%s (tool 8, Alt restores the aimed one)", s_stats.numCompacted,
+			s_stats.numCompacted != 1 ? "s" : "" );
+	}
+	else
+	{
+		LE_Msg( "light edit: restore mode off" );
 	}
 }
 
@@ -1250,6 +1368,10 @@ static void LE_Cmd_Set( void )
 	}
 	Com_sprintf( label, sizeof( label ), "set %s", what );
 
+	// An emissive surface only has a factor (intensity), a tint (color) and a style.
+	const qboolean	surfaceOk = (qboolean)( !Q_stricmp( what, "color" ) || !Q_stricmp( what, "intensity" ) || !Q_stricmp( what, "style" ) );
+	int				skipped = 0;
+
 	{
 		ledBatch	batch;
 
@@ -1257,6 +1379,15 @@ static void LE_Cmd_Set( void )
 		for ( size_t i = 0; i < s_selList.size(); i++ )
 		{
 			rtxLightDesc_t	cur = d;
+
+			// The factor of a surface and the intensity of a light have different units: they do not mix.
+			const qboolean	isSurface = LE_IsSurface( LE_RecDesc( s_selList[i] ) );
+
+			if ( ( isSurface && !surfaceOk ) || ( !Q_stricmp( what, "intensity" ) && isSurface != LE_IsSurface( &prim ) ) )
+			{
+				skipped++;
+				continue;
+			}
 
 			if ( s_selList[i] != s_sel )
 			{
@@ -1322,6 +1453,11 @@ static void LE_Cmd_Set( void )
 		}
 		LE_UndoEnd();
 	}
+	if ( skipped )
+	{
+		LE_Msg( "light edit: %d light%s skipped: %s does not apply (an emissive surface takes color, style and its own intensity)",
+			skipped, skipped > 1 ? "s" : "", what );
+	}
 	if ( done )
 	{
 		LE_Msg( "light edit: %d light%s: %s set", done, done > 1 ? "s" : "", what );
@@ -1358,6 +1494,16 @@ static void LE_Cmd_Get( void )
 			Com_sprintf( extra, sizeof( extra ), ", roll %.1f, %s", d.roll, d.twoSided ? "two-sided" : "one-sided" );
 		}
 		CG_Printf( "light %d (%s, %s%s) flags: %s\n", d.id, LE_SourceStr( &d ), shape, extra, LE_FlagsStr( d.flags ) );
+		if ( LE_IsSurface( &d ) )
+		{
+			char	text[96];
+
+			for ( int field = 0; field < 3; field++ )
+			{
+				LE_SurfaceText( &d, field, text, sizeof( text ) );
+				CG_Printf( "  %s\n", text );
+			}
+		}
 		if ( d.style )
 		{
 			CG_Printf( "  style %s\n", style );
@@ -1390,12 +1536,16 @@ qboolean CG_LightEdit_ConsoleCommand( const char *cmd )
 		{ "ledit_grid_next",	LE_Cmd_GridNext },
 		{ "ledit_snap_toggle",	LE_Cmd_SnapToggle },
 		{ "ledit_xray_toggle",	LE_Cmd_XrayToggle },
+		{ "ledit_compact",	LE_Cmd_Compact },
+		{ "ledit_restore",	LE_Cmd_RestoreMode },
 		{ "ledit_goto",		LE_CmdGoto },
 		{ "ledit_select",	LE_CmdSelect },
 		{ "ledit_writebinds",	LE_CmdWriteBinds },
 		{ "ledit_emissive_list",	LE_CmdEmissiveList },
 		{ "ledit_emissive",	LE_CmdEmissive },
 		{ "ledit_emissive_reset",	LE_CmdEmissiveReset },
+		{ "ledit_emissive_select",	LE_CmdEmissiveSelect },
+		{ "ledit_emissive_surfaces",	LE_CmdEmissiveSurfaces },
 		{ "ledit_sky",		LE_CmdSky },
 		{ "ledit_sun",		LE_CmdSun },
 		{ "ledit_sun_here",	LE_CmdSunHere },
@@ -1450,8 +1600,10 @@ void CG_LightEdit_InitConsoleCommands( void )
 	static const char *names[] = {
 		"lightedit", "ledit_save", "ledit_reload", "ledit_undo", "ledit_redo", "ledit_history",
 		"ledit_delete", "ledit_deselect", "ledit_revert", "ledit_set", "ledit_get",
-		"ledit_grid_next", "ledit_snap_toggle", "ledit_xray_toggle", "ledit_goto", "ledit_select",
+		"ledit_grid_next", "ledit_snap_toggle", "ledit_xray_toggle", "ledit_compact", "ledit_restore",
+		"ledit_goto", "ledit_select",
 		"ledit_writebinds", "ledit_emissive_list", "ledit_emissive", "ledit_emissive_reset",
+		"ledit_emissive_select", "ledit_emissive_surfaces",
 		"ledit_sky", "ledit_sun", "ledit_sun_here", "ledit_sun_color", "ledit_sun_brightness",
 		"ledit_sun_angle", "ledit_sky_reset"
 	};
@@ -1696,7 +1848,7 @@ void LE_Circle3D( const vec3_t center, const vec3_t ax1, const vec3_t ax2, float
 
 static const float *LE_IconColor( const rtxLightDesc_t *d )
 {
-	if ( d->flags & RTX_LFLAG_DISABLED )
+	if ( d->flags & ( RTX_LFLAG_DISABLED | RTX_LFLAG_COMPACTED ) )
 	{
 		return colRedDim;
 	}
@@ -1707,6 +1859,10 @@ static const float *LE_IconColor( const rtxLightDesc_t *d )
 	if ( d->flags & RTX_LFLAG_MODIFIED )
 	{
 		return colOrange;
+	}
+	if ( d->source == RTX_LSRC_EMISSIVE )
+	{
+		return colEmissive;
 	}
 	if ( d->source == RTX_LSRC_ENTITY )
 	{
@@ -1719,42 +1875,80 @@ static const float *LE_IconColor( const rtxLightDesc_t *d )
 	return colGreen;
 }
 
+static void LE_DrawIcon( size_t i )
+{
+	const ledRec_t	&r = s_recs[i];
+
+	if ( !r.valid || !r.onScreen || ( r.occluded && !ledit_xray.integer ) )
+	{
+		return;
+	}
+	if ( !LE_FilterShows( &r.d ) && !LE_SelHas( (int)i ) && (int)i != s_pickId )
+	{
+		return;
+	}
+	const float	size = Com_Clamp( 3.0f, LE_IsSurface( &r.d ) ? 6.0f : 12.0f, 1200.0f / Q_max( r.depth, 1.0f ) );
+	const float	*col = LE_IconColor( &r.d );
+
+	if ( r.d.flags & RTX_LFLAG_MUTED )
+	{
+		// A muted light is an outline only.
+		LE_Box( r.sx, r.sy, size * 0.5f + 2.0f, colGrey );
+		return;
+	}
+	LE_Dot( r.sx, r.sy, size + 2.0f, colDark );
+	LE_Dot( r.sx, r.sy, size, col );
+	if ( r.d.flags & ( RTX_LFLAG_DISABLED | RTX_LFLAG_COMPACTED ) )
+	{
+		const float	h = size * 0.5f + 2.0f;
+
+		LE_Line( r.sx - h, r.sy - h, r.sx + h, r.sy + h, colRed );
+		LE_Line( r.sx - h, r.sy + h, r.sx + h, r.sy - h, colRed );
+	}
+}
+
+typedef struct {
+	float	depth;
+	int		id;
+} ledIconNear_t;
+
+static bool LE_IconNearLess( const ledIconNear_t &a, const ledIconNear_t &b )
+{
+	return a.depth < b.depth;
+}
+
+// The lights first, then the emissive surfaces (ledit_show 2): the nearest ones, so that they cannot use the whole budget.
 static void LE_DrawIcons( void )
 {
+	std::vector<ledIconNear_t>	surfaces;
+
 	if ( !ledit_show.integer )
 	{
 		return;
 	}
 	for ( size_t i = 0; i < s_recs.size(); i++ )
 	{
-		const ledRec_t	&r = s_recs[i];
+		if ( !LE_IsSurface( &s_recs[i].d ) )
+		{
+			LE_DrawIcon( i );
+		}
+		else if ( s_recs[i].valid && s_recs[i].onScreen )
+		{
+			ledIconNear_t	e;
 
-		if ( !r.valid || !r.onScreen || ( r.occluded && !ledit_xray.integer ) )
-		{
-			continue;
+			e.depth = s_recs[i].depth;
+			e.id = (int)i;
+			surfaces.push_back( e );
 		}
-		if ( !LE_FilterShows( &r.d ) && !LE_SelHas( (int)i ) && (int)i != s_pickId )
-		{
-			continue;
-		}
-		const float	size = Com_Clamp( 3.0f, 12.0f, 1200.0f / Q_max( r.depth, 1.0f ) );
-		const float	*col = LE_IconColor( &r.d );
-
-		if ( r.d.flags & RTX_LFLAG_MUTED )
-		{
-			// A muted light is an outline only.
-			LE_Box( r.sx, r.sy, size * 0.5f + 2.0f, colGrey );
-			continue;
-		}
-		LE_Dot( r.sx, r.sy, size + 2.0f, colDark );
-		LE_Dot( r.sx, r.sy, size, col );
-		if ( r.d.flags & RTX_LFLAG_DISABLED )
-		{
-			const float	h = size * 0.5f + 2.0f;
-
-			LE_Line( r.sx - h, r.sy - h, r.sx + h, r.sy + h, colRed );
-			LE_Line( r.sx - h, r.sy + h, r.sx + h, r.sy - h, colRed );
-		}
+	}
+	if ( (int)surfaces.size() > LEDIT_SURFACE_ICONS )
+	{
+		std::nth_element( surfaces.begin(), surfaces.begin() + LEDIT_SURFACE_ICONS, surfaces.end(), LE_IconNearLess );
+		surfaces.resize( LEDIT_SURFACE_ICONS );
+	}
+	for ( size_t k = 0; k < surfaces.size(); k++ )
+	{
+		LE_DrawIcon( (size_t)surfaces[k].id );
 	}
 }
 
@@ -1786,6 +1980,7 @@ static void LE_DrawSelection( void )
 	}
 	LE_DrawSpotWires();
 	LE_DrawRectWires();
+	LE_SurfaceDrawWires();
 
 	// The other selected lights get a frame only.
 	for ( size_t i = 0; i < s_selList.size(); i++ )
@@ -1908,13 +2103,13 @@ static void LE_DrawHelp( void )
 		break;
 	case LEDIT_TOOL_DELETE:
 		name = "8 Delete / restore";
-		fire = "delete the aimed light, or the selection if it is a member";
-		alt = "restore the aimed light";
+		fire = "delete the aimed light or emissive surface, or the selection if it is a member";
+		alt = s_restoreMode ? "restore the aimed light (compacted ones too)" : "restore the aimed light";
 		wheel = "none";
 		break;
 	default:
 		name = "1 Select";
-		fire = "select the aimed light (replaces the selection; none aimed: clear)";
+		fire = "select the aimed light or emissive surface (replaces the selection; none: clear)";
 		alt = "add the aimed light to the selection, or remove it";
 		wheel = "cycle among the lights under the crosshair";
 		break;
@@ -1952,14 +2147,27 @@ typedef enum {
 	PF_ROLL,
 	PF_TWOSIDED,
 	PF_STYLE,
-	PF_NAME
+	PF_NAME,
+	PF_SHADER,
+	PF_TRIS,
+	PF_FACTORS
 } ledPanelField_t;
 
 // True when the field has a meaning for the light type.
 static qboolean LE_PanelApplies( int type, int field )
 {
+	if ( type == RTX_LTYPE_SURFACE )
+	{
+		// An emissive surface keeps its place and its shape: it has a factor, a tint and a style.
+		return (qboolean)( field != PF_RADIUS && field != PF_DIR && field != PF_CONE_OUTER && field != PF_CONE_INNER
+			&& field != PF_WIDTH && field != PF_HEIGHT && field != PF_ROLL && field != PF_TWOSIDED );
+	}
 	switch ( field )
 	{
+	case PF_SHADER:
+	case PF_TRIS:
+	case PF_FACTORS:
+		return qfalse;
 	case PF_RADIUS:
 		return (qboolean)( type != RTX_LTYPE_RECT );
 	case PF_DIR:
@@ -2015,7 +2223,12 @@ static void LE_PanelText( const rtxLightDesc_t *d, int field, int activeProp, ch
 		break;
 	}
 	case PF_INTENSITY:
-		Com_sprintf( out, size, "intensity: %.2f", d->intensity );
+		Com_sprintf( out, size, d->type == RTX_LTYPE_SURFACE ? "intensity: x%.3g" : "intensity: %.2f", d->intensity );
+		break;
+	case PF_SHADER:
+	case PF_TRIS:
+	case PF_FACTORS:
+		LE_SurfaceText( d, field - PF_SHADER, out, size );
 		break;
 	case PF_RADIUS:
 		Com_sprintf( out, size, "emitter radius: %.2f", d->radius );
@@ -2138,12 +2351,13 @@ static void LE_DrawPanel( void )
 	}
 	else
 	{
-		Com_sprintf( main[n], sizeof( main[0] ), "light %d", d.id );
+		Com_sprintf( main[n], sizeof( main[0] ), d.type == RTX_LTYPE_SURFACE ? "emissive surface %d" : "light %d", d.id );
 	}
 	fields[n++] = PF_TITLE;
 
 	static const int	order[] = { PF_SOURCE, PF_TYPE, PF_FLAGS, PF_ORIGIN, PF_COLOR, PF_HSV, PF_INTENSITY, PF_RADIUS,
-		PF_DIR, PF_CONE_OUTER, PF_CONE_INNER, PF_WIDTH, PF_HEIGHT, PF_ROLL, PF_TWOSIDED, PF_STYLE, PF_NAME };
+		PF_DIR, PF_CONE_OUTER, PF_CONE_INNER, PF_WIDTH, PF_HEIGHT, PF_ROLL, PF_TWOSIDED, PF_STYLE, PF_NAME,
+		PF_SHADER, PF_TRIS, PF_FACTORS };
 
 	for ( size_t k = 0; k < ARRAY_LEN( order ); k++ )
 	{
@@ -2267,11 +2481,15 @@ static void LE_DrawBottom( void )
 	{
 		LE_Text( 6, y - h - 2, s_msg, colWhite );
 	}
-	line = va( "%s | entity %d lgt %d added %d modified %d disabled %d | slots %d/%d | undo %d redo %d%s",
-		s_stats.mapName, s_stats.numEntity, s_stats.numLgt, s_stats.numAdded, s_stats.numModified,
-		s_stats.numDisabled, s_stats.numLightPolys, s_stats.maxLightPolys, LE_UndoDepth(), LE_RedoDepth(),
+	line = va( "%s | entity %d lgt %d added %d emissive %d modified %d disabled %d compacted %d | slots %d/%d | undo %d redo %d%s",
+		s_stats.mapName, s_stats.numEntity, s_stats.numLgt, s_stats.numAdded, s_stats.numEmissive, s_stats.numModified,
+		s_stats.numDisabled, s_stats.numCompacted, s_stats.slotsUsed, s_stats.maxLightPolys, LE_UndoDepth(), LE_RedoDepth(),
 		s_stats.unsavedChanges > 0 ? " *" : "" );
 	Com_sprintf( full, sizeof( full ), "%s | grid %d snap %s", line, LE_GridSize(), LE_SnapOn() ? "on" : "off" );
+	if ( s_restoreMode )
+	{
+		Q_strcat( full, sizeof( full ), " | RESTORE MODE" );
+	}
 	if ( LE_SoloId() >= 0 )
 	{
 		Q_strcat( full, sizeof( full ), va( " | SOLO %d", LE_SoloId() ) );

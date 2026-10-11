@@ -134,6 +134,11 @@ static void LE_EntryApply( void )
 			{
 				continue;
 			}
+			// The factor of a surface and the intensity of a light have different units: they do not mix.
+			if ( s_entryProp == LEP_INTENSITY && LE_IsSurface( &d ) != LE_IsSurface( LE_RecDesc( s_sel ) ) )
+			{
+				continue;
+			}
 			if ( LE_PropValueApply( &d, s_entryProp, val, count ) && LE_DoSet( s_selList[i], &d, label ) )
 			{
 				done++;
@@ -451,7 +456,7 @@ void LE_CmdSelect( void )
 		return;
 	}
 	id = atoi( arg );
-	if ( id < 0 || !LE_GetDesc( id, &d ) || ( d.flags & RTX_LFLAG_DELETED ) )
+	if ( id < 0 || !LE_GetDesc( id, &d ) || ( d.flags & ( RTX_LFLAG_DELETED | RTX_LFLAG_COMPACTED ) ) )
 	{
 		LE_Msg( "light edit: no light %d", id );
 		return;

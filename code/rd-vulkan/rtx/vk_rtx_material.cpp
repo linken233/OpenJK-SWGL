@@ -23,6 +23,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 #include "tr_local.h"
 #include "conversion.h"
+#include "rtx_light_emissive.h"
 
 static rtx_material_t rtx_materials[MAX_SHADERS];
 
@@ -731,14 +732,15 @@ VkResult vk_rtx_upload_materials( LightBuffer *lbo )
 		data[5] |= (mat->blend_mode & RTX_BLEND_MASK) << 2;	// bits 2-4
 		data[5] |= floatToHalf(mat->alpha_test_value) << 16;
 
-		// Bits 8-15: pt_glow_scale as e, 2^((e - 128) / 16). Bit 5: a glow material. See
-		// get_material_info.
+		// Bits 8-15: pt_glow_scale times the light edit factor of the shader as e, 2^((e - 128) / 16).
+		// Bit 5: a glow material, or a shader with a factor. See get_material_info.
 		{
-			const float scale = vk_rtx_glow_scale()->value;
+			const float shaderScale = ( i < MAX_SHADERS ) ? g_rtxEmissiveScale[i] : 1.0f;
+			const float scale = vk_rtx_glow_scale()->value * shaderScale;
 			const int e = ( scale > 0.f ) ? (int)floorf( log2f( scale ) * 16.f + 128.5f ) : 1;
 			data[5] |= (uint32_t)Com_Clampi( 1, 255, e ) << 8;
 
-			if ( mat->emissive && mat->glow_emissive )
+			if ( mat->emissive && ( mat->glow_emissive || shaderScale != 1.0f ) )
 				data[5] |= 0x20u;
 		}
 
@@ -921,9 +923,11 @@ void vk_rtx_animate_materials( const trRefdef_t *refdef )
 	int i;
 	uint32_t s, j, f;
 
-	// A new pt_glow_scale is in every material.
-	const qboolean rescale = vk_rtx_glow_scale()->modified;
+	// A new pt_glow_scale or light edit factor is in every material.
+	static int emissiveGeneration = -1;
+	const qboolean rescale = (qboolean)( vk_rtx_glow_scale()->modified || emissiveGeneration != RTX_LightEmissive_Generation() );
 	vk_rtx_glow_scale()->modified = qfalse;
+	emissiveGeneration = RTX_LightEmissive_Generation();
 
 	for ( i = 0; i < tr.numShaders && i < MAX_SHADERS; i++ )
 	{

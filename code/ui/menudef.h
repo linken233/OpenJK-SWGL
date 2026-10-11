@@ -112,6 +112,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #define FEEDER_ANIM_OVERRIDES				0x1e			// Animation overrides of the player (cheat menu)
 #define FEEDER_AMMO							0x1f			// Ammo types of the player (cheat menu)
 #define FEEDER_LIGHTEDIT					0x20			// Lights of the light edit menu
+#define FEEDER_LIGHTEDIT_EMI				0x21			// Emissive shaders of the light edit menu
 
 #define UI_VERSION				200
 #define UI_HANDICAP				200
@@ -182,3 +183,4 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #define UI_DATAPAD_CHARACTERS	 265
 #define UI_LIGHTEDIT_SWATCH		266		// colour swatch of the light edit menu
 #define UI_LIGHTEDIT_STATS		267		// map name and counters of the light edit menu
+#define UI_LIGHTEDIT_SKY		268		// sky and sun in effect, in the light edit menu

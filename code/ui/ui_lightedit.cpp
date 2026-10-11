@@ -49,9 +49,15 @@ static const char s_menuTextHead[] = R"MENU(
   itemDef { name panel style WINDOW_STYLE_FILLED rect 318 0 322 480 backcolor 0 0 0 .72 bordercolor 1 .682 0 .6 border 1 bordersize 1 visible 1 decoration }
   itemDef { name title text "Light edit" rect 326 4 200 14 font 2 textscale .8 textaligny 0 forecolor 1 .682 0 1 visible 1 decoration }
   itemDef { name stats ownerdraw 267 rect 326 22 308 24 font 2 textscale .45 forecolor .8 .8 .8 1 visible 1 decoration }
+  itemDef { name f_page type ITEM_TYPE_MULTI text "Page:" cvar "ui_ledit_page" rect 450 4 184 12 font 2 textscale .5 textaligny 1 forecolor 1 .682 0 1 visible 1
+   cvarStrList { "Lights" "lights" "Sky and sun" "sky" "Emissive" "emissive" }
+   action { play "sound/interface/button1.wav" } }
+)MENU";
 
+// The three pages. LE_TagPage adds the page test to each item of them.
+static const char s_menuTextLights1[] = R"MENU(
   itemDef { name f_filter type ITEM_TYPE_MULTI text "Filter:" cvar "ui_ledit_filter" rect 326 50 110 12 font 2 textscale .5 textaligny 1 forecolor 1 .682 0 1 visible 1
-   cvarStrList { "All" "all" "Added" "added" "Entity" "entity" "Lgt" "lgt" "Modified" "modified" "Disabled" "disabled" "Spots" "spots" }
+   cvarStrList { "All" "all" "Added" "added" "Entity" "entity" "Lgt" "lgt" "Emissive" "emissive" "Modified" "modified" "Disabled" "disabled" "Spots" "spots" }
    action { play "sound/interface/button1.wav" } }
   itemDef { name f_search type ITEM_TYPE_EDITFIELD text "Search:" cvar "ui_ledit_search" maxchars 24 rect 440 50 194 12 font 2 textscale .5 textaligny 1 forecolor 1 .682 0 1 visible 1 }
 
@@ -77,11 +83,9 @@ static const char s_menuTextHead[] = R"MENU(
    action { play "sound/interface/button1.wav" ; uiScript "ledit_endsolo" } }
   itemDef { name b_revert type ITEM_TYPE_BUTTON style WINDOW_STYLE_FILLED rect 450 226 60 14 text "Revert" font 2 textscale .5 textalign ITEM_ALIGN_CENTER textalignx 30 textaligny 2 forecolor 1 .682 0 1 backcolor .12 .06 0 .9 border 1 bordersize 1 bordercolor 1 .682 0 .6 visible 1
    action { play "sound/interface/button1.wav" ; uiScript "ledit_revert" } }
-  itemDef { name b_close type ITEM_TYPE_BUTTON style WINDOW_STYLE_FILLED rect 574 226 60 14 text "Close" font 2 textscale .5 textalign ITEM_ALIGN_CENTER textalignx 30 textaligny 2 forecolor 1 .682 0 1 backcolor .12 .06 0 .9 border 1 bordersize 1 bordercolor 1 .682 0 .6 visible 1
-   action { play "sound/interface/button1.wav" ; uiScript "ledit_close" } }
 )MENU";
 
-static const char s_menuTextTail[] = R"MENU(
+static const char s_menuTextLights2[] = R"MENU(
   itemDef { name colour_title text "Colour" rect 326 248 100 12 font 2 textscale .6 textaligny 0 forecolor 1 1 1 1 visible 1 decoration }
   itemDef { name swatch ownerdraw 266 rect 326 262 44 44 visible 1 decoration }
   itemDef { name s_hue type ITEM_TYPE_SLIDER text "Hue" cvarfloat "ui_ledit_hue" 0 0 360 rect 376 262 200 12 font 2 textscale .5 textaligny 1 forecolor 1 .682 0 1 visible 1 }
@@ -106,6 +110,69 @@ static const char s_menuTextTail[] = R"MENU(
   itemDef { name b_applyrad type ITEM_TYPE_BUTTON style WINDOW_STYLE_FILLED rect 574 379 60 14 text "Apply" font 2 textscale .5 textalign ITEM_ALIGN_CENTER textalignx 30 textaligny 2 forecolor 1 .682 0 1 backcolor .12 .06 0 .9 border 1 bordersize 1 bordercolor 1 .682 0 .6 visible 1
    action { play "sound/interface/button1.wav" ; uiScript "ledit_applyradius" } }
 
+  itemDef { name e_name type ITEM_TYPE_EDITFIELD text "Name:" cvar "ui_ledit_name" maxchars 31 rect 326 398 200 12 font 2 textscale .5 textaligny 1 forecolor 1 .682 0 1 visible 1 }
+  itemDef { name b_applyname type ITEM_TYPE_BUTTON style WINDOW_STYLE_FILLED rect 574 397 60 14 text "Apply" font 2 textscale .5 textalign ITEM_ALIGN_CENTER textalignx 30 textaligny 2 forecolor 1 .682 0 1 backcolor .12 .06 0 .9 border 1 bordersize 1 bordercolor 1 .682 0 .6 visible 1
+   action { play "sound/interface/button1.wav" ; uiScript "ledit_applyname" } }
+  itemDef { name e_cone_ext type ITEM_TYPE_EDITFIELD text "Cone ext:" cvar "ui_ledit_cone_ext" maxchars 8 rect 326 416 150 12 font 2 textscale .5 textaligny 1 forecolor 1 .682 0 1 visible 1 }
+  itemDef { name e_cone_int type ITEM_TYPE_EDITFIELD text "int:" cvar "ui_ledit_cone_int" maxchars 8 rect 480 416 90 12 font 2 textscale .5 textaligny 1 forecolor 1 .682 0 1 visible 1 }
+  itemDef { name b_applycone type ITEM_TYPE_BUTTON style WINDOW_STYLE_FILLED rect 574 415 60 14 text "Apply" font 2 textscale .5 textalign ITEM_ALIGN_CENTER textalignx 30 textaligny 2 forecolor 1 .682 0 1 backcolor .12 .06 0 .9 border 1 bordersize 1 bordercolor 1 .682 0 .6 visible 1
+   action { play "sound/interface/button1.wav" ; uiScript "ledit_applycone" } }
+)MENU";
+
+static const char s_menuTextSky[] = R"MENU(
+  itemDef { name sky_title text "Sky and sun of the map" rect 326 50 200 12 font 2 textscale .6 textaligny 0 forecolor 1 1 1 1 visible 1 decoration }
+  itemDef { name sky_state ownerdraw 268 rect 326 66 308 24 font 2 textscale .45 forecolor .8 .8 .8 1 visible 1 decoration }
+
+  itemDef { name b_sky_global type ITEM_TYPE_BUTTON style WINDOW_STYLE_FILLED rect 326 96 74 14 text "Global" font 2 textscale .5 textalign ITEM_ALIGN_CENTER textalignx 37 textaligny 2 forecolor 1 .682 0 1 backcolor .12 .06 0 .9 border 1 bordersize 1 bordercolor 1 .682 0 .6 visible 1
+   action { play "sound/interface/button1.wav" ; uiScript "ledit_sky_global" } }
+  itemDef { name b_sky_skybox type ITEM_TYPE_BUTTON style WINDOW_STYLE_FILLED rect 402 96 74 14 text "Skybox" font 2 textscale .5 textalign ITEM_ALIGN_CENTER textalignx 37 textaligny 2 forecolor 1 .682 0 1 backcolor .12 .06 0 .9 border 1 bordersize 1 bordercolor 1 .682 0 .6 visible 1
+   action { play "sound/interface/button1.wav" ; uiScript "ledit_sky_skybox" } }
+  itemDef { name b_sky_physical type ITEM_TYPE_BUTTON style WINDOW_STYLE_FILLED rect 478 96 74 14 text "Physical" font 2 textscale .5 textalign ITEM_ALIGN_CENTER textalignx 37 textaligny 2 forecolor 1 .682 0 1 backcolor .12 .06 0 .9 border 1 bordersize 1 bordercolor 1 .682 0 .6 visible 1
+   action { play "sound/interface/button1.wav" ; uiScript "ledit_sky_physical" } }
+  itemDef { name b_sky_hybrid type ITEM_TYPE_BUTTON style WINDOW_STYLE_FILLED rect 554 96 74 14 text "Hybrid" font 2 textscale .5 textalign ITEM_ALIGN_CENTER textalignx 37 textaligny 2 forecolor 1 .682 0 1 backcolor .12 .06 0 .9 border 1 bordersize 1 bordercolor 1 .682 0 .6 visible 1
+   action { play "sound/interface/button1.wav" ; uiScript "ledit_sky_hybrid" } }
+  itemDef { name sky_note text "Global: the cvars physical_sky and sun_* apply. A sun change leaves it." rect 326 114 308 12 font 2 textscale .4 textaligny 0 forecolor .6 .6 .6 1 visible 1 decoration }
+
+  itemDef { name e_sun_az type ITEM_TYPE_EDITFIELD text "Azimuth:" cvar "ui_ledit_sun_az" maxchars 10 rect 326 138 200 12 font 2 textscale .5 textaligny 1 forecolor 1 .682 0 1 visible 1 }
+  itemDef { name e_sun_el type ITEM_TYPE_EDITFIELD text "Elevation:" cvar "ui_ledit_sun_el" maxchars 10 rect 326 156 200 12 font 2 textscale .5 textaligny 1 forecolor 1 .682 0 1 visible 1 }
+  itemDef { name e_sun_angle type ITEM_TYPE_EDITFIELD text "Angle (1-10):" cvar "ui_ledit_sun_angle" maxchars 10 rect 326 174 200 12 font 2 textscale .5 textaligny 1 forecolor 1 .682 0 1 visible 1 }
+  itemDef { name e_sun_bright type ITEM_TYPE_EDITFIELD text "Brightness:" cvar "ui_ledit_sun_bright" maxchars 10 rect 326 192 200 12 font 2 textscale .5 textaligny 1 forecolor 1 .682 0 1 visible 1 }
+  itemDef { name e_sun_color type ITEM_TYPE_EDITFIELD text "Colour r g b:" cvar "ui_ledit_sun_color" maxchars 24 rect 326 210 308 12 font 2 textscale .5 textaligny 1 forecolor 1 .682 0 1 visible 1 }
+
+  itemDef { name b_sky_load type ITEM_TYPE_BUTTON style WINDOW_STYLE_FILLED rect 326 234 90 14 text "Load from sky" font 2 textscale .5 textalign ITEM_ALIGN_CENTER textalignx 45 textaligny 2 forecolor 1 .682 0 1 backcolor .12 .06 0 .9 border 1 bordersize 1 bordercolor 1 .682 0 .6 visible 1
+   action { play "sound/interface/button1.wav" ; uiScript "ledit_sky_load" } }
+  itemDef { name b_sky_apply type ITEM_TYPE_BUTTON style WINDOW_STYLE_FILLED rect 418 234 70 14 text "Apply sun" font 2 textscale .5 textalign ITEM_ALIGN_CENTER textalignx 35 textaligny 2 forecolor 1 .682 0 1 backcolor .12 .06 0 .9 border 1 bordersize 1 bordercolor 1 .682 0 .6 visible 1
+   action { play "sound/interface/button1.wav" ; uiScript "ledit_sky_apply" } }
+  itemDef { name b_sky_here type ITEM_TYPE_BUTTON style WINDOW_STYLE_FILLED rect 490 234 70 14 text "Sun here" font 2 textscale .5 textalign ITEM_ALIGN_CENTER textalignx 35 textaligny 2 forecolor 1 .682 0 1 backcolor .12 .06 0 .9 border 1 bordersize 1 bordercolor 1 .682 0 .6 visible 1
+   action { play "sound/interface/button1.wav" ; uiScript "ledit_sky_here" } }
+  itemDef { name b_sky_reset type ITEM_TYPE_BUTTON style WINDOW_STYLE_FILLED rect 562 234 72 14 text "Reset sky" font 2 textscale .5 textalign ITEM_ALIGN_CENTER textalignx 36 textaligny 2 forecolor 1 .682 0 1 backcolor .12 .06 0 .9 border 1 bordersize 1 bordercolor 1 .682 0 .6 visible 1
+   action { play "sound/interface/button1.wav" ; uiScript "ledit_sky_reset" } }
+  itemDef { name sky_note2 text "Sun here: the sun comes from the direction of the view." rect 326 254 308 12 font 2 textscale .4 textaligny 0 forecolor .6 .6 .6 1 visible 1 decoration }
+)MENU";
+
+static const char s_menuTextEmissive[] = R"MENU(
+  itemDef { name emi_title text "Emissive shaders" rect 326 50 200 12 font 2 textscale .6 textaligny 0 forecolor 1 1 1 1 visible 1 decoration }
+  itemDef { name e_emi_search type ITEM_TYPE_EDITFIELD text "Search:" cvar "ui_ledit_emi_search" maxchars 24 rect 440 50 194 12 font 2 textscale .5 textaligny 1 forecolor 1 .682 0 1 visible 1 }
+
+  itemDef { name l_emi type ITEM_TYPE_LISTBOX style WINDOW_STYLE_FILLED rect 326 66 308 200 elementwidth 300 elementheight 11 elementtype LISTBOX_TEXT feeder 33
+   font 2 textscale .42 border 1 bordersize 1 bordercolor 1 .682 0 .6 backcolor 0 0 0 .55 forecolor .85 .85 .85 1 outlinecolor 1 .682 0 .3 visible 1
+   columns 4  0 22 22  24 34 34  60 44 44  106 190 190
+   action { play "sound/interface/button1.wav" } }
+  itemDef { name emi_cols text "index  polygons  scale  shader" rect 326 268 308 12 font 2 textscale .4 textaligny 0 forecolor .6 .6 .6 1 visible 1 decoration }
+
+  itemDef { name e_emi_scale type ITEM_TYPE_EDITFIELD text "Multiplier (0-100):" cvar "ui_ledit_emi_scale" maxchars 10 rect 326 288 240 12 font 2 textscale .5 textaligny 1 forecolor 1 .682 0 1 visible 1 }
+  itemDef { name b_emi_set type ITEM_TYPE_BUTTON style WINDOW_STYLE_FILLED rect 574 287 60 14 text "Set" font 2 textscale .5 textalign ITEM_ALIGN_CENTER textalignx 30 textaligny 2 forecolor 1 .682 0 1 backcolor .12 .06 0 .9 border 1 bordersize 1 bordercolor 1 .682 0 .6 visible 1
+   action { play "sound/interface/button1.wav" ; uiScript "ledit_emi_set" } }
+  itemDef { name b_emi_reset type ITEM_TYPE_BUTTON style WINDOW_STYLE_FILLED rect 326 308 60 14 text "Reset" font 2 textscale .5 textalign ITEM_ALIGN_CENTER textalignx 30 textaligny 2 forecolor 1 .682 0 1 backcolor .12 .06 0 .9 border 1 bordersize 1 bordercolor 1 .682 0 .6 visible 1
+   action { play "sound/interface/button1.wav" ; uiScript "ledit_emi_reset" } }
+  itemDef { name b_emi_resetall type ITEM_TYPE_BUTTON style WINDOW_STYLE_FILLED rect 388 308 70 14 text "Reset all" font 2 textscale .5 textalign ITEM_ALIGN_CENTER textalignx 35 textaligny 2 forecolor 1 .682 0 1 backcolor .12 .06 0 .9 border 1 bordersize 1 bordercolor 1 .682 0 .6 visible 1
+   action { play "sound/interface/button1.wav" ; uiScript "ledit_emi_resetall" } }
+  itemDef { name emi_note text "The multiplier scales the light and the glow of the surface. A click on a shader selects it in the game: its dots get a yellow frame (ledit_show 2)." rect 326 332 308 24 font 2 textscale .4 textaligny 0 forecolor .6 .6 .6 1 visible 1 decoration autowrapped }
+)MENU";
+
+static const char s_menuTextClose[] = R"MENU(
+  itemDef { name b_close type ITEM_TYPE_BUTTON style WINDOW_STYLE_FILLED rect 574 440 60 14 text "Close" font 2 textscale .5 textalign ITEM_ALIGN_CENTER textalignx 30 textaligny 2 forecolor 1 .682 0 1 backcolor .12 .06 0 .9 border 1 bordersize 1 bordercolor 1 .682 0 .6 visible 1
+   action { play "sound/interface/button1.wav" ; uiScript "ledit_close" } }
   itemDef { name hint text "Esc closes the menu. Every change can be undone with Ctrl+Z." rect 326 460 308 12 font 2 textscale .4 textaligny 0 forecolor .6 .6 .6 1 visible 1 decoration }
  }
 }
@@ -120,6 +187,17 @@ static int				s_rowsCount;
 static char				s_rowsFilter[LE_FILTER_LEN];
 static char				s_rowsSearch[LE_SEARCH_LEN];
 static qboolean			s_warned;					// "no API" message printed since the menu opened
+
+static std::vector<int>	s_emiRows;					// indices of the emissive shaders that pass the search
+static qboolean			s_emiRowsValid;
+static int				s_emiRowsGeneration;
+static int				s_emiRowsCount;
+static char				s_emiRowsSearch[LE_SEARCH_LEN];
+
+static int				s_seenSel = -2;				// last values of ledit_sel and ledit_emi_sel that the menu followed
+static int				s_seenEmi = -2;
+static rtxSkyDesc_t		s_seenSky;					// last sky that the fields were loaded from
+static qboolean			s_seenSkyValid;
 
 /*
 =================
@@ -194,6 +272,18 @@ static void LE_EnsureCvars( void )
 	ui.Cvar_Create( "ui_ledit_temp", "6500", 0 );
 	ui.Cvar_Create( "ui_ledit_intensity", "0", 0 );
 	ui.Cvar_Create( "ui_ledit_radius", "0", 0 );
+	ui.Cvar_Create( "ui_ledit_page", "lights", 0 );
+	ui.Cvar_Create( "ui_ledit_name", "", 0 );
+	ui.Cvar_Create( "ui_ledit_cone_ext", "35", 0 );
+	ui.Cvar_Create( "ui_ledit_cone_int", "25", 0 );
+	ui.Cvar_Create( "ui_ledit_sun_az", "0", 0 );
+	ui.Cvar_Create( "ui_ledit_sun_el", "30", 0 );
+	ui.Cvar_Create( "ui_ledit_sun_angle", "4", 0 );
+	ui.Cvar_Create( "ui_ledit_sun_bright", "1", 0 );
+	ui.Cvar_Create( "ui_ledit_sun_color", "1 1 1", 0 );
+	ui.Cvar_Create( "ui_ledit_emi_search", "", 0 );
+	ui.Cvar_Create( "ui_ledit_emi_row", "-1", 0 );
+	ui.Cvar_Create( "ui_ledit_emi_scale", "1", 0 );
 }
 
 /*
@@ -234,6 +324,20 @@ static void LE_ParseBuffer( const char *text, const char *name )
 	COM_EndParseSession();
 }
 
+// Shows the items of a page only while ui_ledit_page has that value: each "visible 1" gets the test.
+static std::string LE_TagPage( const char *items, const char *page )
+{
+	static const char	key[] = "visible 1";
+	const std::string	tag = std::string( key ) + " cvarTest \"ui_ledit_page\" showCvar { \"" + page + "\" }";
+	std::string			text( items );
+
+	for ( size_t pos = text.find( key ); pos != std::string::npos; pos = text.find( key, pos + tag.size() ) )
+	{
+		text.replace( pos, sizeof( key ) - 1, tag );
+	}
+	return text;
+}
+
 /*
 =================
 LE_LoadMenu
@@ -267,7 +371,11 @@ static qboolean LE_LoadMenu( void )
 	{
 		std::string text( s_menuTextHead );
 
-		text += s_menuTextTail;
+		text += LE_TagPage( s_menuTextLights1, "lights" );
+		text += LE_TagPage( s_menuTextLights2, "lights" );
+		text += LE_TagPage( s_menuTextSky, "sky" );
+		text += LE_TagPage( s_menuTextEmissive, "emissive" );
+		text += s_menuTextClose;
 		LE_ParseBuffer( text.c_str(), "lightedit (built in)" );
 	}
 
@@ -313,6 +421,9 @@ qboolean UI_LightEdit_ConsoleCommand( void )
 
 	s_warned = qfalse;
 	s_rowsValid = qfalse;
+	s_emiRowsValid = qfalse;
+	s_seenSel = s_seenEmi = -2;
+	s_seenSkyValid = qfalse;
 	LE_ApiOrWarn();
 
 	Menus_CloseByName( "mainhud" );
@@ -331,7 +442,21 @@ Tests one light against the filter and the lower-case search text.
 */
 static qboolean LE_RowPasses( const rtxLightDesc_t *d, const char *filter, const char *search )
 {
-	if ( d->flags & RTX_LFLAG_DELETED )
+	// A deleted light is gone. A compacted light shows in the filter "disabled" only, to restore it.
+	if ( ( d->flags & RTX_LFLAG_DELETED ) && !( d->flags & RTX_LFLAG_COMPACTED ) )
+	{
+		return qfalse;
+	}
+	if ( ( d->flags & RTX_LFLAG_COMPACTED ) && Q_stricmp( filter, "disabled" ) )
+	{
+		return qfalse;
+	}
+	// The emissive surfaces are many: they show in the filters emissive, modified and disabled only.
+	if ( d->source == RTX_LSRC_EMISSIVE && Q_stricmp( filter, "emissive" ) && Q_stricmp( filter, "modified" ) && Q_stricmp( filter, "disabled" ) )
+	{
+		return qfalse;
+	}
+	if ( !Q_stricmp( filter, "emissive" ) && d->source != RTX_LSRC_EMISSIVE )
 	{
 		return qfalse;
 	}
@@ -351,7 +476,7 @@ static qboolean LE_RowPasses( const rtxLightDesc_t *d, const char *filter, const
 	{
 		return qfalse;
 	}
-	if ( !Q_stricmp( filter, "disabled" ) && !( d->flags & RTX_LFLAG_DISABLED ) )
+	if ( !Q_stricmp( filter, "disabled" ) && !( d->flags & ( RTX_LFLAG_DISABLED | RTX_LFLAG_COMPACTED ) ) )
 	{
 		return qfalse;
 	}
@@ -433,7 +558,7 @@ int UI_LightEdit_FeederCount( void )
 =================
 UI_LightEdit_FeederItemText
 
-Columns: id, source, type, intensity, flags (M modified, D disabled, S in solid, m muted), name.
+Columns: id, source, type, intensity, flags (M modified, D disabled, C compacted, S in solid, m muted), name.
 =================
 */
 const char *UI_LightEdit_FeederItemText( int index, int column )
@@ -464,7 +589,7 @@ const char *UI_LightEdit_FeederItemText( int index, int column )
 		}
 		else
 		{
-			Com_sprintf( out, 64, "%s %d", d.source == RTX_LSRC_ENTITY ? "ent" : "lgt", d.sourceKey );
+			Com_sprintf( out, 64, "%s %d", d.source == RTX_LSRC_ENTITY ? "ent" : d.source == RTX_LSRC_EMISSIVE ? "emi" : "lgt", d.sourceKey );
 		}
 		break;
 	case 2:
@@ -474,7 +599,7 @@ const char *UI_LightEdit_FeederItemText( int index, int column )
 		}
 		else
 		{
-			Com_sprintf( out, 64, "%s", d.type == RTX_LTYPE_SPOT ? "spot" : "sphere" );
+			Com_sprintf( out, 64, "%s", d.type == RTX_LTYPE_SPOT ? "spot" : d.type == RTX_LTYPE_SURFACE ? "surface" : "sphere" );
 		}
 		if ( d.style )
 		{
@@ -485,8 +610,9 @@ const char *UI_LightEdit_FeederItemText( int index, int column )
 		Com_sprintf( out, 64, "%.5g", d.intensity );
 		break;
 	case 4:
-		Com_sprintf( out, 64, "%s%s%s%s", ( d.flags & RTX_LFLAG_MODIFIED ) ? "M" : "", ( d.flags & RTX_LFLAG_DISABLED ) ? "D" : "",
-			( d.flags & RTX_LFLAG_IN_SOLID ) ? "S" : "", ( d.flags & RTX_LFLAG_MUTED ) ? "m" : "" );
+		Com_sprintf( out, 64, "%s%s%s%s%s", ( d.flags & RTX_LFLAG_MODIFIED ) ? "M" : "", ( d.flags & RTX_LFLAG_DISABLED ) ? "D" : "",
+			( d.flags & RTX_LFLAG_COMPACTED ) ? "C" : "", ( d.flags & RTX_LFLAG_IN_SOLID ) ? "S" : "",
+			( d.flags & RTX_LFLAG_MUTED ) ? "m" : "" );
 		break;
 	case 5:
 		Com_sprintf( out, 64, "%s", d.name );
@@ -515,6 +641,126 @@ void UI_LightEdit_FeederSelection( int index )
 	}
 	ui.Cvar_Set( "ui_ledit_row", va( "%d", rows[index] ) );
 	LE_Exec( "ledit_select %d", rows[index] );
+}
+
+/*
+=================
+Emissive shaders (page "emissive", feeder FEEDER_LIGHTEDIT_EMI)
+
+The rows are the shader indices of the API that pass the search text.
+=================
+*/
+static qboolean LE_EmiApi( const rtxLightEditAPI_t *api )
+{
+	return (qboolean)( api && api->CountEmissiveShaders && api->GetEmissiveShader );
+}
+
+static const std::vector<int> &LE_EmiRows( const rtxLightEditAPI_t *api )
+{
+	char search[LE_SEARCH_LEN];
+
+	if ( !LE_EmiApi( api ) )
+	{
+		s_emiRows.clear();
+		s_emiRowsValid = qfalse;
+		return s_emiRows;
+	}
+
+	LE_CvarString( "ui_ledit_emi_search", search, sizeof( search ) );
+	Q_strlwr( search );
+
+	const int count = api->CountEmissiveShaders();
+	const int generation = api->Generation();
+
+	if ( s_emiRowsValid && count == s_emiRowsCount && generation == s_emiRowsGeneration
+		&& !strcmp( search, s_emiRowsSearch ) )
+	{
+		return s_emiRows;
+	}
+
+	s_emiRows.clear();
+	for ( int i = 0; i < count; i++ )
+	{
+		char name[96];
+
+		if ( !api->GetEmissiveShader( i, name, sizeof( name ), NULL, NULL ) )
+		{
+			continue;
+		}
+		Q_strlwr( name );
+		if ( !search[0] || strstr( name, search ) )
+		{
+			s_emiRows.push_back( i );
+		}
+	}
+
+	s_emiRowsValid = qtrue;
+	s_emiRowsCount = count;
+	s_emiRowsGeneration = generation;
+	Q_strncpyz( s_emiRowsSearch, search, sizeof( s_emiRowsSearch ) );
+	return s_emiRows;
+}
+
+int UI_LightEdit_EmiFeederCount( void )
+{
+	return (int)LE_EmiRows( LE_Api() ).size();
+}
+
+// Columns: shader index, polygons, scale (a "*" when it is not 1), name.
+const char *UI_LightEdit_EmiFeederItemText( int index, int column )
+{
+	static char	buffers[8][96];
+	static int	next;
+	char		name[96];
+	float		scale = 1.0f;
+	int			polys = 0;
+
+	const rtxLightEditAPI_t *api = LE_Api();
+	const std::vector<int> &rows = LE_EmiRows( api );
+
+	if ( !LE_EmiApi( api ) || index < 0 || index >= (int)rows.size()
+		|| !api->GetEmissiveShader( rows[index], name, sizeof( name ), &scale, &polys ) )
+	{
+		return "";
+	}
+
+	char *out = buffers[next++ & 7];
+
+	switch ( column )
+	{
+	case 0:
+		Com_sprintf( out, 96, "%d", rows[index] );
+		break;
+	case 1:
+		Com_sprintf( out, 96, "%d", polys );
+		break;
+	case 2:
+		Com_sprintf( out, 96, "%g%s", scale, scale != 1.0f ? " *" : "" );
+		break;
+	case 3:
+		Q_strncpyz( out, name, 96 );
+		break;
+	default:
+		return "";
+	}
+	return out;
+}
+
+// A click on a row stores the shader in ui_ledit_emi_row, loads its scale and selects it in the cgame.
+void UI_LightEdit_EmiFeederSelection( int index )
+{
+	const rtxLightEditAPI_t *api = LE_Api();
+	const std::vector<int> &rows = LE_EmiRows( api );
+	float scale = 1.0f;
+
+	if ( !LE_EmiApi( api ) || index < 0 || index >= (int)rows.size() )
+	{
+		return;
+	}
+	api->GetEmissiveShader( rows[index], NULL, 0, &scale, NULL );
+	ui.Cvar_Set( "ui_ledit_emi_row", va( "%d", rows[index] ) );
+	LE_CvarFloat( "ui_ledit_emi_scale", scale );
+	LE_Exec( "ledit_emissive_select %d", rows[index] );
 }
 
 /*
@@ -619,6 +865,125 @@ void UI_LightEdit_DrawSwatch( float x, float y, float w, float h )
 	DC->drawRect( x, y, w, h, 1.0f, border );
 }
 
+// Fills the fields of the lights page from a light.
+static void LE_LoadFields( const rtxLightDesc_t *d )
+{
+	float h, s, v;
+
+	LE_RgbToHsv( d->color, &h, &s, &v );
+	LE_CvarFloat( "ui_ledit_hue", h );
+	LE_CvarFloat( "ui_ledit_sat", s );
+	LE_CvarFloat( "ui_ledit_val", v );
+	LE_CvarFloat( "ui_ledit_intensity", d->intensity );
+	LE_CvarFloat( "ui_ledit_radius", d->radius );
+	ui.Cvar_Set( "ui_ledit_name", d->name );
+	if ( d->type == RTX_LTYPE_SPOT )
+	{
+		LE_CvarFloat( "ui_ledit_cone_ext", d->coneOuter );
+		LE_CvarFloat( "ui_ledit_cone_int", d->coneInner );
+	}
+}
+
+// Fills the fields of the sky page from the sky in effect.
+static void LE_LoadSky( const rtxSkyDesc_t *s )
+{
+	LE_CvarFloat( "ui_ledit_sun_az", s->sunAzimuth );
+	LE_CvarFloat( "ui_ledit_sun_el", s->sunElevation );
+	LE_CvarFloat( "ui_ledit_sun_angle", s->sunAngle );
+	LE_CvarFloat( "ui_ledit_sun_bright", s->sunBrightness );
+	ui.Cvar_Set( "ui_ledit_sun_color", va( "%g %g %g", s->sunColor[0], s->sunColor[1], s->sunColor[2] ) );
+}
+
+// Chooses a row of a list box of the menu and scrolls it into view. An index of -1 chooses none.
+static void LE_ShowRow( const char *itemName, int index )
+{
+	menuDef_t *menu = Menus_FindByName( LE_MENU_NAME );
+	itemDef_t *item = menu ? Menu_FindItemByName( menu, itemName ) : NULL;
+	listBoxDef_t *list = item ? (listBoxDef_t *)item->typeData : NULL;
+
+	if ( !list )
+	{
+		return;
+	}
+	item->cursorPos = index;
+	if ( index >= 0 && list->elementHeight > 0.0f )
+	{
+		const int visible = Q_max( 1, (int)( item->window.rect.h / list->elementHeight ) - 1 );
+
+		if ( index < list->startPos || index >= list->startPos + visible )
+		{
+			list->startPos = Q_max( 0, index - visible / 2 );
+		}
+	}
+}
+
+static int LE_RowOf( const std::vector<int> &rows, int value )
+{
+	for ( size_t i = 0; i < rows.size(); i++ )
+	{
+		if ( rows[i] == value )
+		{
+			return (int)i;
+		}
+	}
+	return -1;
+}
+
+/*
+=================
+LE_FollowGame
+
+Called every frame while the menu draws. A selection that the game made (ledit_sel, ledit_emi_sel) becomes
+the chosen row of its list and fills the fields. A change of the sky (command, undo) fills the sky fields.
+=================
+*/
+static void LE_FollowGame( const rtxLightEditAPI_t *api )
+{
+	char text[16];
+
+	LE_CvarString( "ledit_sel", text, sizeof( text ) );
+	if ( text[0] && atoi( text ) != s_seenSel )
+	{
+		rtxLightDesc_t d;
+
+		s_seenSel = atoi( text );
+		if ( s_seenSel >= 0 && api->Get( s_seenSel, &d ) && !( d.flags & RTX_LFLAG_DELETED ) )
+		{
+			ui.Cvar_Set( "ui_ledit_row", va( "%d", s_seenSel ) );
+			LE_LoadFields( &d );
+			LE_ShowRow( "l_lights", LE_RowOf( LE_Rows( api ), s_seenSel ) );
+		}
+	}
+
+	LE_CvarString( "ledit_emi_sel", text, sizeof( text ) );
+	if ( text[0] && atoi( text ) != s_seenEmi )
+	{
+		float scale = 1.0f;
+
+		s_seenEmi = atoi( text );
+		if ( s_seenEmi >= 0 && LE_EmiApi( api ) && api->GetEmissiveShader( s_seenEmi, NULL, 0, &scale, NULL ) )
+		{
+			ui.Cvar_Set( "ui_ledit_emi_row", va( "%d", s_seenEmi ) );
+			LE_CvarFloat( "ui_ledit_emi_scale", scale );
+			LE_ShowRow( "l_emi", LE_RowOf( LE_EmiRows( api ), s_seenEmi ) );
+		}
+	}
+
+	rtxSkyDesc_t sky;
+
+	memset( &sky, 0, sizeof( sky ) );
+	if ( api->GetSky && api->GetSky( &sky ) )
+	{
+		sky.flags = 0;
+		if ( !s_seenSkyValid || memcmp( &sky, &s_seenSky, sizeof( sky ) ) )
+		{
+			s_seenSky = sky;
+			s_seenSkyValid = qtrue;
+			LE_LoadSky( &sky );
+		}
+	}
+}
+
 void UI_LightEdit_DrawStats( float x, float y, float scale, const vec4_t color, int fontIndex )
 {
 	rtxLightStats_t			st;
@@ -631,15 +996,39 @@ void UI_LightEdit_DrawStats( float x, float y, float scale, const vec4_t color, 
 		return;
 	}
 
+	LE_FollowGame( api );
 	memset( &st, 0, sizeof( st ) );
 	api->GetStats( &st );
 
-	Com_sprintf( line, sizeof( line ), "Map %s    lights %d    emissive %d%s", st.mapName, st.numRecords, st.numEmissive,
-		st.unsavedChanges ? "    * unsaved" : "" );
+	Com_sprintf( line, sizeof( line ), "Map %s    lights %d    emissive surfaces %d%s", st.mapName, st.numRecords - st.numEmissive,
+		st.numEmissive, st.unsavedChanges ? "    * unsaved" : "" );
 	DC->drawText( x, y, scale, (float *)color, line, 0, ITEM_TEXTSTYLE_SHADOWED, fontIndex );
 
-	Com_sprintf( line, sizeof( line ), "entity %d  lgt %d  added %d  modified %d  disabled %d  in solid %d",
-		st.numEntity, st.numLgt, st.numAdded, st.numModified, st.numDisabled, st.numInSolid );
+	Com_sprintf( line, sizeof( line ), "entity %d lgt %d added %d modified %d disabled %d compacted %d slots %d/%d",
+		st.numEntity, st.numLgt, st.numAdded, st.numModified, st.numDisabled, st.numCompacted, st.slotsUsed, st.maxLightPolys );
+	DC->drawText( x, y + 11.0f, scale, (float *)color, line, 0, ITEM_TEXTSTYLE_SHADOWED, fontIndex );
+}
+
+// Two lines on the sky page: the mode in effect, then the sun.
+void UI_LightEdit_DrawSky( float x, float y, float scale, const vec4_t color, int fontIndex )
+{
+	static const char *const modes[] = { "global", "skybox", "physical", "hybrid" };
+	const rtxLightEditAPI_t *api = LE_Api();
+	rtxSkyDesc_t sky;
+	char line[160];
+
+	memset( &sky, 0, sizeof( sky ) );
+	if ( !api || !api->GetSky || !api->GetSky( &sky ) )
+	{
+		DC->drawText( x, y, scale, (float *)color, "no sky data (RTX path off or no world)", 0, ITEM_TEXTSTYLE_SHADOWED, fontIndex );
+		return;
+	}
+
+	Com_sprintf( line, sizeof( line ), "sky: %s%s", modes[Com_Clampi( 0, RTX_SKY_HYBRID, sky.mode )], sky.mode == RTX_SKY_GLOBAL ? "" : " (map)" );
+	DC->drawText( x, y, scale, (float *)color, line, 0, ITEM_TEXTSTYLE_SHADOWED, fontIndex );
+
+	Com_sprintf( line, sizeof( line ), "sun az %.1f el %.1f  colour %.2f %.2f %.2f  x%g  angle %.1f", sky.sunAzimuth, sky.sunElevation,
+		sky.sunColor[0], sky.sunColor[1], sky.sunColor[2], sky.sunBrightness, sky.sunAngle );
 	DC->drawText( x, y + 11.0f, scale, (float *)color, line, 0, ITEM_TEXTSTYLE_SHADOWED, fontIndex );
 }
 
@@ -660,7 +1049,8 @@ static qboolean LE_CurrentLight( const rtxLightEditAPI_t *api, rtxLightDesc_t *d
 
 	const int id = (int)ui.Cvar_VariableValue( "ui_ledit_row" );
 
-	if ( id < 0 || id >= api->Count() || !api->Get( id, d ) || ( d->flags & RTX_LFLAG_DELETED ) )
+	if ( id < 0 || id >= api->Count() || !api->Get( id, d )
+		|| ( ( d->flags & RTX_LFLAG_DELETED ) && !( d->flags & RTX_LFLAG_COMPACTED ) ) )
 	{
 		Com_Printf( "light edit: choose a light in the list first\n" );
 		return qfalse;
@@ -681,6 +1071,107 @@ static qboolean LE_ParseNumber( const char *cvarName, float *out )
 		return qfalse;
 	}
 	return qtrue;
+}
+
+// Sends the sun fields as the commands that differ from the sky in effect.
+static void LE_ApplySun( const rtxLightEditAPI_t *api )
+{
+	rtxSkyDesc_t	cur;
+	float			az, el, angle, bright, col[3];
+	char			text[64];
+
+	memset( &cur, 0, sizeof( cur ) );
+	if ( !api->GetSky || !api->GetSky( &cur ) || !LE_ParseNumber( "ui_ledit_sun_az", &az ) || !LE_ParseNumber( "ui_ledit_sun_el", &el )
+		|| !LE_ParseNumber( "ui_ledit_sun_angle", &angle ) || !LE_ParseNumber( "ui_ledit_sun_bright", &bright ) )
+	{
+		return;
+	}
+	LE_CvarString( "ui_ledit_sun_color", text, sizeof( text ) );
+	if ( sscanf( text, "%f %f %f", &col[0], &col[1], &col[2] ) != 3 )
+	{
+		Com_Printf( "light edit: ui_ledit_sun_color needs three numbers\n" );
+		return;
+	}
+
+	if ( fabsf( az - cur.sunAzimuth ) > 0.05f || fabsf( el - cur.sunElevation ) > 0.05f )
+	{
+		LE_Exec( "ledit_sun %g %g", az, el );
+	}
+	if ( fabsf( col[0] - cur.sunColor[0] ) > 0.001f || fabsf( col[1] - cur.sunColor[1] ) > 0.001f || fabsf( col[2] - cur.sunColor[2] ) > 0.001f )
+	{
+		LE_Exec( "ledit_sun_color %g %g %g", col[0], col[1], col[2] );
+	}
+	if ( fabsf( bright - cur.sunBrightness ) > 0.001f )
+	{
+		LE_Exec( "ledit_sun_brightness %g", bright );
+	}
+	if ( fabsf( angle - cur.sunAngle ) > 0.01f )
+	{
+		LE_Exec( "ledit_sun_angle %g", angle );
+	}
+}
+
+// The uiScript names "sky_*" of the sky page.
+static void LE_RunSkyScript( const rtxLightEditAPI_t *api, const char *name )
+{
+	rtxSkyDesc_t	sky;
+
+	if ( !Q_stricmp( name, "global" ) || !Q_stricmp( name, "skybox" ) || !Q_stricmp( name, "physical" ) || !Q_stricmp( name, "hybrid" ) )
+	{
+		LE_Exec( "ledit_sky %s", name );
+	}
+	else if ( !Q_stricmp( name, "load" ) )
+	{
+		memset( &sky, 0, sizeof( sky ) );
+		if ( api->GetSky && api->GetSky( &sky ) )
+		{
+			LE_LoadSky( &sky );
+		}
+	}
+	else if ( !Q_stricmp( name, "apply" ) )
+	{
+		LE_ApplySun( api );
+	}
+	else if ( !Q_stricmp( name, "here" ) )
+	{
+		LE_Exec( "ledit_sun_here" );
+	}
+	else if ( !Q_stricmp( name, "reset" ) )
+	{
+		LE_Exec( "ledit_sky_reset" );
+	}
+}
+
+// The uiScript names "emi_*" of the emissive page; they act on the shader in ui_ledit_emi_row.
+static void LE_RunEmiScript( const rtxLightEditAPI_t *api, const char *name )
+{
+	float	v;
+
+	if ( !Q_stricmp( name, "resetall" ) )
+	{
+		LE_Exec( "ledit_emissive_reset all" );
+		LE_CvarFloat( "ui_ledit_emi_scale", 1.0f );
+		return;
+	}
+
+	const int shader = (int)ui.Cvar_VariableValue( "ui_ledit_emi_row" );
+
+	if ( !LE_EmiApi( api ) || shader < 0 || shader >= api->CountEmissiveShaders() )
+	{
+		Com_Printf( "light edit: choose an emissive shader in the list first\n" );
+	}
+	else if ( !Q_stricmp( name, "set" ) )
+	{
+		if ( LE_ParseNumber( "ui_ledit_emi_scale", &v ) )
+		{
+			LE_Exec( "ledit_emissive %d %g", shader, v );
+		}
+	}
+	else if ( !Q_stricmp( name, "reset" ) )
+	{
+		LE_Exec( "ledit_emissive_reset %d", shader );
+		LE_CvarFloat( "ui_ledit_emi_scale", 1.0f );
+	}
 }
 
 /*
@@ -717,13 +1208,25 @@ qboolean UI_LightEdit_RunScript( const char *name )
 		return qtrue;
 	}
 
-	if ( !Q_stricmp( name, "endsolo" ) )
+	if ( !Q_stricmpn( name, "sky_", 4 ) )
+	{
+		LE_RunSkyScript( api, name + 4 );
+	}
+	else if ( !Q_stricmpn( name, "emi_", 4 ) )
+	{
+		LE_RunEmiScript( api, name + 4 );
+	}
+	else if ( !Q_stricmp( name, "endsolo" ) )
 	{
 		LE_Exec( "pt_ledit_solo -1" );
 	}
 	else if ( !LE_CurrentLight( api, &d ) )
 	{
 		return qtrue;
+	}
+	else if ( ( d.flags & RTX_LFLAG_COMPACTED ) && Q_stricmp( name, "restore" ) )
+	{
+		Com_Printf( "light edit: light %d is compacted, restore it first\n", d.id );
 	}
 	else if ( !Q_stricmp( name, "select" ) )
 	{
@@ -755,14 +1258,7 @@ qboolean UI_LightEdit_RunScript( const char *name )
 	}
 	else if ( !Q_stricmp( name, "load" ) )
 	{
-		float h, s, val;
-
-		LE_RgbToHsv( d.color, &h, &s, &val );
-		LE_CvarFloat( "ui_ledit_hue", h );
-		LE_CvarFloat( "ui_ledit_sat", s );
-		LE_CvarFloat( "ui_ledit_val", val );
-		LE_CvarFloat( "ui_ledit_intensity", d.intensity );
-		LE_CvarFloat( "ui_ledit_radius", d.radius );
+		LE_LoadFields( &d );
 	}
 	else if ( !Q_stricmp( name, "applycolor" ) )
 	{
@@ -796,6 +1292,34 @@ qboolean UI_LightEdit_RunScript( const char *name )
 		if ( LE_ParseNumber( "ui_ledit_radius", &v ) )
 		{
 			LE_Exec( "ledit_select %d; ledit_set radius %g", d.id, v );
+		}
+	}
+	else if ( !Q_stricmp( name, "applyname" ) )
+	{
+		char	text[RTX_LIGHTEDIT_NAME_LEN];
+
+		LE_CvarString( "ui_ledit_name", text, sizeof( text ) );
+		// A quote, a semicolon or a backslash would end the command text early.
+		for ( char *c = text; *c; c++ )
+		{
+			if ( *c == '"' || *c == ';' || *c == '\\' || *c == '\n' )
+			{
+				*c = '_';
+			}
+		}
+		LE_Exec( "ledit_select %d; ledit_set name \"%s\"", d.id, text );
+	}
+	else if ( !Q_stricmp( name, "applycone" ) )
+	{
+		float	inner;
+
+		if ( d.type != RTX_LTYPE_SPOT )
+		{
+			Com_Printf( "light edit: light %d is not a spot\n", d.id );
+		}
+		else if ( LE_ParseNumber( "ui_ledit_cone_ext", &v ) && LE_ParseNumber( "ui_ledit_cone_int", &inner ) )
+		{
+			LE_Exec( "ledit_select %d; ledit_set cone %g %g", d.id, v, inner );
 		}
 	}
 	else
