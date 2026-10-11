@@ -153,6 +153,9 @@ typedef enum {
 } ledProp_t;
 
 void		LE_PropsInit( void );
+qboolean	LE_PropAdjust( rtxLightDesc_t *d, int prop, int wheel, qboolean fine );	// wheel step on a description
+int			LE_CreateType( void );								// type that tool 2 makes
+void		LE_CreateKeyShift( qboolean shift );				// key filter: shift state of the last key down
 void		LE_PropCycle( int dir );							// invnext / invprev; skips the properties that do not apply to the primary light
 qboolean	LE_PropApplies( int prop, int type );				// qfalse when the property has no meaning for the light type
 int			LE_PropActive( void );
@@ -179,6 +182,7 @@ void		LE_DrawRectWires( void );							// selected rects, and the aimed one for t
 // Tool 6 (cg_lightedit_pipette.cpp).
 void		LE_PipetteInit( void );
 qboolean	LE_PipettePreset( rtxLightDesc_t *d );				// clipboard as a preset for tool 2; qfalse when empty
+void		LE_PipettePresetSet( const rtxLightDesc_t *d );		// edited preset back into the clipboard
 void		LE_ToolPipette( qboolean priDown, qboolean secDown, int wheel );
 void		LE_PipetteHelp( const char **name, const char **fire, const char **alt, char *wheelBuf, int wheelSize );
 

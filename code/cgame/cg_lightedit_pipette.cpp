@@ -50,6 +50,21 @@ qboolean LE_PipettePreset( rtxLightDesc_t *d )
 	return qtrue;
 }
 
+// Shift + wheel in tool 2 edits the preset: with a clipboard, the clipboard is the preset.
+void LE_PipettePresetSet( const rtxLightDesc_t *d )
+{
+	VectorCopy( d->color, s_clip.color );
+	s_clip.intensity = d->intensity;
+	s_clip.radius = d->radius;
+	s_clip.coneOuter = d->coneOuter;
+	s_clip.coneInner = d->coneInner;
+	s_clip.width = d->width;
+	s_clip.height = d->height;
+	s_clip.roll = d->roll;
+	s_clip.twoSided = d->twoSided;
+	s_clip.style = d->style;
+}
+
 static void LE_PipetteCopy( void )
 {
 	rtxLightDesc_t	src;

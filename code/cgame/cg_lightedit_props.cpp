@@ -66,11 +66,13 @@ qboolean LE_PropApplies( int prop, int type )
 void LE_PropCycle( int dir )
 {
 	const rtxLightDesc_t	*d = LE_RecDesc( s_sel >= 0 ? s_sel : s_pickId );
+	// Tool 2 edits the preset of the type it makes, not the selection.
+	const int				type = ( s_tool == LEDIT_TOOL_CREATE ) ? LE_CreateType() : ( d ? d->type : -1 );
 
 	for ( int i = 0; i < LEP_NUM; i++ )
 	{
 		s_prop = ( s_prop + ( dir > 0 ? 1 : LEP_NUM - 1 ) ) % LEP_NUM;
-		if ( !d || LE_PropApplies( s_prop, d->type ) )
+		if ( type < 0 || LE_PropApplies( s_prop, type ) )
 		{
 			break;
 		}
@@ -196,7 +198,7 @@ Property operations
 =================
 */
 // Wheel step on one light. Returns qfalse when the property does not apply to it.
-static qboolean LE_PropAdjust( rtxLightDesc_t *d, int prop, int wheel, qboolean fine )
+qboolean LE_PropAdjust( rtxLightDesc_t *d, int prop, int wheel, qboolean fine )
 {
 	const float	n = (float)wheel;
 	float		h, s, v;

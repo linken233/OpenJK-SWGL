@@ -107,6 +107,7 @@ Ctrl est souvent lié à l'accroupissement : un raccourci Ctrl fait descendre un
 - **Alt** : change le type des nouvelles lumières, sphère → spot → rectangle → sphère. Un spot posé à plus de `ledit_spot_near` unités de la surface vise l'opposé de la normale (dans la surface) ; plus près, il vise le long de la normale (loin de la surface : sous un plafond, il éclaire la pièce). Le fantôme montre cette direction. Cônes 35° / 25°, ou ceux du presse-papier.
 - **Rectangle** : un rectangle posé prend la normale de la surface (il éclaire à l'opposé de la surface), ou `0 0 -1` sans impact. Sa taille vient du presse-papier de la pipette, sinon 32 × 32. Le fantôme est un rectangle filaire avec la flèche de la normale.
 - **Molette** : décalage par rapport à la surface, ×2 ou ÷2 (±1 avec la marche), de 2 à 256 unités.
+- **Maj + molette** : règle la propriété active de la lumière que l'outil va poser, avec les mêmes pas que l'outil 5. `]` / `[` choisit la propriété (le cycle saute celles qui ne s'appliquent pas au type posé). Le pas est toujours le pas normal, car Maj sert souvent de touche de marche. Le réglage est conservé pour les poses suivantes : il vit dans les cvars `ledit_preset_*` (archivées), ou dans le presse-papier de la pipette quand il contient une lumière. L'aide en haut à gauche montre la propriété et sa valeur. `ledit_preset_step <n>` fait la même chose en commande, pour un bind sans Maj.
 - La distance prise en compte est celle du fantôme au plan de la surface, après l'accrochage à la grille. Sans impact, la direction reste `0 0 -1`.
 - Sans impact (ciel), le fantôme est à 256 unités devant la caméra. Dans un solide, il est rouge et la pose est refusée. Un solo actif (outil 9) est terminé avant la pose.
 
@@ -265,6 +266,7 @@ Toutes, sauf `lightedit`, demandent le mode actif.
 | `ledit_select <id> [add]` / `ledit_select none` | Sélectionne une lumière par son id (ou l'ajoute à la sélection), ou vide la sélection. |
 | `ledit_compact` | Libère les slots de toutes les lumières et surfaces émissives supprimées et tasse les slots utilisés (§ 8 quinquies). Affiche le nombre de lumières (surfaces comprises) et de slots libérés, et les slots utilisés / limite. |
 | `ledit_restore [0\|1]` | Bascule le mode restauration, ou le règle avec 0 ou 1 : les lumières compactées s'affichent et l'outil 8 (Alt) peut les restaurer. |
+| `ledit_preset_step <n>` | Outil 2 : n crans de la propriété active du préréglage (comme Maj + molette ; n de -8 à 8). |
 | `ledit_goto` | Place la caméra devant la sélection, tournée vers elle, hors des murs (aussi : Utiliser). |
 | `ledit_menu` | Ouvre le menu light edit (aussi : Ctrl+M). |
 | `ledit_writebinds [force]` | Écrit `lightedit_binds.cfg` dans le homepath (refuse d'écraser un fichier existant sans `force`), puis indique `exec lightedit_binds.cfg`. |
@@ -306,6 +308,9 @@ Déplacer ou tourner un rectangle reconstruit les listes de lumières par cluste
 | `ledit_spot_near` | 64 | Distance (unités) sous laquelle un spot créé près d'une surface vise loin d'elle (le long de la normale). 0 : toujours dans la surface. Non archivé. |
 | `ledit_cam_speed` | 500 | Vitesse de la caméra libre (unités par seconde, déplacement plein). Marche (maintenue) la divise par deux. |
 | `ledit_preset_color` | `1 0.9 0.8` | Couleur d'une lumière créée. |
+| `ledit_preset_cone_outer`, `ledit_preset_cone_inner` | 35, 25 | Cônes d'un spot créé (degrés). |
+| `ledit_preset_width`, `ledit_preset_height`, `ledit_preset_roll`, `ledit_preset_twosided` | 32, 32, 0, 0 | Taille, roulis et deux faces d'un rectangle créé. |
+| `ledit_preset_style` | 0 | Style d'une lumière créée. |
 | `pt_light_scale_edit` | 0.1 | Échelle unique des lumières **ajoutées**. |
 | `ledit_active` | — | Lecture seule, 1 pendant le mode. |
 | `ledit_sel`, `ledit_emi_sel` | — | Écrites par le cgame pour le menu : id de la lumière principale et index du shader émissif choisi (-1 pour aucun). Ne pas les modifier. |

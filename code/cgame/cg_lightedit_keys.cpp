@@ -320,6 +320,10 @@ qboolean CG_LightEdit_KeyEvent( int key, qboolean down, int mods )
 	{
 		return qfalse;
 	}
+	if ( down )
+	{
+		LE_CreateKeyShift( (qboolean)( ( mods & CG_KEYMOD_SHIFT ) != 0 ) );
+	}
 	if ( !down )
 	{
 		eaten = (qboolean)s_consumed[key];

@@ -71,6 +71,16 @@ static vmCvar_t		ledit_show;
 static vmCvar_t		ledit_preset_intensity;
 static vmCvar_t		ledit_preset_radius;
 static vmCvar_t		ledit_preset_color;
+static vmCvar_t		ledit_preset_cone_outer;
+static vmCvar_t		ledit_preset_cone_inner;
+static vmCvar_t		ledit_preset_width;
+static vmCvar_t		ledit_preset_height;
+static vmCvar_t		ledit_preset_roll;
+static vmCvar_t		ledit_preset_twosided;
+static vmCvar_t		ledit_preset_style;
+static int			s_presetWheel = 0;		// shift + wheel steps since the last frame
+static qboolean		s_keyShift = qfalse;	// shift state of the last key down
+static int			s_keyShiftTime = 0;		// cg.time of that key
 
 static const vec4_t	colBlue		= { 0.30f, 0.55f, 1.00f, 1.0f };
 static const vec4_t	colYellow	= { 1.00f, 0.90f, 0.20f, 1.0f };
@@ -637,6 +647,81 @@ static void LE_ParseColor( vec3_t out )
 	}
 }
 
+// The preset of a new light: the clipboard of tool 6 when it holds a light, else the ledit_preset_* cvars.
+static void LE_CreatePreset( rtxLightDesc_t *d )
+{
+	memset( d, 0, sizeof( *d ) );
+	LE_ParseColor( d->color );
+	d->intensity = ledit_preset_intensity.value;
+	d->radius = ledit_preset_radius.value;
+	d->coneOuter = ledit_preset_cone_outer.value;
+	d->coneInner = ledit_preset_cone_inner.value;
+	d->width = ledit_preset_width.value;
+	d->height = ledit_preset_height.value;
+	d->roll = ledit_preset_roll.value;
+	d->twoSided = ledit_preset_twosided.integer ? 1 : 0;
+	d->style = ledit_preset_style.integer;
+	LE_PipettePreset( d );
+}
+
+static void LE_CreatePresetStore( const rtxLightDesc_t *d )
+{
+	rtxLightDesc_t	probe;
+
+	memset( &probe, 0, sizeof( probe ) );
+	if ( LE_PipettePreset( &probe ) )
+	{
+		LE_PipettePresetSet( d );
+		return;
+	}
+	cgi_Cvar_Set( "ledit_preset_intensity", va( "%g", d->intensity ) );
+	cgi_Cvar_Set( "ledit_preset_radius", va( "%g", d->radius ) );
+	cgi_Cvar_Set( "ledit_preset_color", va( "%.3f %.3f %.3f", d->color[0], d->color[1], d->color[2] ) );
+	cgi_Cvar_Set( "ledit_preset_cone_outer", va( "%g", d->coneOuter ) );
+	cgi_Cvar_Set( "ledit_preset_cone_inner", va( "%g", d->coneInner ) );
+	cgi_Cvar_Set( "ledit_preset_width", va( "%g", d->width ) );
+	cgi_Cvar_Set( "ledit_preset_height", va( "%g", d->height ) );
+	cgi_Cvar_Set( "ledit_preset_roll", va( "%g", d->roll ) );
+	cgi_Cvar_Set( "ledit_preset_twosided", va( "%d", d->twoSided ? 1 : 0 ) );
+	cgi_Cvar_Set( "ledit_preset_style", va( "%d", d->style ) );
+}
+
+// Shift + wheel: a step on the active property (tool 5, "[" and "]") of the preset.
+static void LE_CreatePresetWheel( int wheel )
+{
+	rtxLightDesc_t	d;
+	const int		prop = LE_PropActive();
+	char			value[32];
+
+	LE_CreatePreset( &d );
+	d.type = s_createType;
+	if ( !LE_PropApplies( prop, d.type ) )
+	{
+		LE_Msg( "light edit: %s does not apply to a %s ([ and ] pick another property)", LE_PropName( prop ), LE_TypeName( d.type ) );
+		return;
+	}
+	// The coarse step: shift is often the walk key, which would make every step fine.
+	if ( !LE_PropAdjust( &d, prop, wheel, qfalse ) )
+	{
+		return;
+	}
+	LE_CreatePresetStore( &d );
+	// The cvars update at the next frame: the clipboard and the cvars give the same value from here.
+	LE_PropValueText( &d, prop, value, sizeof( value ) );
+	LE_Msg( "light edit: new lights %s %s", LE_PropName( prop ), value );
+}
+
+// ledit_preset_step <n>: the command Shift + wheel runs in tool 2, for a bind or a script.
+static void LE_CmdPresetStep( void )
+{
+	if ( !s_active )
+	{
+		LE_Msg( "light edit: not active" );
+		return;
+	}
+	LE_CreatePresetWheel( Com_Clampi( -8, 8, atoi( CG_Argv( 1 ) ) ) );
+}
+
 static void LE_UpdateGhost( void )
 {
 	trace_t		tr;
@@ -676,6 +761,11 @@ static void LE_ToolCreate( qboolean priDown, qboolean secDown, int wheel, qboole
 		}
 		s_createOffset = Com_Clamp( 2.0f, 256.0f, s_createOffset );
 	}
+	if ( s_presetWheel )
+	{
+		LE_CreatePresetWheel( s_presetWheel );
+		s_presetWheel = 0;
+	}
 	LE_UpdateGhost();
 
 	if ( secDown )
@@ -693,17 +783,7 @@ static void LE_ToolCreate( qboolean priDown, qboolean secDown, int wheel, qboole
 			LE_Msg( "light edit: cannot add a light outside the world" );
 			return;
 		}
-		memset( &d, 0, sizeof( d ) );
-		d.coneOuter = 35.0f;
-		d.coneInner = 25.0f;
-		d.width = RTX_LRECT_DEFAULT_SIZE;
-		d.height = RTX_LRECT_DEFAULT_SIZE;
-		if ( !LE_PipettePreset( &d ) )
-		{
-			LE_ParseColor( d.color );
-			d.intensity = ledit_preset_intensity.value;
-			d.radius = ledit_preset_radius.value;
-		}
+		LE_CreatePreset( &d );
 		VectorCopy( s_ghost, d.origin );
 		VectorSet( d.dir, 0.0f, 0.0f, -1.0f );
 		if ( s_createType == RTX_LTYPE_SPOT && s_ghostHit )
@@ -727,6 +807,17 @@ static void LE_ToolCreate( qboolean priDown, qboolean secDown, int wheel, qboole
 		LE_SelSet( id );
 		LE_Msg( "light edit: added light %d", id );
 	}
+}
+
+int LE_CreateType( void )
+{
+	return s_createType;
+}
+
+void LE_CreateKeyShift( qboolean shift )
+{
+	s_keyShift = shift;
+	s_keyShiftTime = cg.time;
 }
 
 void LE_CreateSetSpot( qboolean spot )
@@ -792,6 +883,13 @@ void CG_LightEdit_Frame( void )
 	cgi_Cvar_Update( &ledit_preset_intensity );
 	cgi_Cvar_Update( &ledit_preset_radius );
 	cgi_Cvar_Update( &ledit_preset_color );
+	cgi_Cvar_Update( &ledit_preset_cone_outer );
+	cgi_Cvar_Update( &ledit_preset_cone_inner );
+	cgi_Cvar_Update( &ledit_preset_width );
+	cgi_Cvar_Update( &ledit_preset_height );
+	cgi_Cvar_Update( &ledit_preset_roll );
+	cgi_Cvar_Update( &ledit_preset_twosided );
+	cgi_Cvar_Update( &ledit_preset_style );
 	LE_GridUpdate();
 	LE_SoloUpdate();
 	LE_KeysUpdate();
@@ -908,6 +1006,8 @@ void CG_LightEdit_Init( void )
 	s_cycle = 0;
 	s_cycleBase = -1;
 	s_wheel = 0;
+	s_presetWheel = 0;
+	s_keyShift = qfalse;
 	s_prevButtons = 0;
 	s_createOffset = 16.0f;
 	s_ghostSolid = qfalse;
@@ -938,6 +1038,13 @@ void CG_LightEdit_Init( void )
 	cgi_Cvar_Register( &ledit_preset_intensity, "ledit_preset_intensity", "2000", CVAR_ARCHIVE );
 	cgi_Cvar_Register( &ledit_preset_radius, "ledit_preset_radius", "8", CVAR_ARCHIVE );
 	cgi_Cvar_Register( &ledit_preset_color, "ledit_preset_color", "1 0.9 0.8", CVAR_ARCHIVE );
+	cgi_Cvar_Register( &ledit_preset_cone_outer, "ledit_preset_cone_outer", "35", CVAR_ARCHIVE );
+	cgi_Cvar_Register( &ledit_preset_cone_inner, "ledit_preset_cone_inner", "25", CVAR_ARCHIVE );
+	cgi_Cvar_Register( &ledit_preset_width, "ledit_preset_width", "32", CVAR_ARCHIVE );
+	cgi_Cvar_Register( &ledit_preset_height, "ledit_preset_height", "32", CVAR_ARCHIVE );
+	cgi_Cvar_Register( &ledit_preset_roll, "ledit_preset_roll", "0", CVAR_ARCHIVE );
+	cgi_Cvar_Register( &ledit_preset_twosided, "ledit_preset_twosided", "0", CVAR_ARCHIVE );
+	cgi_Cvar_Register( &ledit_preset_style, "ledit_preset_style", "0", CVAR_ARCHIVE );
 	LE_GridInit();
 }
 
@@ -1540,6 +1647,7 @@ qboolean CG_LightEdit_ConsoleCommand( const char *cmd )
 		{ "ledit_restore",	LE_Cmd_RestoreMode },
 		{ "ledit_goto",		LE_CmdGoto },
 		{ "ledit_select",	LE_CmdSelect },
+		{ "ledit_preset_step",	LE_CmdPresetStep },
 		{ "ledit_writebinds",	LE_CmdWriteBinds },
 		{ "ledit_emissive_list",	LE_CmdEmissiveList },
 		{ "ledit_emissive",	LE_CmdEmissive },
@@ -1574,14 +1682,19 @@ qboolean CG_LightEdit_ConsoleCommand( const char *cmd )
 			LE_SetTool( atoi( CG_Argv( 1 ) ) );
 			return qtrue;
 		}
-		if ( !Q_stricmp( cmd, "weapnext" ) )
+		if ( !Q_stricmp( cmd, "weapnext" ) || !Q_stricmp( cmd, "weapprev" ) )
 		{
-			s_wheel++;
-			return qtrue;
-		}
-		if ( !Q_stricmp( cmd, "weapprev" ) )
-		{
-			s_wheel--;
+			const int	step = !Q_stricmp( cmd, "weapnext" ) ? 1 : -1;
+
+			// The key that runs this command went through the key filter just before: its shift state.
+			if ( s_tool == LEDIT_TOOL_CREATE && s_keyShift && cg.time - s_keyShiftTime < 250 )
+			{
+				s_presetWheel += step;
+			}
+			else
+			{
+				s_wheel += step;
+			}
 			return qtrue;
 		}
 		if ( !Q_stricmp( cmd, "invnext" ) )
@@ -1604,7 +1717,7 @@ void CG_LightEdit_InitConsoleCommands( void )
 		"lightedit", "ledit_save", "ledit_reload", "ledit_undo", "ledit_redo", "ledit_history",
 		"ledit_delete", "ledit_deselect", "ledit_revert", "ledit_set", "ledit_get",
 		"ledit_grid_next", "ledit_snap_toggle", "ledit_xray_toggle", "ledit_compact", "ledit_restore",
-		"ledit_goto", "ledit_select",
+		"ledit_goto", "ledit_select", "ledit_preset_step",
 		"ledit_writebinds", "ledit_emissive_list", "ledit_emissive", "ledit_emissive_reset",
 		"ledit_emissive_select", "ledit_emissive_surfaces",
 		"ledit_sky", "ledit_sun", "ledit_sun_here", "ledit_sun_color", "ledit_sun_brightness",
@@ -2008,10 +2121,7 @@ static void LE_DrawToolWorld( void )
 		{
 			rtxLightDesc_t	ghost;
 
-			memset( &ghost, 0, sizeof( ghost ) );
-			ghost.width = RTX_LRECT_DEFAULT_SIZE;
-			ghost.height = RTX_LRECT_DEFAULT_SIZE;
-			LE_PipettePreset( &ghost );
+			LE_CreatePreset( &ghost );
 			LE_ConvertType( &ghost, RTX_LTYPE_RECT );
 			VectorCopy( s_ghost, ghost.origin );
 			VectorSet( ghost.dir, 0.0f, 0.0f, -1.0f );
@@ -2024,21 +2134,15 @@ static void LE_DrawToolWorld( void )
 		else if ( s_createType == RTX_LTYPE_SPOT )
 		{
 			vec3_t	dir;
-			float	outer = 35.0f, inner = 25.0f;
-			rtxLightDesc_t	clip;
+			rtxLightDesc_t	preset;
 
-			memset( &clip, 0, sizeof( clip ) );
-			if ( LE_PipettePreset( &clip ) )
-			{
-				outer = clip.coneOuter;
-				inner = clip.coneInner;
-			}
+			LE_CreatePreset( &preset );
 			VectorSet( dir, 0.0f, 0.0f, -1.0f );
 			if ( s_ghostHit )
 			{
 				LE_SpotCreateDir( s_ghost, s_ghostHitPos, s_ghostNormal, dir );
 			}
-			LE_DrawSpotWire( s_ghost, dir, outer, inner, s_ghostSolid ? colRed : colGreen, qfalse );
+			LE_DrawSpotWire( s_ghost, dir, preset.coneOuter, preset.coneInner, s_ghostSolid ? colRed : colGreen, qfalse );
 		}
 	}
 	else if ( s_tool == LEDIT_TOOL_MOVE )
@@ -2077,7 +2181,15 @@ static void LE_DrawHelp( void )
 		name = createName;
 		alt = createAlt;
 		fire = "add a light at the ghost";
-		Com_sprintf( wheelBuf, sizeof( wheelBuf ), "surface offset x2 or /2, walk +-1 (now %.0f)", s_createOffset );
+		{
+			rtxLightDesc_t	preset;
+			char			value[32];
+
+			LE_CreatePreset( &preset );
+			LE_PropValueText( &preset, LE_PropActive(), value, sizeof( value ) );
+			Com_sprintf( wheelBuf, sizeof( wheelBuf ), "offset x2 or /2, walk +-1 (%.0f); shift: %s %s", s_createOffset,
+				LE_PropName( LE_PropActive() ), value );
+		}
 		wheel = wheelBuf;
 		break;
 	}
