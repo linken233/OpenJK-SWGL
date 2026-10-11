@@ -2488,12 +2488,20 @@ void ClientCommand( int clientNum ) {
 		
 		memset(ent->client->ps.weapons, 0, sizeof(ent->client->ps.weapons)); // Clear all weapons
 
-		ent->client->ps.weapons[WP_GetWeaponID(g_weaponOne->string)] = 1;
-		ent->client->ps.weapons[WP_GetWeaponID(g_weaponTwo->string)] = 1;
-		ent->client->ps.weapons[WP_GetWeaponID(g_weaponThree->string)] = 1;
-		ent->client->ps.weapons[WP_GetWeaponID(g_weaponFour->string)] = 1;
-		ent->client->ps.weapons[WP_GetWeaponID(g_weaponFive->string)] = 1;
-		ent->client->ps.weapons[WP_GetWeaponID(g_weaponSix->string)] = 1;
+		// Each weapon, and 150 more ammo of each ammo type (not more than its max).
+		const cvar_t *slots[] = { g_weaponOne, g_weaponTwo, g_weaponThree, g_weaponFour, g_weaponFive, g_weaponSix };
+		qboolean ammoGiven[MAX_AMMO] = { qfalse };
+		for (const cvar_t *slot : slots)
+		{
+			const int weapon = WP_GetWeaponID(slot->string);
+			ent->client->ps.weapons[weapon] = 1;
+			const int ammoIndex = weaponData[weapon].ammoIndex;
+			if (weapon > WP_NONE && ammoIndex > AMMO_NONE && ammoIndex < ammoCount && !ammoGiven[ammoIndex])
+			{
+				ammoGiven[ammoIndex] = qtrue;
+				ent->client->ps.ammo[ammoIndex] = Q_min(ent->client->ps.ammo[ammoIndex] + 150, ammoData[ammoIndex].max);
+			}
+		}
 
 		CG_NextWeapon_f();
 	}

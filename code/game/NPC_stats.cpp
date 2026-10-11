@@ -28,6 +28,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "g_vehicles.h"
 #include "g_functions.h"
 #include "NPC_SWGL.h"
+#include "g_characterRandom.h"
 #include "../cgame/cg_local.h"
 #include "../rd-common/mdx_merge.h"
 #if !defined(RUFL_HSTRING_INC)
@@ -5377,14 +5378,10 @@ void setYounglingSkin(gentity_t* NPC, char *custom_skin, int custom_skin_size)
 	Q_strncpyz(custom_skin, skin.c_str(), custom_skin_size);
 }
 
-void NPC_AssignRandom(gentity_t* ent, char* playerModel)
+// Write "head|torso|lower" with a random head_, torso_ and lower_ skin of the model.
+// Return qfalse if the model does not have the three kinds of skin files.
+qboolean NPC_RandomSkinParts(const char* model, char* skin, int skinSize)
 {
-	if (!ent)
-		return;
-
-	if (!ent->NPC_skin)
-		return;
-
 	std::string headList[64];
 	std::string torsoList[64];
 	std::string lowerList[64];
@@ -5395,37 +5392,128 @@ void NPC_AssignRandom(gentity_t* ent, char* playerModel)
 	int		numfiles;
 	int j;
 	int headCount = 0, torsoCount = 0, lowerCount = 0;
-	numfiles = gi.FS_GetFileList(va("models/players/%s", playerModel), ".skin", filelist, sizeof(filelist));
+	numfiles = gi.FS_GetFileList(va("models/players/%s", model), ".skin", filelist, sizeof(filelist));
 	fileptr = filelist;
 
 	for (j = 0; j < numfiles; j++, fileptr += filelen + 1)
 	{
 		filelen = strlen(fileptr);
 		COM_StripExtension(fileptr, skinname, sizeof(skinname));
-		if (Q_stricmpn(skinname, "head_", 5) == 0)
+		if (Q_stricmpn(skinname, "head_", 5) == 0 && headCount < 64)
 		{
 			headList[headCount++] = skinname;
 		}
-		else if (Q_stricmpn(skinname, "torso_", 6) == 0)
+		else if (Q_stricmpn(skinname, "torso_", 6) == 0 && torsoCount < 64)
 		{
 			torsoList[torsoCount++] = skinname;
 		}
-		else if (Q_stricmpn(skinname, "lower_", 6) == 0)
+		else if (Q_stricmpn(skinname, "lower_", 6) == 0 && lowerCount < 64)
 		{
 			lowerList[lowerCount++] = skinname;
 		}
 	}
 
-	if (!headList[0].empty() && !torsoList[0].empty() && !lowerList[0].empty())
+	if (!headCount || !torsoCount || !lowerCount)
 	{
-		std::string newSkin;
-		newSkin.append(headList[Q_irand(0, headCount - 1)]);
-		newSkin.append("|");
-		newSkin.append(torsoList[Q_irand(0, torsoCount - 1)]);
-		newSkin.append("|");
-		newSkin.append(lowerList[Q_irand(0, lowerCount - 1)]);
-		ent->NPC_skin = G_NewString(newSkin.c_str());
+		return qfalse;
 	}
+	Com_sprintf(skin, skinSize, "%s|%s|%s", headList[Q_irand(0, headCount - 1)].c_str(),
+		torsoList[Q_irand(0, torsoCount - 1)].c_str(), lowerList[Q_irand(0, lowerCount - 1)].c_str());
+	return qtrue;
+}
+
+void NPC_AssignRandom(gentity_t* ent, char* playerModel)
+{
+	if (!ent)
+		return;
+
+	if (!ent->NPC_skin)
+		return;
+
+	char skin[MAX_QPATH * 3];
+	if (NPC_RandomSkinParts(playerModel, skin, sizeof(skin)))
+	{
+		ent->NPC_skin = G_NewString(skin);
+	}
+}
+
+qboolean NPC_GetModelInfo(const char* npcName, npcModelInfo_t* info)
+{
+	const char* token;
+	const char* value;
+	const char* p = NPCParms;
+
+	memset(info, 0, sizeof(*info));
+	COM_BeginParseSession();
+	while (p)
+	{
+		token = COM_ParseExt(&p, qtrue);
+		if (!token[0])
+		{
+			COM_EndParseSession();
+			return qfalse;
+		}
+		if (!Q_stricmp(token, npcName))
+		{
+			break;
+		}
+		SkipBracedSection(&p);
+	}
+	if (!p || G_ParseLiteral(&p, "{"))
+	{
+		COM_EndParseSession();
+		return qfalse;
+	}
+
+	int depth = 1;
+	while (p && depth)
+	{
+		token = COM_ParseExt(&p, qtrue);
+		if (!token[0])
+		{
+			break;
+		}
+		if (!Q_stricmp(token, "{"))
+		{
+			depth++;
+			continue;
+		}
+		if (!Q_stricmp(token, "}"))
+		{
+			depth--;
+			continue;
+		}
+		char* dest = NULL;
+		int destSize = 0;
+		if (depth == 1 && !Q_stricmp(token, "playerModel"))
+		{
+			dest = info->model;
+			destSize = sizeof(info->model);
+		}
+		else if (depth == 1 && !Q_stricmp(token, "customSkin"))
+		{
+			dest = info->skin;
+			destSize = sizeof(info->skin);
+		}
+		else if (depth == 1 && !Q_stricmp(token, "saber"))
+		{
+			dest = info->saber;
+			destSize = sizeof(info->saber);
+		}
+		else if (depth == 1 && !Q_stricmp(token, "saberColor"))
+		{
+			dest = info->saberColor;
+			destSize = sizeof(info->saberColor);
+		}
+		if (dest && !COM_ParseString(&p, &value))
+		{
+			Q_strncpyz(dest, value, destSize);
+			continue;
+		}
+		SkipRestOfLine(&p);
+	}
+	COM_EndParseSession();
+	return (qboolean)(info->model[0] != '\0');
 }
 
 int Get_SaberStyleValue(int style)

@@ -116,6 +116,8 @@ set(SPGameGameFiles
 	"${SPDir}/game/g_characters.h"
 	"${SPDir}/game/g_charactersLoad.cpp"
 	"${SPDir}/game/g_charactersLoad.h"
+	"${SPDir}/game/g_characterRandom.cpp"
+	"${SPDir}/game/g_characterRandom.h"
 	"${SPDir}/game/genericparser2.cpp"
 	"${SPDir}/game/NPC.cpp"
 	"${SPDir}/game/NPC_behavior.cpp"

@@ -1966,6 +1966,17 @@ static qboolean UI_RunMenuScript ( const char **args )
 		{
 			ui.Cmd_ExecuteText( EXEC_APPEND, "characterBack\n");
 		}
+		else if (Q_stricmp(name, "characterEscape") == 0)
+		{
+			// Escape does the action of the Back button of the shown screen: character screen -> grid, grid -> profile menu.
+			menuDef_t *charMenu = Menus_FindByName("IngameSWGLChars");
+			const char *backName = !Q_stricmp(Cvar_VariableString("ui_character_screen"), "character") ? "CharacterBack" : "SelectionBack";
+			itemDef_t *back = charMenu ? (itemDef_t *)Menu_FindItemByName(charMenu, backName) : NULL;
+			if (back && back->action)
+			{
+				Item_RunScript(back, back->action);
+			}
+		}
 		else if (Q_stricmpn(name, "uiPcWeaponNext", 14) == 0)
 		{
 			int weaponNumber = atoi(name + 15);
@@ -6161,6 +6172,9 @@ static void UI_UpdateCharacterCvars(void)
 static void UI_UpdateNPCCvars()
 {
 	Cvar_Set("g_NPCtype", Cvar_VariableString("ui_npc_type"));
+	// Character variant of the NPC: its random parts (.cha) are picked at the spawn.
+	Cvar_Set("g_NPCcharKey", Cvar_VariableString("g_charKey"));
+	Cvar_Set("g_NPCvariant", Cvar_VariableString("ui_variant_code"));
 	Cvar_Set("g_NPCmodel", Cvar_VariableString("ui_char_model"));
 	Cvar_Set("g_NPChead", Cvar_VariableString("ui_char_skin_head"));
 	Cvar_Set("g_NPCtorso", Cvar_VariableString("ui_char_skin_torso"));

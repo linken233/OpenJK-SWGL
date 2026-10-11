@@ -57,3 +57,29 @@ qboolean CHA_ListHasItem(const char *list, const char *item)
 	}
 	return qfalse;
 }
+
+const characterVariant_t *CHA_FindVariant(const char *charKey, const char *variantCode)
+{
+	for (int c = 0; c < loadedCharacters; c++)
+	{
+		const characterInfo_t *character = &charactersData[c];
+		if (Q_stricmp(character->code, charKey))
+		{
+			continue;
+		}
+		for (int v = 0; v < character->variantCount && character->variantList[v].code[0]; v++)
+		{
+			if (!Q_stricmp(character->variantList[v].code, variantCode))
+			{
+				return &character->variantList[v];
+			}
+		}
+	}
+	return NULL;
+}
+
+qboolean CHA_VariantIsRandom(const characterVariant_t *variant)
+{
+	return (qboolean)(variant && (variant->npcRandom.count || variant->skinRandom
+		|| variant->saberRandom.count || variant->saberStaffRandom.count || variant->saberColorRandom.count));
+}

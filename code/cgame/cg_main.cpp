@@ -430,6 +430,7 @@ vmCvar_t		ui_c_filter_name;
 vmCvar_t		ui_character_screen;
 vmCvar_t		ui_character_selected;
 vmCvar_t		ui_character_page;
+vmCvar_t		ui_faction_page;
 vmCvar_t		ui_character_index;
 
 
@@ -605,6 +606,7 @@ static cvarTable_t cvarTable[] = {
 	{ &ui_character_screen, "ui_character_screen","",CVAR_ARCHIVE},
 	{ &ui_character_selected, "ui_character_selected","",CVAR_ARCHIVE},
 	{ &ui_character_page, "ui_character_page","",CVAR_ARCHIVE},
+	{ &ui_faction_page, "ui_faction_page","",CVAR_ARCHIVE},
 	{ &ui_character_index, "ui_character_index","",CVAR_ARCHIVE},
 };
 

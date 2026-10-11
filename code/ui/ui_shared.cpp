@@ -8823,6 +8823,21 @@ void Item_OwnerDraw_Paint(itemDef_t *item)
 	}
 }
 
+// Value of a YESNO or MULTI item without text: textRect is not set (it needs a text), so draw in the rect of the item.
+static void Item_DrawValueInRect(itemDef_t *item, vec4_t color, const char *value)
+{
+	float x = item->window.rect.x + item->textalignx + item->xoffset;
+	if (item->textalignment == ITEM_ALIGN_RIGHT)
+	{
+		x -= DC->textWidth(value, item->textscale, item->font);
+	}
+	else if (item->textalignment == ITEM_ALIGN_CENTER)
+	{
+		x -= DC->textWidth(value, item->textscale, item->font) / 2;
+	}
+	DC->drawText(x, item->window.rect.y + item->textaligny, item->textscale, color, value, 0, item->textStyle, item->font);
+}
+
 void Item_YesNo_Paint(itemDef_t *item)
 {
 	vec4_t color;
@@ -8852,7 +8867,7 @@ void Item_YesNo_Paint(itemDef_t *item)
 	}
 	else
 	{
-		DC->drawText(item->textRect.x, item->textRect.y, item->textscale, color, yesnovalue , 0, item->textStyle, item->font);
+		Item_DrawValueInRect(item, color, yesnovalue);
 	}
 
 }
@@ -8900,8 +8915,7 @@ void Item_Multi_Paint(itemDef_t *item)
 	}
 	else
 	{
-//JLF added xoffset
-		DC->drawText(item->textRect.x +item->xoffset, item->textRect.y, item->textscale, color, text, 0, item->textStyle, item->font);
+		Item_DrawValueInRect(item, color, text);
 	}
 }
 
@@ -11486,6 +11500,24 @@ itemDef_t *Menu_SetPrevCursorItem(menuDef_t *menu)
 	return NULL;
 
 }
+// Start the edition of a text field. The cursor goes to the end of the text.
+static void Item_TextField_BeginEdit(itemDef_t *item)
+{
+	char buff[1024] = { 0 };
+	editFieldDef_t *editPtr = (editFieldDef_t*)item->typeData;
+	if (item->cvar)
+	{
+		DC->getCVarString(item->cvar, buff, sizeof(buff));
+	}
+	item->cursorPos = (int)strlen(buff);
+	if (editPtr)
+	{
+		editPtr->paintOffset = (editPtr->maxPaintChars && item->cursorPos > editPtr->maxPaintChars) ? item->cursorPos - editPtr->maxPaintChars : 0;
+	}
+	g_editingField = qtrue;
+	g_editItem = item;
+}
+
 /*
 =================
 Item_TextField_HandleKey
@@ -11646,7 +11678,7 @@ qboolean Item_TextField_HandleKey(itemDef_t *item, int key)
 			newItem = Menu_SetNextCursorItem((menuDef_t *) item->parent);
 			if (newItem && (newItem->type == ITEM_TYPE_EDITFIELD || newItem->type == ITEM_TYPE_NUMERICFIELD))
 			{
-				g_editItem = newItem;
+				Item_TextField_BeginEdit(newItem);
 			}
 		}
 
@@ -11655,7 +11687,7 @@ qboolean Item_TextField_HandleKey(itemDef_t *item, int key)
 			newItem = Menu_SetPrevCursorItem((menuDef_t *) item->parent);
 			if (newItem && (newItem->type == ITEM_TYPE_EDITFIELD || newItem->type == ITEM_TYPE_NUMERICFIELD))
 			{
-				g_editItem = newItem;
+				Item_TextField_BeginEdit(newItem);
 			}
 		}
 
@@ -13780,9 +13812,7 @@ void Menu_HandleKey(menuDef_t *menu, int key, qboolean down)
 				{
 					if (Rect_ContainsPoint(&item->window.rect, DC->cursorx, DC->cursory))
 					{
-						item->cursorPos = 0;
-						g_editingField = qtrue;
-						g_editItem = item;
+						Item_TextField_BeginEdit(item);
 						//DC->setOverstrikeMode(qtrue);
 					}
 				}
@@ -13880,9 +13910,7 @@ void Menu_HandleKey(menuDef_t *menu, int key, qboolean down)
 			{
 				if (item->type == ITEM_TYPE_EDITFIELD || item->type == ITEM_TYPE_NUMERICFIELD)
 				{
-					item->cursorPos = 0;
-					g_editingField = qtrue;
-					g_editItem = item;
+					Item_TextField_BeginEdit(item);
 					//DC->setOverstrikeMode(qtrue);
 				}
 				else

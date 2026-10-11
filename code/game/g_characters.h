@@ -48,6 +48,12 @@ typedef struct characterSkin_s {
 	char skin[64];
 } characterSkin_t;
 
+// A list of names in a .cha file: name { "a" "b" ... }
+typedef struct characterList_s {
+	char (*items)[64];
+	int count;
+} characterList_t;
+
 typedef struct characterVariant_s {
 	char code[32];
 	char nameKey[64];
@@ -71,6 +77,13 @@ typedef struct characterVariant_s {
 
 	char weapons[64][6];
 	int forcePowers[NUM_FORCE_POWERS];
+	// Random parts, picked again at each spawn or Apply (g_characterRandom.cpp)
+	characterList_t npcRandom;			// NPC files, one is picked
+	qboolean skinRandom;				// random head, torso and lower skins of the model
+	characterList_t saberRandom;		// single sabers
+	characterList_t saberDualRandom;	// left hand sabers of a single saber
+	characterList_t saberStaffRandom;	// staff sabers
+	characterList_t saberColorRandom;	// saber colors
 	//TODO Add mor fields (Saber - Abilities - etc)
 } characterVariant_t;
 
@@ -97,6 +110,10 @@ extern int loadedTags;
 
 // True if the comma separated list contains this exact item (case insensitive).
 qboolean CHA_ListHasItem(const char *list, const char *item);
+// The variant <variantCode> of the character <charKey>, or NULL.
+const characterVariant_t *CHA_FindVariant(const char *charKey, const char *variantCode);
+// True if the variant has a random part.
+qboolean CHA_VariantIsRandom(const characterVariant_t *variant);
 
 #pragma endregion
 

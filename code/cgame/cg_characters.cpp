@@ -43,6 +43,8 @@ static char shownTitle[128];				// name at the top of the character screen (CG_D
 static const int variantsPerPage = 4;		// squares of a page: buttons variantButton1..4 of the menu
 static const int tagsPerPage = 9;			// rows of a page: buttons tagButton1..9 of the menu
 static int tagPage = 0;					// page of the tag rows (the character grid behind keeps ui_character_page)
+static int configPage = 0;					// page of the My Characters grid
+static int filteredPages = 0;				// page count of the character grid at the last filter (0: no filter yet)
 qboolean searchChanged = qtrue;
 
 // Saved configuration of the "My Characters" screen: characters_configs/<code>_<variant code>/<name>.cfg.
@@ -66,6 +68,7 @@ extern vmCvar_t ui_c_filter_name;
 extern vmCvar_t ui_character_screen;
 extern vmCvar_t ui_character_selected;
 extern vmCvar_t ui_character_page;
+extern vmCvar_t ui_faction_page;
 extern vmCvar_t ui_character_index;
 
 #pragma endregion
@@ -129,6 +132,7 @@ static int QDECL CompareConfigNames(const void *a, const void *b)
 // characterConfigsRefresh: read the saved configurations of all the variants again.
 void CG_Characters_ConfigsRefresh_f()
 {
+	const int oldCount = numMyConfigs;
 	const int numDirs = gi.FS_GetFileList("characters_configs", "/", configDirList, sizeof(configDirList));
 	const char *dir = configDirList;
 
@@ -160,6 +164,10 @@ void CG_Characters_ConfigsRefresh_f()
 		}
 	}
 	qsort(myConfigs, numMyConfigs, sizeof(myConfig_t), CompareConfigNames);
+	if ((oldCount + 14) / 15 != (numMyConfigs + 14) / 15)
+	{
+		configPage = 0;
+	}
 }
 #pragma endregion
 
@@ -184,6 +192,8 @@ void ChangeCharacter(int characterIndex, int variantIndex = 0)
 	cgi_Cvar_Set("g_charKey", currentCharacter->code);
 	cgi_Cvar_Set("ui_variant_code", variant->code);
 	cgi_Cvar_Set("ui_npc_type", variant->npcName);
+	// The menu shows CantSaberEdit with this cvar.
+	cgi_Cvar_Set("ui_char_random_saber_color", variant->saberColorRandom.count ? "1" : "0");
 
 	GetVariantTitle(currentCharacter, variant, shownTitle, sizeof(shownTitle));
 
@@ -226,19 +236,14 @@ static void ShowCharacterScreen()
 
 void UpdateSearchFromCvar();
 int getMaxPage();
+int getCurrentPage();
 void setCurrentPage(int currentPage);
 
-// A filter changed: filter again now, and keep the page of the character grid inside the new page count.
+// A filter changed: filter again now. The character grid goes to page 1 only if its page count changes.
 static void RefreshAfterFilterChange()
 {
 	searchChanged = qtrue;
 	UpdateSearchFromCvar();
-	cgi_Cvar_Update(&ui_character_page);
-	const int maxPage = getMaxPage();
-	if (ui_character_page.integer >= maxPage)
-	{
-		setCurrentPage(Q_max(0, maxPage - 1));
-	}
 }
 
 void CG_Characters_CharacterClick_f()
@@ -246,10 +251,9 @@ void CG_Characters_CharacterClick_f()
 	//Update CVAR
 	cgi_Cvar_Update(&ui_character_screen);	
 	cgi_Cvar_Update(&ui_character_selected);
-	cgi_Cvar_Update(&ui_character_page);
 	if (Q_stricmp(ui_character_screen.string, "factions") == 0)
 	{
-		int selectedFaction = (ui_character_page.integer * 15) + ui_character_selected.integer - 1;
+		int selectedFaction = (getCurrentPage() * 15) + ui_character_selected.integer - 1;
 		if(selectedFaction >= loadedFactions || selectedFaction < 0)
 		{
 			//Draw warning in debug$
@@ -276,7 +280,7 @@ void CG_Characters_CharacterClick_f()
 	}
 	if (Q_stricmp(ui_character_screen.string, "characters") == 0)
 	{
-		int selectedCharacter = (ui_character_page.integer * 15) + ui_character_selected.integer - 1;
+		int selectedCharacter = (getCurrentPage() * 15) + ui_character_selected.integer - 1;
 		if(selectedCharacter < 0 || selectedCharacter >= filteredCharacters)
 		{
 			//Draw warning in debug
@@ -292,7 +296,7 @@ void CG_Characters_CharacterClick_f()
 	}
 	if (Q_stricmp(ui_character_screen.string, "myconfigs") == 0)
 	{
-		const int selectedConfig = (ui_character_page.integer * 15) + ui_character_selected.integer - 1;
+		const int selectedConfig = (getCurrentPage() * 15) + ui_character_selected.integer - 1;
 		if (selectedConfig < 0 || selectedConfig >= numMyConfigs)
 		{
 			return;
@@ -366,7 +370,7 @@ int getMaxPage() {
 	cgi_Cvar_Update(&ui_character_screen);
 	if (Q_stricmp(ui_character_screen.string, "factions") == 0)
 	{
-		return (loadedFactions / 15) + 1;
+		return Q_max(1, (loadedFactions + 14) / 15);
 	}
 	// The tags screen shows the character grid behind the tags.
 	if (Q_stricmp(ui_character_screen.string, "characters") == 0 || Q_stricmp(ui_character_screen.string, "tags") == 0)
@@ -375,23 +379,48 @@ int getMaxPage() {
 	}
 	if (Q_stricmp(ui_character_screen.string, "myconfigs") == 0)
 	{
-		return (numMyConfigs / 15) + 1;
+		return Q_max(1, (numMyConfigs + 14) / 15);
 	}
 	return 0;
 }
 
-void setCurrentPage(int currentPage) {
-	char buffer[32] = { 0 };
-	itoa(currentPage, buffer, 10);
-	cgi_Cvar_Set("ui_character_page", buffer);
+// Page of the grid of the shown screen. Each grid keeps its page: characters and tags ui_character_page,
+// factions ui_faction_page, My Characters configPage.
+int getCurrentPage() {
+	cgi_Cvar_Update(&ui_character_screen);
+	if (Q_stricmp(ui_character_screen.string, "factions") == 0)
+	{
+		cgi_Cvar_Update(&ui_faction_page);
+		return ui_faction_page.integer;
+	}
+	if (Q_stricmp(ui_character_screen.string, "myconfigs") == 0)
+	{
+		return configPage;
+	}
+	cgi_Cvar_Update(&ui_character_page);
+	return ui_character_page.integer;
 }
 
-void CG_Characters_PreviousPage_f() 
-{
-	cgi_Cvar_Update(&ui_character_page);
+void setCurrentPage(int currentPage) {
+	cgi_Cvar_Update(&ui_character_screen);
+	if (Q_stricmp(ui_character_screen.string, "factions") == 0)
+	{
+		cgi_Cvar_Set("ui_faction_page", va("%d", currentPage));
+	}
+	else if (Q_stricmp(ui_character_screen.string, "myconfigs") == 0)
+	{
+		configPage = currentPage;
+	}
+	else
+	{
+		cgi_Cvar_Set("ui_character_page", va("%d", currentPage));
+	}
+}
 
+void CG_Characters_PreviousPage_f()
+{
 	int maxPage = getMaxPage();
-	int currentPage = ui_character_page.integer;
+	int currentPage = getCurrentPage();
 	if (currentPage == 0)
 	{
 		currentPage = maxPage - 1;
@@ -403,13 +432,10 @@ void CG_Characters_PreviousPage_f()
 	setCurrentPage(currentPage);
 }
 
-void CG_Characters_NextPage_f() 
+void CG_Characters_NextPage_f()
 {
-	cgi_Cvar_Update(&ui_character_screen);
-	cgi_Cvar_Update(&ui_character_page);
-
 	int maxPage = getMaxPage();
-	int currentPage = ui_character_page.integer;
+	int currentPage = getCurrentPage();
 	if (currentPage == maxPage - 1)
 	{
 		currentPage = 0;
@@ -422,17 +448,7 @@ void CG_Characters_NextPage_f()
 }
 void CG_Characters_SearchChanged_f()
 {
-	static char lastFilter[MAX_CVAR_VALUE_STRING];
-
-	// Always filter again: the menu can empty the field (onOpen) without this command.
-	// A new text goes back to the first page.
-	cgi_Cvar_Update(&ui_c_filter_name);
-	searchChanged = qtrue;
-	if (Q_stricmp(lastFilter, ui_c_filter_name.string) != 0)
-	{
-		Q_strncpyz(lastFilter, ui_c_filter_name.string, sizeof(lastFilter));
-		setCurrentPage(0);
-	}
+	RefreshAfterFilterChange();
 }
 // characterToggleTags: the Tags button. On the tags screen it goes back to the character grid, else it opens the tags.
 void CG_Characters_ToggleTags_f()
@@ -465,7 +481,8 @@ void CG_Characters_ResetSearch_f()
 		tagsData[i].selectedFilter = qfalse;
 	}
 	searchChanged = qtrue;
-	setCurrentPage(0);
+	UpdateSearchFromCvar();
+	cgi_Cvar_Set("ui_character_page", "0");
 }
 #pragma endregion
 
@@ -541,6 +558,14 @@ void UpdateSearchFromCvar()
 			}
 		}
 		searchChanged = qfalse;
+
+		// Page 1 when the page count changes. The first filter keeps the saved page.
+		const int pages = Q_max(1, (filteredCharacters + 14) / 15);
+		if (filteredPages && pages != filteredPages)
+		{
+			cgi_Cvar_Set("ui_character_page", "0");
+		}
+		filteredPages = pages;
  	}
 }
 #pragma endregion
@@ -590,8 +615,7 @@ void CG_DrawCharacters() {
 
 	UpdateSearchFromCvar();
 
-	cgi_Cvar_Update(&ui_character_page);
-	int currentPage = ui_character_page.integer;
+	int currentPage = getCurrentPage();
 	int maxPage = getMaxPage();
 	// The filter can leave fewer pages than the current one.
 	if (currentPage >= maxPage)
@@ -647,9 +671,13 @@ void CG_DrawFactions() {
 	qhandle_t background = cgi_R_RegisterShaderNoMip("gfx/menu/w_character_icon_bg");
 	qhandle_t background_selected = cgi_R_RegisterShaderNoMip("gfx/menu/w_character_icon_bg_s");
 
-	cgi_Cvar_Update(&ui_character_page);
-	int currentPage = ui_character_page.integer;
+	int currentPage = getCurrentPage();
 	int maxPage = getMaxPage();
+	if (currentPage >= maxPage)
+	{
+		currentPage = 0;
+		setCurrentPage(0);
+	}
 	int beginIndex = (currentPage * 15);
 	int endIndex = beginIndex + 15;
 
@@ -762,8 +790,7 @@ void CG_DrawMyConfigs() {
 	int nameOffsetX = 6, nameOffsetY = 90;
 	qhandle_t background = cgi_R_RegisterShaderNoMip("gfx/menu/w_character_icon_bg");
 
-	cgi_Cvar_Update(&ui_character_page);
-	int currentPage = ui_character_page.integer;
+	int currentPage = getCurrentPage();
 	const int maxPage = getMaxPage();
 	if (currentPage >= maxPage)
 	{
