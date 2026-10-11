@@ -1614,15 +1614,10 @@ static int LE_Generation( void )
 // Class scale of copy_light, read live, times pt_lightgen_scale for an lgt light.
 static float LE_IntensityScale( int id )
 {
-	static cvar_t *scaleSpot, *scaleSky, *scaleAmbient, *scaleEdit;
+	static cvar_t *scaleEdit;
 
-	if ( !scaleSpot )
-	{
+	if ( !scaleEdit )
 		scaleEdit = ri.Cvar_Get( "pt_light_scale_edit", "0.1", CVAR_ARCHIVE_ND );
-		scaleSpot = ri.Cvar_Get( "pt_light_scale_ent_spot", "0.5", CVAR_ARCHIVE_ND );
-		scaleSky = ri.Cvar_Get( "pt_light_scale_ent_sky", "2", CVAR_ARCHIVE_ND );
-		scaleAmbient = ri.Cvar_Get( "pt_light_scale_ent_ambient", "0.01", CVAR_ARCHIVE_ND );
-	}
 
 	int	entClass = LIGHT_ENT_EDIT;
 	int	source = RTX_LSRC_ADDED;
@@ -1642,10 +1637,10 @@ static float LE_IntensityScale( int id )
 		source = rec->source;
 	}
 
-	const cvar_t *cv = entClass == LIGHT_ENT_SPOT ? scaleSpot : entClass == LIGHT_ENT_SKY ? scaleSky
-		: entClass == LIGHT_ENT_EDIT ? scaleEdit : scaleAmbient;
+	const float scale = entClass == LIGHT_ENT_SPOT ? RTX_LIGHT_SCALE_ENT_SPOT : entClass == LIGHT_ENT_SKY ? RTX_LIGHT_SCALE_ENT_SKY
+		: entClass == LIGHT_ENT_EDIT ? MAX( 0.0f, scaleEdit->value ) : RTX_LIGHT_SCALE_ENT_AMBIENT;
 
-	return MAX( 0.0f, cv->value ) * ( source == RTX_LSRC_LGT ? pt_lightgen_scale->value : 1.0f );
+	return scale * ( source == RTX_LSRC_LGT ? pt_lightgen_scale->value : 1.0f );
 }
 
 static qboolean LE_Save( void )

@@ -51,33 +51,19 @@ void vkpt_light_buffer_reset_counts( void )	// not used yet
 // material is a light entity. add_dlights applies pt_light_scale_dlight.
 float vk_rtx_light_scale( const light_poly_t *light, qboolean world )
 {
-	static cvar_t *pt_light_scale_glow, *pt_light_scale_surface;
-	if ( !pt_light_scale_glow )
-	{
-		pt_light_scale_glow		= ri.Cvar_Get( "pt_light_scale_glow", "0.1", CVAR_ARCHIVE_ND );
-		pt_light_scale_surface	= ri.Cvar_Get( "pt_light_scale_surface", "0.4", CVAR_ARCHIVE_ND );
-	}
-
 	float mat_scale = 10.f;
 	if ( light->material )
-		mat_scale = MAX( 0.f, light->material->glow_emissive ? pt_light_scale_glow->value : pt_light_scale_surface->value )
+		mat_scale = ( light->material->glow_emissive ? RTX_LIGHT_SCALE_GLOW : RTX_LIGHT_SCALE_SURFACE )
 			* RTX_LightEmissive_Scale( light->material );
 	else if ( world )
 	{
-		static cvar_t *pt_light_scale_ent_spot, *pt_light_scale_ent_sky, *pt_light_scale_ent_ambient, *pt_light_scale_edit;
-		if ( !pt_light_scale_ent_spot )
-		{
-			pt_light_scale_edit			= ri.Cvar_Get( "pt_light_scale_edit",			"0.1", CVAR_ARCHIVE_ND );
-			pt_light_scale_ent_spot		= ri.Cvar_Get( "pt_light_scale_ent_spot",		"0.5", CVAR_ARCHIVE_ND );
-			pt_light_scale_ent_sky		= ri.Cvar_Get( "pt_light_scale_ent_sky",		"2", CVAR_ARCHIVE_ND );
-			pt_light_scale_ent_ambient	= ri.Cvar_Get( "pt_light_scale_ent_ambient",	"0.01", CVAR_ARCHIVE_ND );
-		}
+		static cvar_t *pt_light_scale_edit;
+		if ( !pt_light_scale_edit )
+			pt_light_scale_edit = ri.Cvar_Get( "pt_light_scale_edit", "0.1", CVAR_ARCHIVE_ND );
 
-		const cvar_t *class_scale = light->ent_class == LIGHT_ENT_SPOT ? pt_light_scale_ent_spot
-			: light->ent_class == LIGHT_ENT_SKY ? pt_light_scale_ent_sky
-			: light->ent_class == LIGHT_ENT_EDIT ? pt_light_scale_edit : pt_light_scale_ent_ambient;
-
-		mat_scale = MAX( 0.f, class_scale->value );
+		mat_scale = light->ent_class == LIGHT_ENT_SPOT ? RTX_LIGHT_SCALE_ENT_SPOT
+			: light->ent_class == LIGHT_ENT_SKY ? RTX_LIGHT_SCALE_ENT_SKY
+			: light->ent_class == LIGHT_ENT_EDIT ? MAX( 0.f, pt_light_scale_edit->value ) : RTX_LIGHT_SCALE_ENT_AMBIENT;
 	}
 
 	return mat_scale;

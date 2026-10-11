@@ -321,7 +321,7 @@ Le renderer redémarre l'accumulation (`pt_accumulation_rendering`) dès que la 
 ## 8. Intensités et échelles
 
 - Une lumière **ajoutée** a une intensité en unités de la clé `light` de q3map2, multipliée par `pt_light_scale_edit`. Cette échelle est la même partout : déplacer la lumière ne change pas sa luminosité.
-- Une **entité** du BSP garde l'unité `light` de q3map2 et la classe d'échelle calculée au chargement à sa position d'origine (`pt_light_scale_ent_spot`, `_sky` ou `_ambient`). La déplacer ou la modifier ne change pas sa classe.
+- Une **entité** du BSP garde l'unité `light` de q3map2 et la classe d'échelle calculée au chargement à sa position d'origine (spot, ciel ou ambiante ; facteurs fixes `RTX_LIGHT_SCALE_ENT_*` de `vk_rtx.h`, les cvars `pt_light_scale_ent_*`, `pt_light_scale_glow` et `pt_light_scale_surface` n'existent plus : l'édition à la main les remplace). La déplacer ou la modifier ne change pas sa classe.
 - Une lumière **reconstruite** (`lgt`) garde son unité (unités de lightmap × `pt_lightgen_scale`).
 - Le clonage, la pipette et la copie de l'intensité (outil 5) convertissent l'intensité d'une source à l'autre, pour garder la même luminosité : I2 = I1 × échelle1 / échelle2.
 - Convertir une sphère en spot garde la luminosité sur l'axe du spot.

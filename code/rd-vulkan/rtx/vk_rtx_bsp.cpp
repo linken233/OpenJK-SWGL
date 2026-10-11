@@ -1552,7 +1552,7 @@ static int collect_entity_lights( world_t &worldData )
 
 		// A sphere light's irradiance is colour * r^2 / d^2, so dividing the colour by
 		// r^2 here makes the emitter's size irrelevant at a distance. copy_light applies
-		// the pt_light_scale_ent_* cvars at each frame.
+		// the RTX_LIGHT_SCALE_ENT_* factors at each frame.
 		VectorScale( color, intensity
 			/ ( ENTITY_LIGHT_RADIUS * ENTITY_LIGHT_RADIUS ), light->color );
 
