@@ -45,15 +45,12 @@ void vkpt_light_buffer_reset_counts( void )	// not used yet
 	max_model_lights = 0;
 }
 
-static inline void
-copy_light(const light_poly_t* light, float* vblight, const float* sky_radiance, qboolean world)
+// The factor of the light color in the light buffer.
+// The light cast by a glow stage and by a q3map_surfacelight surface have their own scale.
+// pt_glow_scale only sets how bright the glow surface is seen. In the world, a light without
+// material is a light entity. add_dlights applies pt_light_scale_dlight.
+float vk_rtx_light_scale( const light_poly_t *light, qboolean world )
 {
-	const float style_scale = RTX_LightStyle_Scale( light->style, qfalse );
-	const float prev_style = RTX_LightStyle_Scale( light->style, qtrue );
-
-	// The light cast by a glow stage and by a q3map_surfacelight surface have their own scale.
-	// pt_glow_scale only sets how bright the glow surface is seen. In the world, a light without
-	// material is a light entity. add_dlights applies pt_light_scale_dlight.
 	static cvar_t *pt_light_scale_glow, *pt_light_scale_surface;
 	if ( !pt_light_scale_glow )
 	{
@@ -82,6 +79,16 @@ copy_light(const light_poly_t* light, float* vblight, const float* sky_radiance,
 
 		mat_scale = MAX( 0.f, class_scale->value );
 	}
+
+	return mat_scale;
+}
+
+static inline void
+copy_light(const light_poly_t* light, float* vblight, const float* sky_radiance, qboolean world)
+{
+	const float style_scale = RTX_LightStyle_Scale( light->style, qfalse );
+	const float prev_style = RTX_LightStyle_Scale( light->style, qtrue );
+	const float mat_scale = vk_rtx_light_scale( light, world );
 
 	VectorCopy(light->positions + 0, vblight + 0);
 	VectorCopy(light->positions + 3, vblight + 4);

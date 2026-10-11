@@ -70,6 +70,8 @@ set(SPVulkanRendererFiles
 	"${SPDir}/rd-vulkan/tr_surface.cpp"
 	"${SPDir}/rd-vulkan/tr_surfacesprites.cpp"
 	"${SPDir}/rd-vulkan/tr_world.cpp"
+	"${SPDir}/rd-vulkan/tr_visgen.cpp"
+	"${SPDir}/rd-vulkan/tr_visgen.h"
 	"${SPDir}/rd-vulkan/tr_WorldEffects.cpp"
 	"${SPDir}/rd-vulkan/tr_WorldEffects.h"
 	"${SPDir}/rd-vulkan/vk_attachments.cpp"

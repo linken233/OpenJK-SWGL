@@ -25,6 +25,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "conversion.h"
 #include "rtx_light_edit.h"
 #include "rtx_light_file.h"
+#include <algorithm>
 #include <vector>
 #include <unordered_map>
 
@@ -379,14 +380,6 @@ mnode_t *BSP_PointLeaf( mnode_t *node, vec3_t p )
 
 }
 
-static void merge_pvs_rows( world_t* world, char* src, char* dst )
-{
-	for (int i = 0; i < world->clusterBytes; i++)
-	{
-		dst[i] |= src[i];
-	}
-}
-
 int vk_get_surface_cluster( world_t &worldData, surfaceType_t *surf ) 
 {
 	int i, j;
@@ -418,25 +411,6 @@ int vk_get_surface_cluster( world_t &worldData, surfaceType_t *surf )
 				int VAR = (_byte_idx << 3) | _bit_idx;
 
 #define FOREACH_BIT_END  } } } }
-
-static void build_pvs2( world_t *world )
-{
-	size_t matrix_size = world->clusterBytes * world->numClusters;
-
-	world->vis2 = (const byte*)Z_Malloc(matrix_size, qtrue);
-
-	for (int cluster = 0; cluster < world->numClusters; cluster++)
-	{
-		char* pvs = (char*)world->vis + cluster * world->clusterBytes;
-		char* dest_pvs = (char*)world->vis2 + cluster * world->clusterBytes;
-		memcpy(dest_pvs, pvs, world->clusterBytes);
-
-		FOREACH_BIT_BEGIN(pvs, world->clusterBytes, vis_cluster)
-			char* pvs2 = (char*)world->vis + vis_cluster * world->clusterBytes;
-			merge_pvs_rows(world, pvs2, dest_pvs);
-		FOREACH_BIT_END
-	}
-}
 
 // Computes a point at a small distance above the center of the triangle.
 // Returns qfalse if the triangle is degenerate, qtrue otherwise.
@@ -1633,76 +1607,178 @@ static int collect_entity_lights( world_t &worldData )
 	return added;
 }
 
-// Gives the number of clusters that hit the list limit. A quiet call prints nothing.
+// A rough sampling weight of a light for a cluster: light_sampling_mass of light_lists.h at the point
+// of the cluster box nearest to the light, without the BRDF, the light style and the shadow statistics.
+static float light_cluster_weight( const light_poly_t *light, float lum, const aabb_t *aabb )
+{
+	vec3_t center, nearest, d;
+
+	if ( light->type == LIGHT_POLYGON )
+	{
+		VectorAdd( light->positions + 0, light->positions + 3, center );
+		VectorAdd( center, light->positions + 6, center );
+		VectorScale( center, 1.0f / 3.0f, center );
+	}
+	else
+		VectorCopy( light->positions + 0, center );
+
+	for ( int i = 0; i < 3; i++ )
+		nearest[i] = Com_Clamp( aabb->mins[i], aabb->maxs[i], center[i] );
+
+	VectorSubtract( center, nearest, d );
+	const float dist2 = MAX( DotProduct( d, d ), 16.0f * 16.0f );	// a light in the cluster is near, not infinite
+
+	float solid_angle;
+	if ( light->type == LIGHT_POLYGON )
+	{
+		vec3_t e1, e2, n;
+		VectorSubtract( light->positions + 3, light->positions + 0, e1 );
+		VectorSubtract( light->positions + 6, light->positions + 0, e2 );
+		CrossProduct( e1, e2, n );
+		solid_angle = 0.5f * VectorLength( n ) / dist2;
+	}
+	else if ( light->type == LIGHT_SPHERE )
+		solid_angle = M_PI * light->positions[3] * light->positions[3] / dist2;
+	else
+		solid_angle = 2.0f / dist2;
+
+	return lum * MIN( solid_angle, 2.0f * (float)M_PI );
+}
+
+// The static light lists take at most this part of the light list buffer: the model lights take the rest each frame.
+#define STATIC_LIGHT_LIST_NODES		( MAX_LIGHT_LIST_NODES / 2 )
+
+// Gives the number of clusters whose list was cut. A quiet call prints nothing.
+// A cluster takes the lights of the clusters in its PVS. When the lists do not fit in
+// STATIC_LIGHT_LIST_NODES, or a list is longer than RTX_MAX_LIGHTS_PER_CLUSTER, a cluster
+// keeps the lights with the largest light_cluster_weight.
 static int collect_cluster_lights( world_t &worldData, qboolean quiet = qfalse )
 {
-#define MAX_LIGHTS_PER_CLUSTER RTX_MAX_LIGHTS_PER_CLUSTER
-	int *cluster_lights = (int *)Z_Malloc( MAX_LIGHTS_PER_CLUSTER * worldData.numClusters * sizeof(int), TAG_GENERAL, qfalse );
-	int *cluster_light_counts = (int *)Z_Malloc( worldData.numClusters * sizeof(int), TAG_GENERAL, qtrue );
+	const int num_clusters = worldData.numClusters;
+	std::vector<int> counts( num_clusters + 1, 0 );
+	std::vector<int> offsets( num_clusters + 1, 0 );
+	std::vector<int> candidates;
 
-	// Construct an array of visible lights for each cluster.
-	// The array is in `cluster_lights`, with MAX_LIGHTS_PER_CLUSTER stride.
+	// Pass 0 counts the lights of each cluster, pass 1 writes them.
+	for ( int pass = 0; pass < 2; pass++ )
+	{
+		if ( pass == 1 )
+		{
+			for ( int c = 0; c < num_clusters; c++ )
+				offsets[c + 1] = offsets[c] + counts[c];
 
+			candidates.resize( offsets[num_clusters] );
+			std::fill( counts.begin(), counts.end(), 0 );
+		}
+
+		int *count = counts.data();
+		int *list = candidates.data();
+
+		for ( int nlight = 0; nlight < worldData.num_light_polys; nlight++ )
+		{
+			light_poly_t *light = worldData.light_polys + nlight;
+
+			if ( light->cluster < 0 )
+				continue;
+
+			const byte *pvs = (const byte*)BSP_GetPvs( &worldData, light->cluster );
+			if ( !pvs )
+				continue;
+
+			FOREACH_BIT_BEGIN( pvs, worldData.clusterBytes, other_cluster )
+				if ( other_cluster < num_clusters && light_affects_cluster( light, worldData.cluster_aabbs + other_cluster ) )
+				{
+					if ( pass == 1 )
+						list[offsets[other_cluster] + count[other_cluster]] = nlight;
+					count[other_cluster]++;
+				}
+			FOREACH_BIT_END
+		}
+	}
+
+	// The largest list length that fits in the buffer.
+	auto total_for = [&]( int cap ) -> long long
+	{
+		long long total = 0;
+		for ( int c = 0; c < num_clusters; c++ )
+			total += MIN( counts[c], cap );
+		return total;
+	};
+
+	const long long total_all = offsets[num_clusters];
+	int cap = RTX_MAX_LIGHTS_PER_CLUSTER;
+
+	if ( total_for( cap ) > STATIC_LIGHT_LIST_NODES )
+	{
+		int lo = 1, hi = cap;
+		while ( lo < hi )
+		{
+			const int mid = ( lo + hi + 1 ) / 2;
+			if ( total_for( mid ) <= STATIC_LIGHT_LIST_NODES )
+				lo = mid;
+			else
+				hi = mid - 1;
+		}
+		cap = lo;
+	}
+
+	// The luminance of each light, with the scale of the light buffer.
+	std::vector<float> lums( worldData.num_light_polys );
 	for ( int nlight = 0; nlight < worldData.num_light_polys; nlight++ )
 	{
-		light_poly_t *light = worldData.light_polys + nlight;
-
-		if ( light->cluster < 0 )
-			continue;
-
-		const byte *pvs = (const byte*)BSP_GetPvs( &worldData, light->cluster);
-
-		FOREACH_BIT_BEGIN( pvs, worldData.clusterBytes, other_cluster )
-			aabb_t *cluster_aabb = worldData.cluster_aabbs + other_cluster;
-			if (light_affects_cluster(light, cluster_aabb))
-			{
-				int *num_cluster_lights = cluster_light_counts + other_cluster;
-				if ( *num_cluster_lights < MAX_LIGHTS_PER_CLUSTER )
-				{
-					cluster_lights[other_cluster * MAX_LIGHTS_PER_CLUSTER + *num_cluster_lights] = nlight;
-					(*num_cluster_lights)++;
-				}
-			}
-		FOREACH_BIT_END
+		const light_poly_t *light = worldData.light_polys + nlight;
+		lums[nlight] = fabsf( 0.299f * light->color[0] + 0.587f * light->color[1] + 0.114f * light->color[2] ) * vk_rtx_light_scale( light, qtrue );
 	}
 
-	// Count the total number of cluster <-> light relations to allocate memory
-	worldData.num_cluster_lights = 0;
-	int full_clusters = 0;
-	for (int cluster = 0; cluster < worldData.numClusters; cluster++)
+	worldData.num_cluster_lights = (int)total_for( cap );
+	worldData.cluster_lights = (int*)Z_Malloc( MAX( 1, worldData.num_cluster_lights ) * sizeof(int), TAG_GENERAL, qtrue );
+	worldData.cluster_light_offsets = (int*)Z_Malloc( ( num_clusters + 1 ) * sizeof(int), TAG_GENERAL, qtrue );
+
+	std::vector< std::pair<float, int> > ranked;
+	int cut_clusters = 0;
+	int list_offset = 0;
+
+	for ( int c = 0; c < num_clusters; c++ )
 	{
-		worldData.num_cluster_lights += cluster_light_counts[cluster];
+		const int *src = candidates.data() + offsets[c];
+		int *dst = worldData.cluster_lights + list_offset;
+		const int count = counts[c];
 
-		if ( cluster_light_counts[cluster] >= MAX_LIGHTS_PER_CLUSTER )
-			full_clusters++;
+		worldData.cluster_light_offsets[c] = list_offset;
+
+		if ( count <= cap )
+		{
+			memcpy( dst, src, count * sizeof(int) );
+			list_offset += count;
+			continue;
+		}
+
+		// Keep the `cap` strongest lights, in the order of the light index.
+		const aabb_t *aabb = worldData.cluster_aabbs + c;
+		ranked.resize( count );
+		for ( int i = 0; i < count; i++ )
+			ranked[i] = std::make_pair( -light_cluster_weight( worldData.light_polys + src[i], lums[src[i]], aabb ), src[i] );
+
+		std::nth_element( ranked.begin(), ranked.begin() + cap, ranked.end() );
+		for ( int i = 0; i < cap; i++ )
+			dst[i] = ranked[i].second;
+		std::sort( dst, dst + cap );
+
+		list_offset += cap;
+		cut_clusters++;
 	}
-
-	worldData.cluster_lights = (int*)Z_Malloc(worldData.num_cluster_lights * sizeof(int), TAG_GENERAL, qtrue );
-	worldData.cluster_light_offsets = (int*)Z_Malloc((worldData.numClusters + 1) * sizeof(int), TAG_GENERAL, qtrue );
+	worldData.cluster_light_offsets[num_clusters] = list_offset;
 
 	if ( !quiet )
+	{
 		Com_Printf( S_COLOR_MAGENTA "\n\n\nTotal interactions: %d,\n\n", worldData.num_cluster_lights );
 
-	// Compact the previously constructed array into worldData.cluster_lights
-	int list_offset = 0;
-	for ( int cluster = 0; cluster < worldData.numClusters; cluster++ )
-	{
-		assert(list_offset >= 0);
-		worldData.cluster_light_offsets[cluster] = list_offset;
-		int count = cluster_light_counts[cluster];
-		memcpy(
-			worldData.cluster_lights + list_offset, 
-			cluster_lights + MAX_LIGHTS_PER_CLUSTER * cluster, 
-			count * sizeof(int));
-		list_offset += count;
+		if ( cut_clusters )
+			Com_Printf( S_COLOR_YELLOW "rtx: %lld light list entries for %d entries of room: %d lights per cluster at most, %d of %d lists cut to their strongest lights\n",
+				total_all, STATIC_LIGHT_LIST_NODES, cap, cut_clusters, num_clusters );
 	}
-	worldData.cluster_light_offsets[worldData.numClusters] = list_offset;
 
-	Z_Free(cluster_lights);
-	Z_Free(cluster_light_counts);
-#undef MAX_LIGHTS_PER_CLUSTER
-
-	return full_clusters;
+	return cut_clusters;
 }
 
 // Frees the previous lists first. Used by the light editor.
@@ -3211,8 +3287,6 @@ void R_PreparePT( world_t &worldData )
 		vkpt_append_model_geometry( &bmodel->geometry, prim_ctr - first_prim, first_prim, "bsp_model");
 	}
 	world_submodels->num_primitives = prim_ctr;
-
-	build_pvs2( &worldData );
 
 	for ( i = 0; i < worldData.num_bmodels; i++ ) 
 	{

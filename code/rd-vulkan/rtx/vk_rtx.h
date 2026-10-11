@@ -680,6 +680,7 @@ byte		*BSP_GetPvs2( world_t *bsp, int cluster );
 void		get_triangle_norm( const float* positions, float* normal );
 qboolean	get_triangle_off_center(const float* positions, float* center, float* anti_center, float offset );
 int			vk_get_surface_cluster( world_t &worldData, surfaceType_t *surf );
+float		vk_rtx_light_scale( const light_poly_t *light, qboolean world );
 
 // material
 uint32_t		MAT_SetKind(uint32_t material, uint32_t kind);

@@ -72,6 +72,7 @@ cvar_t	*r_drawfog;
 cvar_t	*r_speeds;
 cvar_t	*r_fullbright;
 cvar_t	*r_novis;
+cvar_t	*r_visGenerate;
 cvar_t	*r_nocull;
 cvar_t	*r_facePlaneCull;
 cvar_t	*r_cullRoofFaces; //attempted smart method of culling out upwards facing surfaces on roofs for automap shots -rww
@@ -1061,6 +1062,7 @@ void R_Register( void )
 	r_ignore							= Cvar_Get( "r_ignore",							"1",						CVAR_CHEAT, "" );
 	r_nocull							= Cvar_Get( "r_nocull",							"0",						CVAR_CHEAT, "" );
 	r_novis								= Cvar_Get( "r_novis",							"0",						CVAR_CHEAT, "" );
+	r_visGenerate						= Cvar_Get( "r_visGenerate",					"1",						CVAR_ARCHIVE_ND, "Generate a PVS for a map without a vis lump, cached in maps/<name>.vis" );
 	r_showcluster						= Cvar_Get( "r_showcluster",						"0",						CVAR_CHEAT, "" );
 	r_speeds							= Cvar_Get( "r_speeds",							"0",						CVAR_CHEAT, "" );
 	r_verbose							= Cvar_Get( "r_verbose",							"0",						CVAR_CHEAT, "" );

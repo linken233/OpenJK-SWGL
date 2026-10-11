@@ -24,6 +24,9 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 #include "tr_local.h"
 #include "tr_cache.h"
+#include "tr_visgen.h"
+
+#include <thread>
 
 static const imgFlags_t lightmapFlags = IMGFLAG_NOLIGHTSCALE | IMGFLAG_NO_COMPRESSION | IMGFLAG_LIGHTMAP | IMGFLAG_NOSCALE | IMGFLAG_CLAMPTOEDGE;
 
@@ -574,6 +577,127 @@ void		RE_SetWorldVisData( const byte *vis ) {
 
 /*
 =================
+R_GenerateVisibility
+
+A map without a vis lump gets a PVS from its BSP tree (tr_visgen.cpp).
+The result is cached in maps/<name>.vis. The key of the cache is a hash of
+the planes, the nodes and the leafs: another build of the map ignores the cache.
+=================
+*/
+#define VISCACHE_IDENT		( ( 'S' << 24 ) + ( 'I' << 16 ) + ( 'V' << 8 ) + 'G' )	// "GVIS"
+#define VISCACHE_VERSION	1
+
+typedef struct {
+	int				ident;
+	int				version;
+	unsigned int	key;
+	int				numClusters;
+	int				clusterBytes;
+} visCacheHeader_t;
+
+static_assert( sizeof( visgenPlane_t ) == sizeof( dplane_t ), "visgenPlane_t is not dplane_t" );
+static_assert( sizeof( visgenNode_t ) == sizeof( dnode_t ), "visgenNode_t is not dnode_t" );
+
+static unsigned int R_HashLump( unsigned int hash, const lump_t *l )
+{
+	const byte *p = fileBase + l->fileofs;
+
+	for ( int i = 0; i < l->filelen; i++ )
+		hash = ( hash ^ p[i] ) * 16777619u;	// FNV-1a
+
+	return hash;
+}
+
+static void R_GenerateVisibility( world_t &worldData )
+{
+	if ( !r_visGenerate->integer || worldData.numClusters <= 0 )
+		return;
+
+	const dheader_t *header = (const dheader_t *)fileBase;
+	const lump_t *planes = &header->lumps[LUMP_PLANES];
+	const lump_t *nodes = &header->lumps[LUMP_NODES];
+	const lump_t *leafs = &header->lumps[LUMP_LEAFS];
+
+	unsigned int key = 2166136261u;
+	key = R_HashLump( key, planes );
+	key = R_HashLump( key, nodes );
+	key = R_HashLump( key, leafs );
+
+	char path[MAX_QPATH];
+	Com_sprintf( path, sizeof( path ), "maps/%s.vis", worldData.baseName );
+
+	const int numClusters = worldData.numClusters;
+	void *buffer = NULL;
+	const long size = ri.FS_ReadFile( path, &buffer );
+
+	if ( buffer )
+	{
+		const visCacheHeader_t *cache = (const visCacheHeader_t *)buffer;
+
+		if ( size >= (long)sizeof( *cache )
+			&& cache->ident == VISCACHE_IDENT && cache->version == VISCACHE_VERSION && cache->key == key
+			&& cache->numClusters == numClusters && cache->clusterBytes > 0
+			&& size == (long)sizeof( *cache ) + (long)numClusters * cache->clusterBytes )
+		{
+			const int len = numClusters * cache->clusterBytes;
+			byte *dest = (byte *)Hunk_Alloc( len, h_low );
+
+			memcpy( dest, cache + 1, len );
+			worldData.vis = dest;
+			worldData.clusterBytes = cache->clusterBytes;
+			ri.FS_FreeFile( buffer );
+
+			ri.Printf( PRINT_ALL, "%s: no vis lump, PVS loaded from %s\n", worldData.name, path );
+			return;
+		}
+
+		ri.FS_FreeFile( buffer );
+	}
+
+	const int numLeafs = leafs->filelen / sizeof( dleaf_t );
+	const dleaf_t *in = (const dleaf_t *)( fileBase + leafs->fileofs );
+	std::vector<int> leafClusters( numLeafs );
+
+	for ( int i = 0; i < numLeafs; i++ )
+		leafClusters[i] = LittleLong( in[i].cluster );
+
+	std::vector<uint8_t> vis;
+	int clusterBytes = 0;
+	visgenStats_t stats;
+
+	ri.Printf( PRINT_ALL, "%s: no vis lump, generating a PVS for %i clusters...\n", worldData.name, numClusters );
+
+	if ( !VisGen_Build( (const visgenPlane_t *)( fileBase + planes->fileofs ), planes->filelen / sizeof( dplane_t ),
+		(const visgenNode_t *)( fileBase + nodes->fileofs ), nodes->filelen / sizeof( dnode_t ),
+		leafClusters.data(), numLeafs, numClusters, (int)std::thread::hardware_concurrency(), vis, clusterBytes, &stats ) )
+	{
+		ri.Printf( PRINT_WARNING, "%s: PVS generation failed, every cluster sees every cluster\n", worldData.name );
+		return;
+	}
+
+	byte *dest = (byte *)Hunk_Alloc( (int)vis.size(), h_low );
+	memcpy( dest, vis.data(), vis.size() );
+	worldData.vis = dest;
+	worldData.clusterBytes = clusterBytes;
+
+	ri.Printf( PRINT_ALL, "%s: PVS generated, %i portals in %i ms, vis in %i ms, %.0f of %i clusters visible on average\n",
+		worldData.name, stats.clusterPortals, stats.msPortals, stats.msVis, stats.avgVisible, numClusters );
+
+	std::vector<byte> file( sizeof( visCacheHeader_t ) + vis.size() );
+	visCacheHeader_t *cache = (visCacheHeader_t *)file.data();
+
+	cache->ident = VISCACHE_IDENT;
+	cache->version = VISCACHE_VERSION;
+	cache->key = key;
+	cache->numClusters = numClusters;
+	cache->clusterBytes = clusterBytes;
+	memcpy( cache + 1, vis.data(), vis.size() );
+
+	ri.FS_WriteFile( path, file.data(), (int)file.size() );
+}
+
+/*
+=================
 R_LoadVisibility
 =================
 */
@@ -592,6 +716,7 @@ static	void R_LoadVisibility( const lump_t *l, world_t &worldData ) {
 
     len = l->filelen;
 	if ( !len ) {
+		R_GenerateVisibility( worldData );
 		return;
 	}
 	buf = fileBase + l->fileofs;
