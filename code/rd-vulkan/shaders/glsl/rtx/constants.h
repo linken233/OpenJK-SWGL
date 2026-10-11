@@ -49,6 +49,7 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 #define DENOISER_FLAG_GRADIENTS			(1 << 3)	// the tracer re-shades the A-SVGF gradient samples
 #define DENOISER_FLAG_HIT_DISTANCE		(1 << 4)	// the tracer writes the hit distances of the first bounce (PT_HIT_DIST)
 #define DENOISER_FLAG_FAKE_SPECULAR		(1 << 5)	// the denoiser reconstructs the fake specular of rough surfaces
+#define DENOISER_FLAG_NRD_GUIDES		(1 << 6)	// the tracer writes NRD_PT_NORMAL and NRD_PT_VIEWZ_MOTION, and selects the first bounce lobe with a Bayer pattern
 
 #define AA_MODE_OFF 0
 #define AA_MODE_TAA 1

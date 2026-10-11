@@ -40,6 +40,24 @@ layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 #include "../projection.glsl"
 #include "../nrd_front_end.glsl"
 
+// The sub-pixel offset of the primary ray of the pixel, as primary_rays.rgen makes it:
+// the global jitter in the real-time mode, else get_rng(RNG_PRIMARY_OFF_X / _Y) of path_tracer_rgen.h.
+vec2
+nrd_primary_ray_offset(ivec2 ipos)
+{
+	if(global_ubo.flt_taa != AA_MODE_TAA && !(global_ubo.temporal_blend_factor > 0))
+		return global_ubo.sub_pixel_jitter;
+
+	uint seed = texelFetch(TEX_PT_RNG_SEED_A, ipos, 0).r;
+	uvec3 p = uvec3(seed, seed >> 8u, seed >> 16u) & uvec3(BLUE_NOISE_RES - 1, BLUE_NOISE_RES - 1, NUM_BLUE_NOISE_TEX - 1);
+	uvec3 q = uvec3(p.xy, (p.z + 1u) & uint(NUM_BLUE_NOISE_TEX - 1));
+
+	float x = min(texelFetch(TEX_BLUE_NOISE, ivec3(p), 0).r, 0.9999999999999);
+	float y = min(texelFetch(TEX_BLUE_NOISE, ivec3(q), 0).r, 0.9999999999999);
+
+	return vec2(x, y) - vec2(0.5);
+}
+
 void
 main()
 {
@@ -48,30 +66,35 @@ main()
 		return;
 
 	ivec2 ipos = nrd_flat_to_checker(flat_pos);
+	vec2 image_size = vec2(global_ubo.width, global_ubo.height);
+	vec2 offset = nrd_primary_ray_offset(ipos);
 
 	// View Z. The tracer stores the distance from the camera: Z is that distance times
-	// the Z of the direction of the pixel. A sky pixel is out of the denoising range.
+	// the Z of the direction of the primary ray. A sky pixel is out of the denoising range.
 	float depth = abs(texelFetch(TEX_PT_VIEW_DEPTH_A, ipos, 0).x);
 	bool is_sky = !(depth < PRIMARY_RAY_T_MAX);
 
 	float view_z = 2.0 * PRIMARY_RAY_T_MAX;
 	if(!is_sky)
 	{
-		// The primary ray of the tracer: the pixel centre with the sub-pixel jitter of the real-time mode.
-		bool random_offset = global_ubo.flt_taa == AA_MODE_TAA || global_ubo.temporal_blend_factor > 0;
-		vec2 jitter = random_offset ? vec2(0) : global_ubo.sub_pixel_jitter;
-		vec2 uv = (vec2(flat_pos) + vec2(0.5) + jitter) / vec2(global_ubo.width, global_ubo.height);
+		vec2 uv = (vec2(flat_pos) + vec2(0.5) + offset) / image_size;
 
 		view_z = depth * normalize(projection_screen_to_view(uv, 1.0, false)).z;
 	}
 
-	// Motion: previous minus current, in the units of the screen position (0 to 1).
+	// Motion: previous minus current, in the units of the screen position (0 to 1). The tracer projects
+	// both positions with the matrices without jitter, so the motion is already non-jittered (README: IN_MV).
 	vec2 motion = texelFetch(TEX_PT_MOTION, ipos, 0).xy;
 	if(any(isnan(motion)) || any(isinf(motion)))
 		motion = vec2(0);
 
-	// Normal of the shading, linear roughness.
-	vec3 normal = decode_normal(texelFetch(TEX_PT_NORMAL_A, ipos, 0).x);
+	// 2.5D motion (README: IN_MV): .z = viewZprev - viewZ, in the space of the motion vector.
+	float motion_z = is_sky ? 0.0 : texelFetch(TEX_NRD_PT_VIEWZ_MOTION, ipos, 0).x;
+	if(isnan(motion_z) || isinf(motion_z))
+		motion_z = 0.0;
+
+	// Normal of the shading in the virtual space (reflect_refract.rgen), linear roughness.
+	vec3 normal = decode_normal(texelFetch(TEX_NRD_PT_NORMAL, ipos, 0).x);
 	float roughness = texelFetch(TEX_PT_METALLIC_A, ipos, 0).y;
 	if(is_sky || any(isnan(normal)))
 		normal = vec3(0, 0, 1);
@@ -93,7 +116,7 @@ main()
 	}
 
 	imageStore(IMG_NRD_IN_VIEWZ, flat_pos, vec4(view_z, 0, 0, 0));
-	imageStore(IMG_NRD_IN_MV, flat_pos, vec4(motion, 0, 0));
+	imageStore(IMG_NRD_IN_MV, flat_pos, vec4(motion, motion_z, 0));
 	imageStore(IMG_NRD_IN_NORMAL_ROUGHNESS, flat_pos, nrd_pack_normal_and_roughness(normal, roughness, 0.0));
 	if(nrd_pc.mode == 0)
 	{

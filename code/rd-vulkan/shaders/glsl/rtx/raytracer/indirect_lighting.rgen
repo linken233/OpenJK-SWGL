@@ -154,6 +154,18 @@ indirect_lighting(
 
 		float rng_frensel = get_rng(RNG_BRDF_FRESNEL(spec_bounce_index+1));
 
+		// NRD: the lobe of the first bounce comes from a Bayer 4x4 pattern in the flat screen with a global
+		// temporal jitter (NRD README, probabilistic lobe selection). Each 2x2 block has 4 values 0.25 apart,
+		// so with a probability of 0.5 each 3x3 area has a diffuse and a specular sample.
+		if(spec_bounce_index == 0 && (global_ubo.pt_denoiser_flags & DENOISER_FLAG_NRD_GUIDES) != 0)
+		{
+			const float bayer[16] = float[16](0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5);
+			ivec2 flat_pos = checker_to_flat(ipos, global_ubo.width);
+			float jitter = fract(float(global_ubo.current_frame_idx) * 0.6180339887);
+
+			rng_frensel = fract(bayer[(flat_pos.y & 3) * 4 + (flat_pos.x & 3)] / 16.0 + jitter);
+		}
+
 		float specular_pdf = 0;
 
 #if BOUNCE_SPECULAR

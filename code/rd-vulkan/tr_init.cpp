@@ -1162,7 +1162,7 @@ void R_Register( void )
 	pt_nrd_max_accum					= ri.Cvar_Get("pt_nrd_max_accum",					"30",	CVAR_NONE);
 	pt_nrd_max_fast_accum				= ri.Cvar_Get("pt_nrd_max_fast_accum",				"6",	CVAR_NONE);
 	pt_nrd_prepass_blur					= ri.Cvar_Get("pt_nrd_prepass_blur",				"30",	CVAR_NONE);
-	pt_nrd_antifirefly					= ri.Cvar_Get("pt_nrd_antifirefly",				"0",	CVAR_NONE);
+	pt_nrd_antifirefly					= ri.Cvar_Get("pt_nrd_antifirefly",				"-1",	CVAR_NONE);	// -1: the default of each denoiser
 	pt_nrd_hitdist_recon				= ri.Cvar_Get("pt_nrd_hitdist_recon",				"1",	CVAR_NONE);
 	pt_nrd_direct						= ri.Cvar_Get("pt_nrd_direct",						"1",	CVAR_NONE);
 	// 1: the validation layer of NRD covers the screen (see "VALIDATION" in the NRD README): tiles of normals, roughness, view Z,

@@ -106,7 +106,7 @@ typedef struct {
 	int		max_accum;
 	int		max_fast_accum;
 	float	prepass_blur;
-	int		antifirefly;
+	int		antifirefly;		// -1: the default of the denoiser (ReBLUR on, ReLAX off)
 	int		hitdist_recon;
 	int		direct;
 } nrd_tuning_t;
@@ -131,7 +131,7 @@ static void nrd_read_tuning( nrd_tuning_t *t )
 	t->max_accum = (int)Com_Clamp( 0.f, 63.f, pt_nrd_max_accum->value );
 	t->max_fast_accum = (int)Com_Clamp( 0.f, 63.f, pt_nrd_max_fast_accum->value );
 	t->prepass_blur = Com_Clamp( 0.f, 100.f, pt_nrd_prepass_blur->value );
-	t->antifirefly = pt_nrd_antifirefly->integer ? 1 : 0;
+	t->antifirefly = pt_nrd_antifirefly->integer < 0 ? -1 : ( pt_nrd_antifirefly->integer ? 1 : 0 );
 	t->hitdist_recon = (int)Com_Clamp( 0.f, 2.f, (float)pt_nrd_hitdist_recon->integer );
 	t->direct = pt_nrd_direct->integer ? 1 : 0;
 
@@ -758,10 +758,11 @@ static void nrd_denoise( VkCommandBuffer cmd_buf, int which, const nrd_tuning_t 
 		Com_Memcpy( common.worldToViewMatrix, ubo->V, sizeof(float) * 16 );
 		Com_Memcpy( common.worldToViewMatrixPrev, ubo->V_prev, sizeof(float) * 16 );
 
-		// The motion vectors are previous minus current screen position, in the units of the screen (0 to 1).
+		// 2.5D motion: previous minus current screen position, in the units of the screen (0 to 1),
+		// and .z = viewZprev - viewZ (nrd_prepare.comp).
 		common.motionVectorScale[0] = 1.0f;
 		common.motionVectorScale[1] = 1.0f;
-		common.motionVectorScale[2] = 0.0f;
+		common.motionVectorScale[2] = 1.0f;
 		common.isMotionVectorInWorldSpace = false;
 
 		// The sub-pixel jitter of the tracer, in pixels. Random offsets (TAA mode, accumulation) are not known to NRD.
@@ -798,7 +799,8 @@ static void nrd_denoise( VkCommandBuffer cmd_buf, int which, const nrd_tuning_t 
 		relax.diffuseMaxFastAccumulatedFrameNum = relax.specularMaxFastAccumulatedFrameNum = (uint32_t)tuning->max_fast_accum;
 		relax.diffusePrepassBlurRadius = tuning->prepass_blur;
 		relax.specularPrepassBlurRadius = tuning->prepass_blur * ( 50.0f / 30.0f );
-		relax.enableAntiFirefly = tuning->antifirefly != 0;
+		if ( tuning->antifirefly >= 0 )
+			relax.enableAntiFirefly = tuning->antifirefly != 0;
 		relax.hitDistanceReconstructionMode = (nrd::HitDistanceReconstructionMode)tuning->hitdist_recon;
 	}
 	else
@@ -808,7 +810,8 @@ static void nrd_denoise( VkCommandBuffer cmd_buf, int which, const nrd_tuning_t 
 		reblur.maxStabilizedFrameNum = MIN( reblur.maxStabilizedFrameNum, reblur.maxAccumulatedFrameNum );
 		reblur.diffusePrepassBlurRadius = tuning->prepass_blur;
 		reblur.specularPrepassBlurRadius = tuning->prepass_blur * ( 50.0f / 30.0f );
-		reblur.enableAntiFirefly = tuning->antifirefly != 0;
+		if ( tuning->antifirefly >= 0 )
+			reblur.enableAntiFirefly = tuning->antifirefly != 0;
 		reblur.hitDistanceReconstructionMode = (nrd::HitDistanceReconstructionMode)tuning->hitdist_recon;
 		reblur.hitDistanceParameters.A *= NRD_UNITS_PER_METER;
 	}
@@ -969,7 +972,7 @@ static void vk_rtx_nrd_reblur_none( void )
 {
 }
 
-#define NRD_DENOISER_FLAGS	( DENOISER_FLAG_ACTIVE | DENOISER_FLAG_SPEC_DEMODULATE | DENOISER_FLAG_HIT_DISTANCE )
+#define NRD_DENOISER_FLAGS	( DENOISER_FLAG_ACTIVE | DENOISER_FLAG_SPEC_DEMODULATE | DENOISER_FLAG_HIT_DISTANCE | DENOISER_FLAG_NRD_GUIDES )
 
 const denoiser_t vk_rtx_denoiser_nrd_relax = {
 	"nrd relax",

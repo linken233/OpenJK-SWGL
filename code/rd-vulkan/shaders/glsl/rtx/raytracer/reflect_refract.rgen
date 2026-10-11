@@ -596,8 +596,12 @@ main()
 		footprint_y *= lod_scale;
 	}
 
+	// The NRD guides follow the motion vector: they take the virtual space of the new surface where it is corrected.
+	bool nrd_guides_update = false;
+	vec3 nrd_mirror_normal = geo_normal;
+
 	if(correct_motion_vector == 1 && spec_bounce_index == 0 || correct_motion_vector == 2)
-	{			
+	{
 		vec3 ref_pos_curr, ref_pos_prev;
 		vec3 ref_geo_normal;
 
@@ -619,8 +623,16 @@ main()
 		// compute the motion vector assuming that the primary surface is a static plane
 		vec2 screen_pos_curr, screen_pos_prev;
 		float distance_curr, distance_prev;
-		projection_view_to_screen((global_ubo.V * vec4(ref_pos_curr, 1)).xyz, screen_pos_curr, distance_curr, false);
-		projection_view_to_screen((global_ubo.V_prev * vec4(ref_pos_prev, 1)).xyz, screen_pos_prev, distance_prev, true);
+		vec3 view_pos_curr = (global_ubo.V * vec4(ref_pos_curr, 1)).xyz;
+		vec3 view_pos_prev = (global_ubo.V_prev * vec4(ref_pos_prev, 1)).xyz;
+		projection_view_to_screen(view_pos_curr, screen_pos_curr, distance_curr, false);
+		projection_view_to_screen(view_pos_prev, screen_pos_prev, distance_prev, true);
+
+		if((global_ubo.pt_denoiser_flags & DENOISER_FLAG_NRD_GUIDES) != 0)
+		{
+			imageStore(IMG_NRD_PT_VIEWZ_MOTION, ipos, vec4(view_pos_prev.z - view_pos_curr.z));
+			nrd_guides_update = true;
+		}
 
 		vec3 motion;
 		motion.xy = screen_pos_prev - screen_pos_curr;
@@ -789,6 +801,14 @@ main()
 #ifdef USE_RTX_INSPECT_TANGENTS
 		imageStore(IMG_PT_TANGENT_A,ipos, uvec4(encode_normal(geo_tangent)));
 #endif
+	}
+
+	// The normal for NRD in the virtual space: a reflection mirrors it by the plane of the mirror (NRD README, PSR).
+	// A refraction keeps it. Where the motion vector keeps the previous surface, the normal keeps it too.
+	if(nrd_guides_update)
+	{
+		vec3 nrd_normal = (correct_motion_vector == 1) ? reflect(normal, nrd_mirror_normal) : normal;
+		imageStore(IMG_NRD_PT_NORMAL, ipos, uvec4(encode_normal(nrd_normal)));
 	}
 
 	// Replace the material light style with medium

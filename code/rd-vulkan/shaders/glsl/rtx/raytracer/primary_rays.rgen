@@ -350,6 +350,11 @@ main()
 		imageStore(IMG_PT_VIEW_DIRECTION, ipos, vec4(direction, 0));
 		imageStore(IMG_PT_SHADING_POSITION, ipos, vec4(global_ubo.cam_pos.xyz + direction * PRIMARY_RAY_T_MAX, 0));
 		imageStore(IMG_PT_MOTION, ipos, vec4(motion, 0, 0));
+		if((global_ubo.pt_denoiser_flags & DENOISER_FLAG_NRD_GUIDES) != 0)
+		{
+			imageStore(IMG_NRD_PT_NORMAL, ipos, uvec4(0));
+			imageStore(IMG_NRD_PT_VIEWZ_MOTION, ipos, vec4(0));
+		}
 		imageStore(IMG_PT_VISBUF_PRIM_A, ipos, uvec4(0));
 		imageStore(IMG_PT_VISBUF_BARY_A, ipos, vec4(0));
 		imageStore(IMG_PT_BASE_COLOR_A, ipos, vec4(0));
@@ -424,15 +429,21 @@ main()
 	
 	vec2 screen_pos_curr, screen_pos_prev;
 	float distance_curr, distance_prev;
-	projection_view_to_screen((global_ubo.V * vec4(pos_ws_curr, 1)).xyz, screen_pos_curr, distance_curr, false);
-	projection_view_to_screen((global_ubo.V_prev * vec4(pos_ws_prev, 1)).xyz, screen_pos_prev, distance_prev, true);
-	
+	vec3 view_pos_curr = (global_ubo.V * vec4(pos_ws_curr, 1)).xyz;
+	vec3 view_pos_prev = (global_ubo.V_prev * vec4(pos_ws_prev, 1)).xyz;
+	projection_view_to_screen(view_pos_curr, screen_pos_curr, distance_curr, false);
+	projection_view_to_screen(view_pos_prev, screen_pos_prev, distance_prev, true);
+
 	vec3 motion;
 	motion.xy = screen_pos_prev - screen_pos_curr;
 	motion.z = distance_prev - distance_curr;
 
 	imageStore(IMG_PT_VIEW_DEPTH_A, ipos, vec4(distance_curr));
 	imageStore(IMG_PT_MOTION, ipos, vec4(motion, fwidth_depth));
+
+	// The .z of the NRD 2.5D motion: viewZprev - viewZ.
+	if((global_ubo.pt_denoiser_flags & DENOISER_FLAG_NRD_GUIDES) != 0)
+		imageStore(IMG_NRD_PT_VIEWZ_MOTION, ipos, vec4(view_pos_prev.z - view_pos_curr.z));
 
 	vec3 primary_base_color = vec3(1);
 	float primary_metallic = 0;
@@ -562,6 +573,10 @@ main()
 	{
 		imageStore(IMG_PT_NORMAL_A, ipos, uvec4(encode_normal(normal)));
 	}
+
+	// The normal for NRD. reflect_refract.rgen mirrors it for a reflection.
+	if((global_ubo.pt_denoiser_flags & DENOISER_FLAG_NRD_GUIDES) != 0)
+		imageStore(IMG_NRD_PT_NORMAL, ipos, uvec4(encode_normal(normal)));
 
 	// Replace the material light style with medium
 	material_id = (material_id & ~MATERIAL_LIGHT_STYLE_MASK) | (global_ubo.medium << MATERIAL_LIGHT_STYLE_SHIFT) & MATERIAL_LIGHT_STYLE_MASK;
