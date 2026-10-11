@@ -231,6 +231,8 @@ Le menu envoie des commandes du mode (`ledit_select`, `ledit_set`, `ledit_goto`,
 
 Le **rayon d'émission** n'est pas une portée. Une sphère du tracer éclaire en 1/d², sans coupure. Le rayon d'émission règle seulement la douceur des ombres.
 
+Une sphère posée contre un mur éclaire la partie du mur que la sphère traverse : un point du mur à l'intérieur de la sphère voit l'émetteur sur tout son hémisphère (shaders `light_lists.h`, `sphere_light_contains`). Une sphère un peu derrière une surface est reflétée devant elle (64 unités au plus).
+
 ## 6. Commandes
 
 Toutes, sauf `lightedit`, demandent le mode actif.

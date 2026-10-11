@@ -80,11 +80,29 @@ sphere_light_center(mat3 positions, vec3 p, vec3 n)
 	return c;
 }
 
+// True when the surface point p is inside a fixed sphere light (a light against a wall: the wall
+// crosses the sphere). Such a point sees the emitter over its whole hemisphere.
+bool
+sphere_light_contains(mat3 positions, vec3 center, vec3 p)
+{
+	vec3 d = center - p;
+	return positions[1].z == 0 && dot(d, d) < square(positions[1].x);
+}
+
 float
 projected_sphere_area(mat3 positions, vec3 p, vec3 n, vec3 V, float phong_exp, float phong_scale, float phong_weight)
 {
-	vec3 position = sphere_light_center(positions, p, n) - p;
+	vec3 center = sphere_light_center(positions, p, n);
 	float sphere_radius = positions[1].x;
+
+	if (sphere_light_contains(positions, center, p))
+	{
+		float specular_in = phong(n, n, V, phong_exp) * phong_scale;
+		// Same unit as the outside case at the sphere surface: a hemisphere is 2.
+		return 2.0 * mix(1.0, specular_in, phong_weight);
+	}
+
+	vec3 position = center - p;
 	float dist = length(position);
 	float rdist = 1.0 / dist;
 	vec3 L = position * rdist;
@@ -258,8 +276,29 @@ vec3
 sample_projected_sphere(vec3 p, vec3 n, mat3 positions, vec2 rnd, out vec3 light_normal, out float pdfw)
 {
 	vec3 light_center = sphere_light_center(positions, p, n);
-	vec3 position = light_center - p;
 	float sphere_radius = positions[1].x;
+
+	if (sphere_light_contains(positions, light_center, p))
+	{
+		// Uniform direction over the hemisphere of n, to the point where it leaves the sphere. The
+		// normal there points inwards, toward p, like the normal of a sphere seen from outside.
+		float y = rnd.x;
+		float r = sqrt(max(0, 1 - y * y));
+		float phi = 2.0 * M_PI * rnd.y;
+		mat3 basis = construct_ONB_frisvad(n);
+		vec3 dir = basis[0] * (r * cos(phi)) + basis[1] * y + basis[2] * (r * sin(phi));
+
+		vec3 oc = p - light_center;
+		float b = dot(oc, dir);
+		float t = -b + sqrt(max(0, b * b - (dot(oc, oc) - square(sphere_radius))));
+
+		vec3 hit = p + dir * t;
+		light_normal = normalize(light_center - hit);
+		pdfw = 0.5;
+		return hit;
+	}
+
+	vec3 position = light_center - p;
 	float dist = length(position);
 	float rdist = 1.0 / dist;
 	vec3 L = position * rdist;
