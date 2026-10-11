@@ -777,6 +777,10 @@ static qboolean ClusterFull( int cluster, int extra = 1 )
 
 	const byte *pvs = BSP_GetPvs( g_world, cluster );
 
+	// A map without a PVS (no vis lump) puts no light in a cluster list.
+	if ( !pvs )
+		return qfalse;
+
 	for ( int c = 0; c < w.numClusters; c++ )
 	{
 		if ( !( pvs[c >> 3] & ( 1 << ( c & 7 ) ) ) )
