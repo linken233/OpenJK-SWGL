@@ -1553,6 +1553,9 @@ qboolean CG_LightEdit_ConsoleCommand( const char *cmd )
 		{ "ledit_sun_brightness",	LE_CmdSunBrightness },
 		{ "ledit_sun_angle",	LE_CmdSunAngle },
 		{ "ledit_sky_reset",	LE_CmdSkyReset },
+		{ "ledit_sky_diffuse",	LE_CmdSkyDiffuse },
+		{ "ledit_ambient",	LE_CmdAmbient },
+		{ "ledit_ambient_reset",	LE_CmdAmbientReset },
 	};
 
 	for ( size_t i = 0; i < ARRAY_LEN( commands ); i++ )
@@ -1605,7 +1608,7 @@ void CG_LightEdit_InitConsoleCommands( void )
 		"ledit_writebinds", "ledit_emissive_list", "ledit_emissive", "ledit_emissive_reset",
 		"ledit_emissive_select", "ledit_emissive_surfaces",
 		"ledit_sky", "ledit_sun", "ledit_sun_here", "ledit_sun_color", "ledit_sun_brightness",
-		"ledit_sun_angle", "ledit_sky_reset"
+		"ledit_sun_angle", "ledit_sky_reset", "ledit_sky_diffuse", "ledit_ambient", "ledit_ambient_reset"
 	};
 
 	for ( size_t i = 0; i < ARRAY_LEN( names ); i++ )

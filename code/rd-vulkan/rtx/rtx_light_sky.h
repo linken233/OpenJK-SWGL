@@ -37,6 +37,13 @@ qboolean	RTX_LightSky_Hybrid( void );
 // Gives the sun of the setting. False without a setting, and in the SKYBOX mode.
 qboolean	RTX_LightSky_Sun( float *azimuth, float *elevation, vec3_t color, float *brightness, float *angle );
 
+// Cloud layer, 0..1. Zero without a setting, in the SKYBOX mode (no sun) and with pt_sky_per_map 0.
+float		RTX_LightSky_Diffuse( void );
+
+// Ambient floor for the shaders: colour * intensity * pt_ambient_floor_scale. Zero when the map has none.
+// It applies in every mode, GLOBAL included.
+void		RTX_LightSky_AmbientFloor( vec3_t out );
+
 // Sun colour for the buffer of the sun colour in the HYBRID mode. envScale is pt_env_scale.
 // The physical mode integrates the radiance of the sun disk over its solid angle, which
 // gives transmittance * sun_color * sun_brightness, then multiplies by pt_env_scale.

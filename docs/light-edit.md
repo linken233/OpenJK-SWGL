@@ -217,9 +217,9 @@ Ctrl est souvent lié à l'accroupissement : un raccourci Ctrl fait descendre un
 - **Suivi de la sélection du jeu** : le cgame écrit la lumière principale dans la cvar `ledit_sel` et le shader émissif choisi dans `ledit_emi_sel` (-1 pour aucun). Quand l'une change, le menu choisit la ligne de la liste correspondante (elle défile jusqu'à elle), remplit les champs de la page et les boutons agissent sur cette ligne. Un filtre ou une recherche qui cache la lumière laisse la liste sans ligne choisie ; les boutons visent quand même la lumière. À l'ouverture du menu, la sélection du jeu est reprise.
 
 **Page Sky and sun**
-- Deux lignes donnent le ciel en vigueur : mode (`global`, `skybox`, `physical`, `hybrid`, « (map) » s'il vient de la map) et soleil (azimut, élévation, couleur, luminosité, angle).
+- Deux lignes donnent le ciel en vigueur : mode (`global`, `skybox`, `physical`, `hybrid`, « (map) » s'il vient de la map), le nuage (`cloud`) et le plancher (`floor`), puis le soleil (azimut, élévation, couleur, luminosité, angle).
 - Quatre boutons (Global, Skybox, Physical, Hybrid) envoient `ledit_sky <mode>`.
-- Champs : « Azimuth », « Elevation », « Angle (1-10) », « Brightness » et « Colour r g b ». « Apply sun » envoie seulement les commandes dont la valeur diffère du ciel en vigueur (`ledit_sun`, `ledit_sun_color`, `ledit_sun_brightness`, `ledit_sun_angle`) : chacune est une entrée d'undo. « Sun here » envoie `ledit_sun_here`, « Reset sky » envoie `ledit_sky_reset`, « Load from sky » remplit les champs.
+- Champs : « Azimuth », « Elevation », « Angle (1-10) », « Brightness » et « Colour r g b », puis « Cloud (0-1) », « Floor colour r g b » et « Floor intensity ». « Apply » envoie seulement les commandes dont la valeur diffère du ciel en vigueur (`ledit_sun`, `ledit_sun_color`, `ledit_sun_brightness`, `ledit_sun_angle`, `ledit_sky_diffuse`, `ledit_ambient`) : chacune est une entrée d'undo. « Sun here » envoie `ledit_sun_here`, « Reset sky » envoie `ledit_sky_reset`, « No floor » envoie `ledit_ambient_reset`, « Load from sky » remplit les champs.
 - Les champs se remplissent seuls à l'ouverture du menu et à chaque changement du ciel (commande, undo, Ctrl+Z).
 
 **Page Emissive**
@@ -277,11 +277,14 @@ Toutes, sauf `lightedit`, demandent le mode actif.
 | `ledit_sun_color <r> <g> <b>` | Couleur du soleil (0 à 10 par composante, 1 = blanc). |
 | `ledit_sun_brightness <x>` | Luminosité du soleil. |
 | `ledit_sun_angle <deg>` | Diamètre angulaire du soleil (1 à 10°). |
-| `ledit_sky_reset` | La map revient au ciel global. |
+| `ledit_sky_reset` | La map revient au ciel global (le nuage revient à 0). Le plancher ambiant reste. |
+| `ledit_sky_diffuse <0-1>` | Nuage (§ 8 quater) : part du soleil direct que le nuage retire et rend en lumière de ciel. Sans argument, affiche la valeur. En mode `global`, passe d'abord en `physical` ou `hybrid` (comme une commande de soleil). En mode `skybox` (pas de soleil), la valeur est gardée mais ignorée, et la commande l'indique. |
+| `ledit_ambient <r> <g> <b> [intensité]` | Plancher ambiant de la map (§ 8 quater) : couleur (0 à 1 par composante) et intensité (0 à 100, 0 = coupé). Sans intensité, garde l'intensité en vigueur, ou 1 si elle valait 0. Sans argument, affiche la valeur. Marche dans tous les modes, `global` compris. |
+| `ledit_ambient_reset` | Coupe le plancher ambiant de la map (intensité 0). |
 
 Sur une surface émissive, seuls `ledit_set color`, `intensity` et `style` agissent. Les autres clés (`origin`, `radius`, `name`, `type`, `dir`, `cone`, `width`, `height`, `roll`, `twosided`) sautent les surfaces de la sélection, avec un message. `ledit_set intensity` ne touche que les cibles du type de la lumière principale (surface ou lumière). `ledit_delete`, `ledit_revert`, `ledit_select`, `ledit_goto`, `ledit_get` et `ledit_undo` marchent sur une surface comme sur une lumière ; `ledit_get` ajoute le shader, le nombre de triangles et les facteurs.
 
-Commandes de débogage du renderer (utilisables même hors du mode) : `pt_ledit_list` (affiche aussi les rectangles, les surfaces émissives et les slots), `pt_ledit_add x y z [intensité] [r g b] [rect w h] [dir x y z] [roll deg] [twosided 0|1] [style n]`, `pt_ledit_set <id> <origin|color|intensity|radius> <valeurs>`, `pt_ledit_set <id> spot dx dy dz ext int`, `pt_ledit_set <id> sphere`, `pt_ledit_set <id> rect [w h]`, `pt_ledit_set <id> dir x y z`, `pt_ledit_set <id> roll deg`, `pt_ledit_set <id> twosided 0|1`, `pt_ledit_set <id> style n`, `pt_ledit_del <id>`, `pt_ledit_restore <id>`, `pt_ledit_compact`, `pt_ledit_mute <id> <0|1>`, `pt_ledit_solo <id|-1>`, `pt_ledit_stats`, `pt_ledit_emissive [n]` (les n premières surfaces émissives : face, rang, shader, triangles, slots, centre, facteur), `pt_ledit_dynamic`, `pt_ledit_emissive_shaders`, `pt_ledit_emissive_scale <index|nom> <échelle>`, `pt_sky_print`, `pt_sky_set <skybox|physical|hybrid|global>` ou `pt_sky_set <clé> <valeurs>` (`sun_azimuth`, `sun_elevation`, `sun_color`, `sun_brightness`, `sun_angle`), `pt_sky_reset`.
+Commandes de débogage du renderer (utilisables même hors du mode) : `pt_ledit_list` (affiche aussi les rectangles, les surfaces émissives et les slots), `pt_ledit_add x y z [intensité] [r g b] [rect w h] [dir x y z] [roll deg] [twosided 0|1] [style n]`, `pt_ledit_set <id> <origin|color|intensity|radius> <valeurs>`, `pt_ledit_set <id> spot dx dy dz ext int`, `pt_ledit_set <id> sphere`, `pt_ledit_set <id> rect [w h]`, `pt_ledit_set <id> dir x y z`, `pt_ledit_set <id> roll deg`, `pt_ledit_set <id> twosided 0|1`, `pt_ledit_set <id> style n`, `pt_ledit_del <id>`, `pt_ledit_restore <id>`, `pt_ledit_compact`, `pt_ledit_mute <id> <0|1>`, `pt_ledit_solo <id|-1>`, `pt_ledit_stats`, `pt_ledit_emissive [n]` (les n premières surfaces émissives : face, rang, shader, triangles, slots, centre, facteur), `pt_ledit_dynamic`, `pt_ledit_emissive_shaders`, `pt_ledit_emissive_scale <index|nom> <échelle>`, `pt_sky_print`, `pt_sky_set <skybox|physical|hybrid|global>` ou `pt_sky_set <clé> <valeurs>` (`sun_azimuth`, `sun_elevation`, `sun_color`, `sun_brightness`, `sun_angle`, `sky_diffuse`, et, dans tous les modes, `ambient_color r g b` et `ambient_intensity v`), `pt_sky_reset`.
 
 Déplacer ou tourner un rectangle reconstruit les listes de lumières par cluster (au plus toutes les 100 ms pendant une saisie), car ces listes écartent les clusters situés derrière le plan du polygone.
 
@@ -306,6 +309,7 @@ Déplacer ou tourner un rectangle reconstruit les listes de lumières par cluste
 | `ledit_sel`, `ledit_emi_sel` | — | Écrites par le cgame pour le menu : id de la lumière principale et index du shader émissif choisi (-1 pour aucun). Ne pas les modifier. |
 | `pt_light_styles` | 1 | 0 : coupe la modulation des styles de lumière. |
 | `pt_sky_per_map` | 1 | 0 : ignore le ciel réglé pour la map (pour comparer avec le ciel global). |
+| `pt_ambient_floor_scale` | 1 | Multiplie le plancher ambiant de la map (§ 8 quater), pour le régler sans toucher au fichier. 0 coupe le plancher. Archivée. |
 | `pt_sky_q3map_sun` | 0 | 1 : une map sans bloc global mais avec `q3map_sun` reçoit le ciel hybride, avec la direction et la couleur de `q3map_sun`. |
 
 Les cvars `ledit_*` sont archivées : elles gardent leur valeur d'une session à l'autre.
@@ -389,7 +393,20 @@ Chaque map peut avoir son propre réglage du ciel. Il n'écrit jamais les cvars 
 - `ledit_sun_color` : 0 à 10 par composante, 1 = blanc. `ledit_sun_angle` : 1 à 10°.
 - Calibrage du mode `hybrid` : couleur du soleil × luminosité × `pt_env_scale` × 0,9 (estimation fixe de la transmittance).
 - L'undo couvre les changements de ciel. `ledit_sky_reset` ou `ledit_sky global` retire le réglage de la map.
-- Renderer : `pt_sky_print`, `pt_sky_set`, `pt_sky_reset` (§ 6) ; cvars `pt_sky_per_map` et `pt_sky_q3map_sun` (§ 7).
+- Renderer : `pt_sky_print`, `pt_sky_set`, `pt_sky_reset` (§ 6) ; cvars `pt_sky_per_map`, `pt_sky_q3map_sun` et `pt_ambient_floor_scale` (§ 7).
+- Le mode `global` ne désigne plus « pas de bloc » : un bloc `global` peut ne porter que le plancher ambiant (`sky global`, § 10). `ledit_sky global` et `ledit_sky_reset` retirent le ciel de la map et gardent le plancher.
+
+**Nuage (`sky_diffuse`, 0 à 1).** Simule une couche de nuages qui empêche le soleil direct. 0 ne change rien ; 1 donne un ciel entièrement couvert. Modes `physical` et `hybrid` seulement (sans soleil, la valeur est ignorée).
+- Soleil direct : la radiance de l'échantillonnage du soleil est multipliée par (1 − valeur). Le disque échantillonné s'élargit avec le carré de la valeur : la tangente de son demi-angle passe de celle de `sun_angle` à 0,6 (environ 31°). Les ombres s'adoucissent et, à 1, le soleil direct est nul (aucun rayon d'ombre n'est tiré). La brillance spéculaire du soleil suit (multipliée par (1 − valeur), lobe élargi).
+- Énergie rendue : la scène ne s'assombrit pas. Le ciel utilisé comme lumière (polygones de ciel et rayons de rebond qui s'échappent vers le ciel) reçoit une radiance uniforme = couleur du soleil × valeur × sin(élévation) / π. Elle donne, sur une surface horizontale, le même éclairement que le soleil retiré (E = π·L) ; sin(élévation) est borné à 0,1 en bas. Choix : la fonction `env_map(…, sans soleil)` du tracer est le seul point que partagent l'échantillonnage des lumières de ciel, le ReSTIR, les rebonds, le cache de radiance et les sprites éclairés : un seul ajout les couvre tous, sans nouveau rayon et sans bruit supplémentaire. Conséquence : seul un ciel visible éclaire (ouvertures, polygones de ciel) ; une pièce fermée reste sombre, comme avec un vrai ciel couvert.
+- Vue : le disque du soleil s'efface du ciel visible (mélange avec le ciel sans soleil) et les rayons de lumière (`god_rays`) disparaissent avec le soleil direct.
+- Limites : la teinte de la lumière rendue est celle du soleil, pas celle de la voûte bleue ; la luminance plus forte au zénith d'un vrai ciel couvert n'est pas copiée.
+
+**Plancher ambiant (`ambient_color`, `ambient_intensity`).** Par map, dans tous les modes. Intensité 0 (défaut) : aucun effet, la map est rendue comme avant (un seul test dans le shader de composition).
+- C'est un **plancher**, pas un ajout : l'éclairement d'un point de surface, par canal, n'est jamais sous `couleur × intensité × pt_ambient_floor_scale`. Un point déjà plus lumineux ne change pas. Le plancher se multiplie ensuite par l'albédo, comme tout l'éclairement, puis par le débit (miroirs, verre).
+- Où : dans la fonction de composition finale (`composite_color`, `brdf.glsl`), sur la somme éclairement indirect (LF) + éclairement direct (HF), **après** le débruiteur et **avant** la multiplication par l'albédo. Ce même point sert A-SVGF (`asvgf_atrous`), NRD (`nrd_composite`) et le rendu sans débruiteur (`compositing`) : le plancher est donc sans bruit, n'entre dans aucun historique temporel (pas de traînée, pas de démodulation faussée) et ne coûte aucun rayon. Les pixels de ciel (albédo 0) ne changent pas.
+- Ce n'est pas une source de lumière : le plancher n'éclaire pas les autres surfaces (pas de rebond), n'agit pas sur le spéculaire, ni sur les pixels de ciel, ni sur les sprites ou les faisceaux. L'unité est celle de l'éclairement avant l'albédo (intensité 1 : une surface blanche prend au moins la couleur du plancher avant le mappage de tons). Régler à l'œil avec `pt_ambient_floor_scale`.
+- Un bloc `global` du plancher seul donne `sky global` : le ciel reste celui des cvars.
 - Corrections liées : `sun_color_r/g/b` rafraîchissent maintenant le ciel ; la radiance du sol atteint les shaders ; le préréglage `physical_sky` n'écrase plus le réglage d'une map.
 
 
@@ -422,7 +439,7 @@ bind F12 "ledit_grid_next"
 
 Vérifiez que la molette est liée à `weapnext` / `weapprev` (`bind MWHEELUP weapnext`, `bind MWHEELDOWN weapprev`) et que `[` / `]` sont liés à `invprev` / `invnext`.
 
-## 10. Le fichier `.lgt` (format v2, API de version 6)
+## 10. Le fichier `.lgt` (format v2, API de version 7)
 
 Emplacement : `maps/<map>.lgt` dans le homepath (par exemple `Documents\My Games\SWGL\SWGL\maps`). Une copie de sécurité `maps/<map>.lgt.bak` est faite avant chaque `ledit_save`.
 
@@ -518,6 +535,9 @@ global                    // ciel et soleil de la map
 	sun_color 1 0.9 0.8
 	sun_brightness 1
 	sun_angle 4
+	sky_diffuse 0.4       // absent si 0
+	ambient_color 0.6 0.7 1   // plancher ambiant, absent si ambient_intensity vaut 0
+	ambient_intensity 0.5
 }
 ```
 
@@ -530,11 +550,11 @@ Règles :
 - Les clés `type`, `dir`, `cone_outer` et `cone_inner` existent aussi pour les blocs lgt édités et les surcharges d'entités. Une surcharge qui change seulement la couleur d'un spot d'origine garde sa direction et ses cônes. `type sphere` note un spot d'origine converti en sphère.
 - Le rectangle utilise les clés `type rect`, `dir`, `width`, `height`, `roll` et `two_sided`. La clé `style` est écrite seulement si elle n'est pas 0 ou si elle diffère du style d'origine.
 - Un bloc `emissive` est écrit pour chaque shader dont le multiplicateur n'est pas 1. Un shader absent de la map garde son bloc dans le fichier (avertissement au chargement).
-- Le bloc `global` est écrit seulement si le mode n'est pas `global`. Seul le premier bloc `global` est lu. Une map qui a des entités `light` et pas de `.lgt` reçoit un fichier qui ne contient que ces blocs.
+- Le bloc `global` est écrit si le mode n'est pas `global` ou si le plancher ambiant est actif. Un bloc qui ne porte que le plancher a `sky global` et aucune clé de soleil. Les clés `sky_diffuse`, `ambient_color` et `ambient_intensity` sont écrites seulement si elles sont non nulles : un fichier sans nuage ni plancher reste identique à celui d'avant. Un ancien binaire ignore ces clés (clés inconnues) et lit `sky global` comme « pas de ciel ». Seul le premier bloc `global` est lu. Une map qui a des entités `light` et pas de `.lgt` reçoit un fichier qui ne contient que ces blocs.
 - Compatibilité : le parseur v1 saute le mot `global` et rejette les blocs sans `intensity`. Chaque clé a toujours une ou trois valeurs.
 - `pt_lightgen` compte les blocs `emissive`, `emissive_surface` et `global` comme des éditions : il refuse d'écraser le fichier sans `force` ; avec `force`, il les garde.
 - `ledit_save`, `ledit_reload` et `lightedit 0 discard` couvrent aussi ces blocs.
-- Version d'API 6 (la version 6 ajoute la source `RTX_LSRC_EMISSIVE`, le type `RTX_LTYPE_SURFACE`, `GetEmissiveSurface` et le champ `numEmissivePolys`, et retire `CountEmissive`, `GetEmissive` et `EmissiveShaderOf` : un polygone émissif n'a plus d'index, sa surface est un enregistrement ; la version 5 avait ajouté `Compact`, le drapeau `RTX_LFLAG_COMPACTED` et les compteurs `numCompacted` et `slotsUsed`) : le renderer, la DLL du jeu et l'exe doivent venir du même build. Le cgame et l'interface refusent une autre version.
+- Version d'API 7 (la version 7 ajoute à `rtxSkyDesc_t` les champs `skyDiffuse`, `ambientColor` et `ambientIntensity` ; `SetSky` avec le mode `RTX_SKY_GLOBAL` retire le ciel mais garde le plancher de la description). La version 6 ajoutait la source `RTX_LSRC_EMISSIVE`, le type `RTX_LTYPE_SURFACE`, `GetEmissiveSurface` et le champ `numEmissivePolys`, et retire `CountEmissive`, `GetEmissive` et `EmissiveShaderOf` : un polygone émissif n'a plus d'index, sa surface est un enregistrement ; la version 5 avait ajouté `Compact`, le drapeau `RTX_LFLAG_COMPACTED` et les compteurs `numCompacted` et `slotsUsed`). Le renderer, la DLL du jeu et l'exe doivent venir du même build. Le cgame et l'interface refusent une autre version.
 - Les mutes et le solo (outil 9) ne sont jamais écrits.
 - Les blocs de `source` inconnue sont conservés tels quels.
 - `pt_lightgen <map>` refuse d'écraser un fichier qui contient des éditions. `pt_lightgen <map> force` l'écrase après une copie en `.lgt.bak`.
@@ -546,6 +566,9 @@ Règles :
 - **Multiplicateur émissif** : l'aspect de la surface suit le multiplicateur par pas de 4 % (code d'échelle sur 8 bits), et 0 donne environ 0,004. Les images d'animation propres à un modèle de brosse (porte) gardent le facteur 1. Une surface émissive qui n'est pas un shader « glow » reçoit aussi `pt_glow_scale` pour ses rayons indirects dès que son multiplicateur n'est pas 1.
 - **Soleil hybride** : le calibrage est une estimation (transmittance fixe de 0,9).
 - **Ciel** : en mode `global`, un changement de ciel affiche les anciennes valeurs pendant une image.
+- **Nuage** : il n'agit qu'avec un soleil (`physical`, `hybrid`) et qu'à travers le ciel visible : sans ouverture de ciel, une pièce fermée ne reçoit pas la lumière rendue. La teinte de cette lumière est celle du soleil. La pondération de l'échantillonnage des lumières de ciel ne tient pas compte du supplément : un peu plus de bruit à valeur élevée.
+- **Plancher ambiant** : ce n'est pas une lumière (pas de rebond, pas de spéculaire). Sur des surfaces déjà éclairées plus fort que le plancher, il ne fait rien. Il agit aussi sur les surfaces vues dans un miroir.
+- **Shaders** : la construction ne régénère pas les blobs de `shader_data_rtx.c` ; après une retouche du GLSL, compiler avec `glslangValidator -DGLSL` et remplacer les blobs concernés.
 - **Rectangles** : déplacer ou tourner un rectangle reconstruit les listes de clusters ; sur une très grande map, un à-coup est possible. Le choix d'un rectangle vise son centre seulement.
 - **Clavier** : un raccourci ne marche pas si l'utilisateur a lié une combinaison de touches sur la même touche (le moteur la remplace avant le mode). Le nom d'une lumière se saisit par la console (`ledit_set name`).
 - **Menu** : les largeurs de colonnes sont fixes ; le menu suit la lumière principale du jeu, pas toute la sélection multiple ; « Apply sun » envoie une commande, donc une entrée d'undo, par valeur changée.
@@ -623,4 +646,7 @@ Itération 5 (surfaces émissives une par une). Les étapes se font en mode `lig
 51. **BSP recompilé** : changer le `check` d'un bloc de plus d'une unité dans le fichier, `devmap` : « emissive surface … does not match the BSP, ignored » ; `ledit_save` garde le bloc tel quel. Un fichier sans bloc `emissive_surface` charge sans changement.
 52. **Rechargement** : régler une surface sans sauvegarder, `ledit_reload` (ou `lightedit 0 discard`) : la surface reprend l'état du fichier, y compris celles qui étaient compactées.
 53. **Menu** : **Ctrl+M**, filtre « Emissive » : les surfaces sont listées (source `emi R`, type `surface`, intensité = facteur) ; le filtre « All » ne les montre pas ; cliquer une ligne, « Select » puis « Go to » place la caméra devant la surface ; « Delete » / « Restore » marchent ; « Apply colour » règle la teinte.
-54. **Sortie** : `lightedit 0`.
+54. **Nuage** (`devmap hoth2`, `lightedit`, `ledit_sky physical` ou `hybrid`, un sol éclairé par le soleil) : `ledit_sky_diffuse` affiche 0. `ledit_sky_diffuse 0.3` : les ombres du soleil s'adoucissent et la scène garde à peu près la même luminosité. `0.7` : ombres très floues, soleil faible, le ciel éclaire en plus. `1` : plus de soleil direct, plus de rayons de lumière, plus d'ombres du soleil, la scène est éclairée par le ciel seul, le disque du soleil a disparu de la vue. **Ctrl+Z** annule chaque valeur. `ledit_sky skybox` puis `ledit_sky_diffuse 0.5` : la commande indique que le mode n'a pas de soleil et que la valeur est ignorée (l'image ne change pas). `ledit_sky global` (avec `physical_sky 0`), `ledit_sky_diffuse 0.5` : le mode passe à `hybrid` avant. `pt_sky_set sky_diffuse 0.5` fait la même chose. `pt_sky_print` donne `sky_diffuse`.
+55. **Plancher ambiant** (`devmap kejim_base`, `lightedit`, un coin sombre) : `ledit_ambient` affiche « no ambient floor ». `ledit_ambient 0.6 0.7 1 0.3` : les zones sombres ne descendent pas sous un bleu pâle, les zones éclairées ne changent pas. `pt_ambient_floor_scale 3`, puis `0` : le plancher monte, puis disparaît. `ledit_ambient 1 1 1 0` ou `ledit_ambient_reset` le coupe. Ni traînée ni bruit ajouté, avec A-SVGF comme avec NRD. Le plancher marche aussi en mode de ciel `global` (`ledit_sky global`, puis `ledit_ambient 1 0.8 0.6 0.2`). **Ctrl+Z** annule.
+56. **Fichier et menu** : `ledit_save` avec un nuage et un plancher : `maps/<map>.lgt` donne `sky_diffuse`, `ambient_color` et `ambient_intensity` dans le bloc `global`. Avec `ledit_sky_reset` puis `ledit_save`, le bloc ne garde que `sky global` et le plancher. `devmap <map>` relit les deux. Une map sans plancher ni nuage ne change pas. Page « Sky and sun » : « Cloud (0-1) », « Floor colour r g b » et « Floor intensity » donnent les valeurs en vigueur, « Apply » les envoie, « No floor » coupe le plancher, **Ctrl+Z** annule.
+57. **Sortie** : `lightedit 0`.

@@ -139,15 +139,22 @@ static const char s_menuTextSky[] = R"MENU(
   itemDef { name e_sun_bright type ITEM_TYPE_EDITFIELD text "Brightness:" cvar "ui_ledit_sun_bright" maxchars 10 rect 326 192 200 12 font 2 textscale .5 textaligny 1 forecolor 1 .682 0 1 visible 1 }
   itemDef { name e_sun_color type ITEM_TYPE_EDITFIELD text "Colour r g b:" cvar "ui_ledit_sun_color" maxchars 24 rect 326 210 308 12 font 2 textscale .5 textaligny 1 forecolor 1 .682 0 1 visible 1 }
 
-  itemDef { name b_sky_load type ITEM_TYPE_BUTTON style WINDOW_STYLE_FILLED rect 326 234 90 14 text "Load from sky" font 2 textscale .5 textalign ITEM_ALIGN_CENTER textalignx 45 textaligny 2 forecolor 1 .682 0 1 backcolor .12 .06 0 .9 border 1 bordersize 1 bordercolor 1 .682 0 .6 visible 1
+  itemDef { name e_sky_diffuse type ITEM_TYPE_EDITFIELD text "Cloud (0-1):" cvar "ui_ledit_sky_diffuse" maxchars 10 rect 326 228 200 12 font 2 textscale .5 textaligny 1 forecolor 1 .682 0 1 visible 1 }
+  itemDef { name e_amb_color type ITEM_TYPE_EDITFIELD text "Floor colour r g b:" cvar "ui_ledit_amb_color" maxchars 24 rect 326 246 308 12 font 2 textscale .5 textaligny 1 forecolor 1 .682 0 1 visible 1 }
+  itemDef { name e_amb_int type ITEM_TYPE_EDITFIELD text "Floor intensity:" cvar "ui_ledit_amb_int" maxchars 10 rect 326 264 200 12 font 2 textscale .5 textaligny 1 forecolor 1 .682 0 1 visible 1 }
+
+  itemDef { name b_sky_load type ITEM_TYPE_BUTTON style WINDOW_STYLE_FILLED rect 326 288 90 14 text "Load from sky" font 2 textscale .5 textalign ITEM_ALIGN_CENTER textalignx 45 textaligny 2 forecolor 1 .682 0 1 backcolor .12 .06 0 .9 border 1 bordersize 1 bordercolor 1 .682 0 .6 visible 1
    action { play "sound/interface/button1.wav" ; uiScript "ledit_sky_load" } }
-  itemDef { name b_sky_apply type ITEM_TYPE_BUTTON style WINDOW_STYLE_FILLED rect 418 234 70 14 text "Apply sun" font 2 textscale .5 textalign ITEM_ALIGN_CENTER textalignx 35 textaligny 2 forecolor 1 .682 0 1 backcolor .12 .06 0 .9 border 1 bordersize 1 bordercolor 1 .682 0 .6 visible 1
+  itemDef { name b_sky_apply type ITEM_TYPE_BUTTON style WINDOW_STYLE_FILLED rect 418 288 70 14 text "Apply" font 2 textscale .5 textalign ITEM_ALIGN_CENTER textalignx 35 textaligny 2 forecolor 1 .682 0 1 backcolor .12 .06 0 .9 border 1 bordersize 1 bordercolor 1 .682 0 .6 visible 1
    action { play "sound/interface/button1.wav" ; uiScript "ledit_sky_apply" } }
-  itemDef { name b_sky_here type ITEM_TYPE_BUTTON style WINDOW_STYLE_FILLED rect 490 234 70 14 text "Sun here" font 2 textscale .5 textalign ITEM_ALIGN_CENTER textalignx 35 textaligny 2 forecolor 1 .682 0 1 backcolor .12 .06 0 .9 border 1 bordersize 1 bordercolor 1 .682 0 .6 visible 1
+  itemDef { name b_sky_here type ITEM_TYPE_BUTTON style WINDOW_STYLE_FILLED rect 490 288 70 14 text "Sun here" font 2 textscale .5 textalign ITEM_ALIGN_CENTER textalignx 35 textaligny 2 forecolor 1 .682 0 1 backcolor .12 .06 0 .9 border 1 bordersize 1 bordercolor 1 .682 0 .6 visible 1
    action { play "sound/interface/button1.wav" ; uiScript "ledit_sky_here" } }
-  itemDef { name b_sky_reset type ITEM_TYPE_BUTTON style WINDOW_STYLE_FILLED rect 562 234 72 14 text "Reset sky" font 2 textscale .5 textalign ITEM_ALIGN_CENTER textalignx 36 textaligny 2 forecolor 1 .682 0 1 backcolor .12 .06 0 .9 border 1 bordersize 1 bordercolor 1 .682 0 .6 visible 1
+  itemDef { name b_sky_reset type ITEM_TYPE_BUTTON style WINDOW_STYLE_FILLED rect 562 288 72 14 text "Reset sky" font 2 textscale .5 textalign ITEM_ALIGN_CENTER textalignx 36 textaligny 2 forecolor 1 .682 0 1 backcolor .12 .06 0 .9 border 1 bordersize 1 bordercolor 1 .682 0 .6 visible 1
    action { play "sound/interface/button1.wav" ; uiScript "ledit_sky_reset" } }
-  itemDef { name sky_note2 text "Sun here: the sun comes from the direction of the view." rect 326 254 308 12 font 2 textscale .4 textaligny 0 forecolor .6 .6 .6 1 visible 1 decoration }
+  itemDef { name b_sky_nofloor type ITEM_TYPE_BUTTON style WINDOW_STYLE_FILLED rect 326 306 90 14 text "No floor" font 2 textscale .5 textalign ITEM_ALIGN_CENTER textalignx 45 textaligny 2 forecolor 1 .682 0 1 backcolor .12 .06 0 .9 border 1 bordersize 1 bordercolor 1 .682 0 .6 visible 1
+   action { play "sound/interface/button1.wav" ; uiScript "ledit_sky_nofloor" } }
+  itemDef { name sky_note2 text "Sun here: the sun comes from the direction of the view." rect 326 326 308 12 font 2 textscale .4 textaligny 0 forecolor .6 .6 .6 1 visible 1 decoration }
+  itemDef { name sky_note3 text "Cloud: sun to sky light (physical, hybrid). Floor: minimum lighting, any mode." rect 326 338 308 12 font 2 textscale .4 textaligny 0 forecolor .6 .6 .6 1 visible 1 decoration }
 )MENU";
 
 static const char s_menuTextEmissive[] = R"MENU(
@@ -281,6 +288,9 @@ static void LE_EnsureCvars( void )
 	ui.Cvar_Create( "ui_ledit_sun_angle", "4", 0 );
 	ui.Cvar_Create( "ui_ledit_sun_bright", "1", 0 );
 	ui.Cvar_Create( "ui_ledit_sun_color", "1 1 1", 0 );
+	ui.Cvar_Create( "ui_ledit_sky_diffuse", "0", 0 );
+	ui.Cvar_Create( "ui_ledit_amb_color", "1 1 1", 0 );
+	ui.Cvar_Create( "ui_ledit_amb_int", "0", 0 );
 	ui.Cvar_Create( "ui_ledit_emi_search", "", 0 );
 	ui.Cvar_Create( "ui_ledit_emi_row", "-1", 0 );
 	ui.Cvar_Create( "ui_ledit_emi_scale", "1", 0 );
@@ -892,6 +902,9 @@ static void LE_LoadSky( const rtxSkyDesc_t *s )
 	LE_CvarFloat( "ui_ledit_sun_angle", s->sunAngle );
 	LE_CvarFloat( "ui_ledit_sun_bright", s->sunBrightness );
 	ui.Cvar_Set( "ui_ledit_sun_color", va( "%g %g %g", s->sunColor[0], s->sunColor[1], s->sunColor[2] ) );
+	LE_CvarFloat( "ui_ledit_sky_diffuse", s->skyDiffuse );
+	ui.Cvar_Set( "ui_ledit_amb_color", va( "%g %g %g", s->ambientColor[0], s->ambientColor[1], s->ambientColor[2] ) );
+	LE_CvarFloat( "ui_ledit_amb_int", s->ambientIntensity );
 }
 
 // Chooses a row of a list box of the menu and scrolls it into view. An index of -1 chooses none.
@@ -1024,7 +1037,8 @@ void UI_LightEdit_DrawSky( float x, float y, float scale, const vec4_t color, in
 		return;
 	}
 
-	Com_sprintf( line, sizeof( line ), "sky: %s%s", modes[Com_Clampi( 0, RTX_SKY_HYBRID, sky.mode )], sky.mode == RTX_SKY_GLOBAL ? "" : " (map)" );
+	Com_sprintf( line, sizeof( line ), "sky: %s%s  cloud %.2f  floor x%g", modes[Com_Clampi( 0, RTX_SKY_HYBRID, sky.mode )],
+		sky.mode == RTX_SKY_GLOBAL ? "" : " (map)", sky.skyDiffuse, sky.ambientIntensity );
 	DC->drawText( x, y, scale, (float *)color, line, 0, ITEM_TEXTSTYLE_SHADOWED, fontIndex );
 
 	Com_sprintf( line, sizeof( line ), "sun az %.1f el %.1f  colour %.2f %.2f %.2f  x%g  angle %.1f", sky.sunAzimuth, sky.sunElevation,
@@ -1073,6 +1087,34 @@ static qboolean LE_ParseNumber( const char *cvarName, float *out )
 	return qtrue;
 }
 
+// Sends the cloud and ambient floor fields as the commands that differ from the sky in effect.
+static void LE_ApplyCloudAndFloor( const rtxSkyDesc_t *cur )
+{
+	float	diffuse, intensity, col[3];
+	char	text[64];
+
+	if ( LE_ParseNumber( "ui_ledit_sky_diffuse", &diffuse ) && fabsf( diffuse - cur->skyDiffuse ) > 0.001f )
+	{
+		LE_Exec( "ledit_sky_diffuse %g", diffuse );
+	}
+
+	LE_CvarString( "ui_ledit_amb_color", text, sizeof( text ) );
+	if ( sscanf( text, "%f %f %f", &col[0], &col[1], &col[2] ) != 3 )
+	{
+		Com_Printf( "light edit: ui_ledit_amb_color needs three numbers\n" );
+		return;
+	}
+	if ( !LE_ParseNumber( "ui_ledit_amb_int", &intensity ) )
+	{
+		return;
+	}
+	if ( fabsf( col[0] - cur->ambientColor[0] ) > 0.001f || fabsf( col[1] - cur->ambientColor[1] ) > 0.001f
+		|| fabsf( col[2] - cur->ambientColor[2] ) > 0.001f || fabsf( intensity - cur->ambientIntensity ) > 0.001f )
+	{
+		LE_Exec( "ledit_ambient %g %g %g %g", col[0], col[1], col[2], intensity );
+	}
+}
+
 // Sends the sun fields as the commands that differ from the sky in effect.
 static void LE_ApplySun( const rtxLightEditAPI_t *api )
 {
@@ -1109,6 +1151,7 @@ static void LE_ApplySun( const rtxLightEditAPI_t *api )
 	{
 		LE_Exec( "ledit_sun_angle %g", angle );
 	}
+	LE_ApplyCloudAndFloor( &cur );
 }
 
 // The uiScript names "sky_*" of the sky page.
@@ -1139,6 +1182,10 @@ static void LE_RunSkyScript( const rtxLightEditAPI_t *api, const char *name )
 	else if ( !Q_stricmp( name, "reset" ) )
 	{
 		LE_Exec( "ledit_sky_reset" );
+	}
+	else if ( !Q_stricmp( name, "nofloor" ) )
+	{
+		LE_Exec( "ledit_ambient_reset" );
 	}
 }
 

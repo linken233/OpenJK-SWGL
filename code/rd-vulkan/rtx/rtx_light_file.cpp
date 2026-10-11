@@ -428,6 +428,9 @@ static void ApplyGlobalBlocks( const std::vector<fileBlock_t> &blocks )
 		GetV3( b, "sun_color", d.sunColor );
 		d.sunBrightness = GetF( b, "sun_brightness", 0, d.sunBrightness );
 		d.sunAngle = GetF( b, "sun_angle", 0, d.sunAngle );
+		d.skyDiffuse = GetF( b, "sky_diffuse", 0, d.skyDiffuse );
+		GetV3( b, "ambient_color", d.ambientColor );
+		d.ambientIntensity = GetF( b, "ambient_intensity", 0, d.ambientIntensity );
 
 		if ( blocks.size() > 1 )
 			Com_Printf( "light edit: %i global blocks, only the first one is used\n", (int)blocks.size() );
@@ -994,17 +997,34 @@ static void WriteAddedRecord( std::string &s, const rtxLightRecord_t *rec )
 }
 
 // The global block: one key per line, one or three values, no origin, color or intensity key.
+// The mode GLOBAL (a block with an ambient floor only) writes no sun key. A zero sky_diffuse
+// and a zero ambient_intensity are not written.
 void RTX_LightFile_FormatSkyBlock( std::string &s, const rtxSkyDesc_t &d )
 {
-	const char *mode = d.mode == RTX_SKY_SKYBOX ? "skybox" : d.mode == RTX_SKY_PHYSICAL ? "physical" : "hybrid";
+	const char *mode = d.mode == RTX_SKY_SKYBOX ? "skybox" : d.mode == RTX_SKY_PHYSICAL ? "physical"
+		: d.mode == RTX_SKY_HYBRID ? "hybrid" : "global";
 
 	s += "global\n{\n\tsource global\n";
 	Appendf( s, "\tsky %s\n", mode );
-	PutNum( s, "sun_azimuth", d.sunAzimuth );
-	PutNum( s, "sun_elevation", d.sunElevation );
-	PutVec( s, "sun_color", d.sunColor );
-	PutNum( s, "sun_brightness", d.sunBrightness );
-	PutNum( s, "sun_angle", d.sunAngle );
+
+	if ( d.mode != RTX_SKY_GLOBAL )
+	{
+		PutNum( s, "sun_azimuth", d.sunAzimuth );
+		PutNum( s, "sun_elevation", d.sunElevation );
+		PutVec( s, "sun_color", d.sunColor );
+		PutNum( s, "sun_brightness", d.sunBrightness );
+		PutNum( s, "sun_angle", d.sunAngle );
+
+		if ( d.skyDiffuse > 0.0f )
+			PutNum( s, "sky_diffuse", d.skyDiffuse );
+	}
+
+	if ( d.ambientIntensity > 0.0f )
+	{
+		PutVec( s, "ambient_color", d.ambientColor );
+		PutNum( s, "ambient_intensity", d.ambientIntensity );
+	}
+
 	s += "}\n";
 }
 

@@ -75,17 +75,13 @@ static void LE_SkyDir( const rtxSkyDesc_t *d, vec3_t out )
 	out[2] = sinf( el );
 }
 
-// Applies a sky setting without an undo entry. The mode GLOBAL removes the setting of the map.
+// Applies a sky setting without an undo entry. The mode GLOBAL removes the sky setting of the map
+// and keeps the ambient floor of the desc.
 qboolean LE_SkyApply( const rtxSkyDesc_t *desc )
 {
 	if ( !LE_SkyReady() )
 	{
 		return qfalse;
-	}
-	if ( desc->mode == RTX_SKY_GLOBAL )
-	{
-		s_api->ResetSky();
-		return qtrue;
 	}
 	return s_api->SetSky( desc );
 }
@@ -106,9 +102,22 @@ static void LE_SkyPrint( const char *prefix, const rtxSkyDesc_t *d )
 	{
 		Q_strcat( extra, sizeof( extra ), " from-file" );
 	}
-	LE_Msg( "%s%s%s | sun az %.1f el %.1f color %.2f %.2f %.2f x%g angle %.1f%s", prefix, LE_SkyModeName( d->mode ),
+	LE_Msg( "%s%s%s | sun az %.1f el %.1f color %.2f %.2f %.2f x%g angle %.1f diffuse %.2f%s", prefix, LE_SkyModeName( d->mode ),
 		d->mode == RTX_SKY_GLOBAL ? "" : " (map)", d->sunAzimuth, d->sunElevation, d->sunColor[0], d->sunColor[1],
-		d->sunColor[2], d->sunBrightness, d->sunAngle, extra );
+		d->sunColor[2], d->sunBrightness, d->sunAngle, d->skyDiffuse, extra );
+}
+
+static void LE_AmbientPrint( const char *prefix, const rtxSkyDesc_t *d )
+{
+	if ( d->ambientIntensity > 0.0f )
+	{
+		LE_Msg( "%sambient floor %.2f %.2f %.2f x%g", prefix, d->ambientColor[0], d->ambientColor[1], d->ambientColor[2],
+			d->ambientIntensity );
+	}
+	else
+	{
+		LE_Msg( "%sno ambient floor", prefix );
+	}
 }
 
 // Applies the wanted values, records one undo entry and prints the result.
@@ -328,6 +337,95 @@ void LE_CmdSkyReset( void )
 	LE_SkyCommit( cur, want, "sky reset" );
 }
 
+// ledit_sky_diffuse <0-1>: cloud layer. The direct sun scales by (1 - value), the rest becomes sky light.
+void LE_CmdSkyDiffuse( void )
+{
+	rtxSkyDesc_t	cur, want;
+	float			v;
+
+	if ( !LE_SkyRead( &cur ) )
+	{
+		return;
+	}
+	if ( !CG_Argv( 1 )[0] )
+	{
+		LE_Msg( "light edit: sky_diffuse %.2f (usage: ledit_sky_diffuse <0-1>)", cur.skyDiffuse );
+		return;
+	}
+	if ( !LE_SkyFloats( 1, 1, &v ) )
+	{
+		LE_Msg( "usage: ledit_sky_diffuse <0-1>" );
+		return;
+	}
+	want = cur;
+	if ( cur.mode != RTX_SKY_SKYBOX )
+	{
+		LE_SkyForSun( &want );
+	}
+	want.skyDiffuse = Com_Clamp( 0.0f, 1.0f, v );
+	LE_SkyCommit( cur, want, "sky diffuse" );
+	if ( want.mode == RTX_SKY_SKYBOX )
+	{
+		LE_Msg( "light edit: the skybox mode has no sun: sky_diffuse is saved but ignored (use ledit_sky hybrid)" );
+	}
+}
+
+// ledit_ambient <r> <g> <b> [intensity]: floor of the lighting of a surface point. Any sky mode.
+void LE_CmdAmbient( void )
+{
+	rtxSkyDesc_t	cur, want;
+	float			v[4];
+
+	if ( !LE_SkyRead( &cur ) )
+	{
+		return;
+	}
+	if ( !CG_Argv( 1 )[0] )
+	{
+		LE_AmbientPrint( "light edit: ", &cur );
+		return;
+	}
+	if ( !LE_SkyFloats( 1, 3, v ) )
+	{
+		LE_Msg( "usage: ledit_ambient <r> <g> <b> [intensity]   (colour 0..1, intensity 0..100, 0 = off)" );
+		return;
+	}
+	want = cur;
+	for ( int i = 0; i < 3; i++ )
+	{
+		want.ambientColor[i] = Com_Clamp( 0.0f, 1.0f, v[i] );
+	}
+	if ( LE_SkyFloats( 4, 1, &v[3] ) )
+	{
+		want.ambientIntensity = Com_Clamp( 0.0f, 100.0f, v[3] );
+	}
+	else if ( want.ambientIntensity <= 0.0f )
+	{
+		want.ambientIntensity = 1.0f;
+	}
+	LE_SkyCommit( cur, want, "ambient floor" );
+	LE_AmbientPrint( "light edit: ", &want );
+}
+
+// ledit_ambient_reset: no ambient floor.
+void LE_CmdAmbientReset( void )
+{
+	rtxSkyDesc_t	cur, want;
+
+	if ( !LE_SkyRead( &cur ) )
+	{
+		return;
+	}
+	if ( cur.ambientIntensity <= 0.0f )
+	{
+		LE_Msg( "light edit: the map has no ambient floor" );
+		return;
+	}
+	want = cur;
+	want.ambientIntensity = 0.0f;
+	LE_SkyCommit( cur, want, "ambient reset" );
+}
+
 /*
 =================
 Display
@@ -362,7 +460,7 @@ void LE_SkyDrawPanel( int y )
 {
 	rtxSkyDesc_t	d;
 	rtxLightStats_t	st;
-	char			l0[64], l1[64];
+	char			l0[64], l1[64], l2[64] = "";
 
 	if ( !LE_SkyReady() || !s_api->GetSky( &d ) )
 	{
@@ -380,11 +478,28 @@ void LE_SkyDrawPanel( int y )
 	{
 		Com_sprintf( l1, sizeof( l1 ), "no sun" );
 	}
+	if ( d.skyDiffuse > 0.0f && d.ambientIntensity > 0.0f )
+	{
+		Com_sprintf( l2, sizeof( l2 ), "diffuse %.2f  floor x%g", d.skyDiffuse, d.ambientIntensity );
+	}
+	else if ( d.skyDiffuse > 0.0f )
+	{
+		Com_sprintf( l2, sizeof( l2 ), "diffuse %.2f", d.skyDiffuse );
+	}
+	else if ( d.ambientIntensity > 0.0f )
+	{
+		Com_sprintf( l2, sizeof( l2 ), "floor x%g", d.ambientIntensity );
+	}
 
 	const int	h = LE_TextH();
-	const int	w = Q_max( LE_TextW( l0 ), LE_TextW( l1 ) );
+	const int	lines = l2[0] ? 3 : 2;
+	const int	w = Q_max( Q_max( LE_TextW( l0 ), LE_TextW( l1 ) ), LE_TextW( l2 ) );
 
-	CG_FillRect( 640 - 8 - w - 4, y - 3, w + 10, 2 * h + 6, colSkyBg );
+	CG_FillRect( 640 - 8 - w - 4, y - 3, w + 10, lines * h + 6, colSkyBg );
 	LE_Text( 640 - 8 - LE_TextW( l0 ), y, l0, d.mode == RTX_SKY_GLOBAL ? colSkyGrey : colSkyTxt );
 	LE_Text( 640 - 8 - LE_TextW( l1 ), y + h, l1, colSkyGrey );
+	if ( l2[0] )
+	{
+		LE_Text( 640 - 8 - LE_TextW( l2 ), y + 2 * h, l2, colSkyGrey );
+	}
 }

@@ -23,6 +23,7 @@ by the Free Software Foundation.
 #define SKY_MAX_BRIGHTNESS	1000.0f
 #define SKY_MIN_ANGLE		1.0f
 #define SKY_MAX_ANGLE		10.0f
+#define SKY_MAX_AMBIENT		100.0f
 
 static float Com_Clamp( float lo, float hi, float v )
 {
@@ -40,6 +41,7 @@ static qboolean		g_fromQ3 = qfalse;		// the values come from q3map_sun
 
 static cvar_t *pt_sky_per_map;
 static cvar_t *pt_sky_q3map_sun;
+static cvar_t *pt_ambient_floor_scale;
 
 static void RegisterCvars( void )
 {
@@ -48,6 +50,7 @@ static void RegisterCvars( void )
 
 	pt_sky_per_map = ri.Cvar_Get( "pt_sky_per_map", "1", CVAR_ARCHIVE_ND );
 	pt_sky_q3map_sun = ri.Cvar_Get( "pt_sky_q3map_sun", "0", CVAR_ARCHIVE_ND );
+	pt_ambient_floor_scale = ri.Cvar_Get( "pt_ambient_floor_scale", "1", CVAR_ARCHIVE_ND );
 }
 
 static qboolean MapHasSun( void )
@@ -65,6 +68,19 @@ static void SetDefaults( rtxSkyDesc_t *d, int mode )
 	VectorSet( d->sunColor, 1.0f, 1.0f, 1.0f );
 	d->sunBrightness = 10.0f;
 	d->sunAngle = 1.0f;
+	VectorSet( d->ambientColor, 1.0f, 1.0f, 1.0f );
+}
+
+// The ambient floor does not depend on the mode: a mode change keeps it.
+static qboolean HasAmbient( const rtxSkyDesc_t *d )
+{
+	return (qboolean)( d->ambientIntensity > 0.0f );
+}
+
+static void CopyAmbient( rtxSkyDesc_t *to, const rtxSkyDesc_t *from )
+{
+	VectorCopy( from->ambientColor, to->ambientColor );
+	to->ambientIntensity = from->ambientIntensity;
 }
 
 void RTX_LightSky_Defaults( rtxSkyDesc_t *d, int mode )
@@ -92,6 +108,8 @@ static void GlobalValues( rtxSkyDesc_t *d )
 		d->sunAzimuth = az;
 		d->sunElevation = el;
 	}
+
+	CopyAmbient( d, &g_sky );
 }
 
 static void Sanitize( rtxSkyDesc_t *d )
@@ -105,9 +123,14 @@ static void Sanitize( rtxSkyDesc_t *d )
 	d->sunElevation = Com_Clamp( -90.0f, 90.0f, d->sunElevation );
 	d->sunBrightness = Com_Clamp( SKY_MIN_BRIGHTNESS, SKY_MAX_BRIGHTNESS, d->sunBrightness );
 	d->sunAngle = Com_Clamp( SKY_MIN_ANGLE, SKY_MAX_ANGLE, d->sunAngle );
+	d->skyDiffuse = Com_Clamp( 0.0f, 1.0f, d->skyDiffuse );
+	d->ambientIntensity = Com_Clamp( 0.0f, SKY_MAX_AMBIENT, d->ambientIntensity );
 
 	for ( int k = 0; k < 3; k++ )
+	{
 		d->sunColor[k] = Com_Clamp( 0.0f, 100.0f, d->sunColor[k] );
+		d->ambientColor[k] = Com_Clamp( 0.0f, 1.0f, d->ambientColor[k] );
+	}
 }
 
 // The sky has to compute again.
@@ -142,6 +165,7 @@ void RTX_LightSky_MapLoaded( void )
 		return;
 
 	vec3_t dir, color;
+	rtxSkyDesc_t ambient = g_sky;
 
 	VectorCopy( tr.sunDirection, dir );
 	VectorNormalize( dir );
@@ -156,6 +180,7 @@ void RTX_LightSky_MapLoaded( void )
 	VectorCopy( color, g_sky.sunColor );
 	g_sky.sunBrightness = sun_brightness->value;
 	g_sky.sunAngle = sun_angle->value;
+	CopyAmbient( &g_sky, &ambient );
 	Sanitize( &g_sky );
 
 	g_fromQ3 = qtrue;
@@ -180,6 +205,22 @@ int RTX_LightSky_PhysicalSky( void )
 qboolean RTX_LightSky_Hybrid( void )
 {
 	return (qboolean)( RTX_LightSky_Active() && g_sky.mode == RTX_SKY_HYBRID );
+}
+
+// Only a mode with a sun has a direct sun to turn into sky light.
+float RTX_LightSky_Diffuse( void )
+{
+	if ( !RTX_LightSky_Active() || g_sky.mode == RTX_SKY_SKYBOX )
+		return 0.0f;
+
+	return g_sky.skyDiffuse;
+}
+
+void RTX_LightSky_AmbientFloor( vec3_t out )
+{
+	RegisterCvars();
+
+	VectorScale( g_sky.ambientColor, g_sky.ambientIntensity * MAX( 0.0f, pt_ambient_floor_scale->value ), out );
 }
 
 qboolean RTX_LightSky_Sun( float *azimuth, float *elevation, vec3_t color, float *brightness, float *angle )
@@ -225,7 +266,7 @@ void RTX_LightSky_SetFromFile( const rtxSkyDesc_t *desc )
 	g_sky = *desc;
 	Sanitize( &g_sky );
 
-	g_fromFile = (qboolean)( g_sky.mode != RTX_SKY_GLOBAL );
+	g_fromFile = (qboolean)( g_sky.mode != RTX_SKY_GLOBAL || HasAmbient( &g_sky ) );
 	g_fromQ3 = qfalse;
 
 	SkyChanged( qfalse );
@@ -233,7 +274,7 @@ void RTX_LightSky_SetFromFile( const rtxSkyDesc_t *desc )
 
 qboolean RTX_LightSky_GetForSave( rtxSkyDesc_t *out )
 {
-	if ( g_sky.mode == RTX_SKY_GLOBAL )
+	if ( g_sky.mode == RTX_SKY_GLOBAL && !HasAmbient( &g_sky ) )
 		return qfalse;
 
 	*out = g_sky;
@@ -245,7 +286,7 @@ qboolean RTX_LightSky_GetForSave( rtxSkyDesc_t *out )
 // The file now holds the setting.
 void RTX_LightSky_Saved( void )
 {
-	g_fromFile = (qboolean)( g_sky.mode != RTX_SKY_GLOBAL );
+	g_fromFile = (qboolean)( g_sky.mode != RTX_SKY_GLOBAL || HasAmbient( &g_sky ) );
 	g_fromQ3 = qfalse;
 }
 
@@ -278,13 +319,14 @@ qboolean RTX_LightSky_Set( const rtxSkyDesc_t *desc )
 	if ( !desc || !RTX_LightEdit_IsReady() )
 		return qfalse;
 
-	if ( desc->mode == RTX_SKY_GLOBAL )
-	{
-		RTX_LightSky_Reset();
-		return qtrue;
-	}
-
 	rtxSkyDesc_t d = *desc;
+
+	// The mode GLOBAL removes the sky setting. The sun values go back to the defaults.
+	if ( d.mode == RTX_SKY_GLOBAL )
+	{
+		SetDefaults( &d, RTX_SKY_GLOBAL );
+		CopyAmbient( &d, desc );
+	}
 
 	Sanitize( &d );
 	d.flags = 0;
@@ -299,10 +341,13 @@ qboolean RTX_LightSky_Set( const rtxSkyDesc_t *desc )
 
 void RTX_LightSky_Reset( void )
 {
-	if ( !RTX_LightEdit_IsReady() || ( g_sky.mode == RTX_SKY_GLOBAL && !g_fromFile ) )
+	if ( !RTX_LightEdit_IsReady() || g_sky.mode == RTX_SKY_GLOBAL )
 		return;
 
+	const rtxSkyDesc_t ambient = g_sky;
+
 	SetDefaults( &g_sky, RTX_SKY_GLOBAL );
+	CopyAmbient( &g_sky, &ambient );
 	g_fromQ3 = qfalse;
 
 	SkyChanged( qtrue );
@@ -346,6 +391,10 @@ void RTX_LightSky_Print_f( void )
 			color[0], color[1], color[2], brightness, angle );
 	else
 		Com_Printf( "sun: from the cvars\n" );
+
+	Com_Printf( "sky_diffuse %g (in effect %g), ambient floor colour %g %g %g intensity %g (scale %g)\n", g_sky.skyDiffuse,
+		RTX_LightSky_Diffuse(), g_sky.ambientColor[0], g_sky.ambientColor[1], g_sky.ambientColor[2],
+		g_sky.ambientIntensity, pt_ambient_floor_scale->value );
 }
 
 // pt_sky_set <skybox|physical|hybrid|global> or <key> <values>. For debug.
@@ -358,7 +407,8 @@ void RTX_LightSky_Set_f( void )
 	if ( argc < 2 )
 	{
 		Com_Printf( "usage: pt_sky_set <skybox|physical|hybrid|global>\n"
-			"       pt_sky_set <sky|sun_azimuth|sun_elevation|sun_color|sun_brightness|sun_angle> <values>\n" );
+			"       pt_sky_set <sky|sun_azimuth|sun_elevation|sun_color|sun_brightness|sun_angle|sky_diffuse> <values>\n"
+			"       pt_sky_set <ambient_color r g b | ambient_intensity v>   (any mode)\n" );
 		return;
 	}
 
@@ -386,13 +436,32 @@ void RTX_LightSky_Set_f( void )
 		return;
 	}
 
+	// The ambient floor needs no mode.
+	if ( !Q_stricmp( key, "ambient_intensity" ) && argc > 2 )
+	{
+		d.ambientIntensity = (float)atof( ri.Cmd_Argv( 2 ) );
+		RTX_LightSky_Set( &d );
+		return;
+	}
+
+	if ( !Q_stricmp( key, "ambient_color" ) && argc > 4 )
+	{
+		for ( int k = 0; k < 3; k++ )
+			d.ambientColor[k] = (float)atof( ri.Cmd_Argv( 2 + k ) );
+
+		RTX_LightSky_Set( &d );
+		return;
+	}
+
 	if ( d.mode == RTX_SKY_GLOBAL )
 	{
 		Com_Printf( "pt_sky_set: set a mode first\n" );
 		return;
 	}
 
-	if ( !Q_stricmp( key, "sun_azimuth" ) && argc > 2 )
+	if ( !Q_stricmp( key, "sky_diffuse" ) && argc > 2 )
+		d.skyDiffuse = (float)atof( ri.Cmd_Argv( 2 ) );
+	else if ( !Q_stricmp( key, "sun_azimuth" ) && argc > 2 )
 		d.sunAzimuth = (float)atof( ri.Cmd_Argv( 2 ) );
 	else if ( !Q_stricmp( key, "sun_elevation" ) && argc > 2 )
 		d.sunElevation = (float)atof( ri.Cmd_Argv( 2 ) );

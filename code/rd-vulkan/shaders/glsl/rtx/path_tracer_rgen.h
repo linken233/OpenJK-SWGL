@@ -39,6 +39,9 @@ uniform accelerationStructureEXT topLevelAS[TLAS_COUNT];
 
 #define DESATURATE_ENVIRONMENT_MAP 1
 
+// Tangent of the half angle of the sun disk at sky_diffuse 1 (about 31 degrees).
+#define SKY_DIFFUSE_TAN_HALF_ANGLE 0.6
+
 /* RNG seeds contain 'X' and 'Y' values that are computed w/ a modulo BLUE_NOISE_RES,
  * so the shift values can be chosen to fit BLUE_NOISE_RES - 1
  * (see generate_rng_seed()) */
@@ -108,6 +111,12 @@ env_map(vec3 direction, bool remove_sun)
 			// roughly remove the sun from the env map
 			envmap = min(envmap, vec3((1 - dot(direction, global_ubo.sun_direction_envmap)) * 200));
 		}
+		else if(global_ubo.sky_diffuse > 0)
+		{
+			// The cloud layer hides the sun disk of the view.
+			vec3 no_sun = min(envmap, vec3((1 - dot(direction, global_ubo.sun_direction_envmap)) * 200));
+			envmap = mix(envmap, no_sun, global_ubo.sky_diffuse);
+		}
 	}
     else if (global_ubo.environment_type == ENVIRONMENT_STATIC)
     {
@@ -117,6 +126,15 @@ env_map(vec3 direction, bool remove_sun)
         envmap = mix(envmap, avg.xxx, 0.1) * 0.5;
 #endif
     }
+
+	// The cloud layer turns the share of the sun that it removes into a uniform sky radiance. This sky
+	// gives the same irradiance on a horizontal surface as the removed sun (E = pi * L).
+	if(remove_sun && global_ubo.sky_diffuse > 0 && global_ubo.sun_visible != 0)
+	{
+		float sun_up = max(global_ubo.sun_direction_envmap.z, 0.1);
+		envmap += sun_color_ubo.sun_color * (global_ubo.sky_diffuse * sun_up / (M_PI * max(global_ubo.pt_env_scale, 1e-4)));
+	}
+
 	return envmap;
 }
 
@@ -728,8 +746,12 @@ get_sunlight(
 	diffuse = vec3(0);
 	specular = vec3(0);
 
-	if(global_ubo.sun_visible == 0)
+	if(global_ubo.sun_visible == 0 || global_ubo.sky_diffuse >= 1.0)
 		return;
+
+	// The cloud layer widens the sun disk (the shadows soften) and removes the share that sky_diffuse sets.
+	float sun_tan_half_angle = mix(global_ubo.sun_tan_half_angle, SKY_DIFFUSE_TAN_HALF_ANGLE,
+		global_ubo.sky_diffuse * global_ubo.sky_diffuse);
 
 #if 1
 	//bool visible = (cluster_idx == ~0u) || (get_sky_visibility(cluster_idx >> 5) & (1 << (cluster_idx & 31))) != 0;
@@ -742,7 +764,7 @@ get_sunlight(
 
 	vec2 rng3 = vec2(get_rng(RNG_SUNLIGHT_X(0)), get_rng(RNG_SUNLIGHT_Y(0)));
 	vec2 disk = sample_disk(rng3);
-	disk.xy *= global_ubo.sun_tan_half_angle;
+	disk.xy *= sun_tan_half_angle;
 
 	vec3 direction = normalize(global_ubo.sun_direction + global_ubo.sun_tangent * disk.x + global_ubo.sun_bitangent * disk.y);
 
@@ -769,11 +791,16 @@ get_sunlight(
     vec3 envmap = textureLod(TEX_PHYSICAL_SKY, envmap_direction.xzy, 0).rgb;
 
     vec3 radiance = (global_ubo.sun_solid_angle * global_ubo.pt_env_scale) * envmap;
+
+	// A widened disk lies outside the shape of the sun: the average colour takes over.
+	radiance = mix(radiance, sun_color_ubo.sun_color, global_ubo.sky_diffuse);
 #else
     // Fetch the average sun color from the resolved UBO - it's faster.
 
     vec3 radiance = sun_color_ubo.sun_color;
 #endif
+
+	radiance *= 1.0 - global_ubo.sky_diffuse;
 
 #ifdef ENABLE_SHADOW_CAUSTICS
 	if(enable_caustics)
@@ -786,7 +813,7 @@ get_sunlight(
 
     if(global_ubo.pt_sun_specular > 0)
     {
-		float NoH_offset = 0.5 * square(global_ubo.sun_tan_half_angle);
+		float NoH_offset = 0.5 * square(sun_tan_half_angle);
 		vec3 specular_brdf = GGX_times_NdotL(view_direction, global_ubo.sun_direction,
 			normal,roughness, base_reflectivity, NoH_offset, specular_factor, F);
     	specular = radiance * specular_brdf;

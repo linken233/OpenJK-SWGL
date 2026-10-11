@@ -261,6 +261,9 @@ void		LE_CmdSunColor( void );								// ledit_sun_color <r> <g> <b>
 void		LE_CmdSunBrightness( void );
 void		LE_CmdSunAngle( void );
 void		LE_CmdSkyReset( void );
+void		LE_CmdSkyDiffuse( void );							// ledit_sky_diffuse <0-1>
+void		LE_CmdAmbient( void );								// ledit_ambient <r> <g> <b> [intensity]
+void		LE_CmdAmbientReset( void );
 
 // Free camera (cg_lightedit_cam.cpp, declared in cg_freecam.h).
 #include "cg_freecam.h"

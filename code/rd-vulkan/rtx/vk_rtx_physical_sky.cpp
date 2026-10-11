@@ -897,6 +897,14 @@ VkResult vk_rtx_physical_sky_update_ubo( vkUniformRTX_t *ubo, const sun_light_t 
 
 	ubo->sun_visible = light->visible;
 
+	// per map sky: the cloud layer and the ambient floor
+	ubo->sky_diffuse = RTX_LightSky_Diffuse();
+
+	if ( render_world )
+		RTX_LightSky_AmbientFloor( ubo->ambient_floor );
+	else
+		VectorClear( ubo->ambient_floor );
+
 #if 0
 	if (render_world && !(skyDesc->flags & PHYSICAL_SKY_FLAG_USE_SKYBOX))
 	{

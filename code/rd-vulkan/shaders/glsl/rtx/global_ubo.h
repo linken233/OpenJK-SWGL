@@ -268,9 +268,13 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 	GLOBAL_UBO_VAR_LIST_DO( VEC4,	 distortion_cloak_pass1			) \
 	GLOBAL_UBO_VAR_LIST_DO( INT,	 distortion_surfaces			) /* the frame has screen distortion surfaces */ \
 	\
-	UBO_CVAR_LIST /* the CVAR list is not vec4-aligned: the fog array is the only member after it */ \
+	UBO_CVAR_LIST /* the CVAR list is not vec4-aligned: the fog array follows it */ \
 	\
-	GLOBAL_UBO_VAR_LIST_DO( FOG_VOLUMES, fog_volumes ) /* per volume: mins xyz + k2, maxs xyz, colour rgb */
+	GLOBAL_UBO_VAR_LIST_DO( FOG_VOLUMES, fog_volumes ) /* per volume: mins xyz + k2, maxs xyz, colour rgb */ \
+	\
+	/* Keep these two last: a member added before the CVAR list moves every offset behind it. */ \
+	GLOBAL_UBO_VAR_LIST_DO( VEC3,	 ambient_floor					) /* minimum lighting of a surface point (before the albedo), 0: off */ \
+	GLOBAL_UBO_VAR_LIST_DO( FLOAT,	 sky_diffuse					) /* 0..1: share of the sun that the cloud layer turns into sky light */
 
 STRUCT (  
 	MAT4	( transform )
