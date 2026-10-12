@@ -189,16 +189,8 @@ typedef struct {
 	uint32_t	blend_mode;
 } rtx_material_t;
 
-// Light scale of the emissive materials and of the light entity classes. They are fixed: the
-// light editor sets each light and each emissive surface by hand.
-#define RTX_LIGHT_SCALE_GLOW		0.1f	// glow stage
-#define RTX_LIGHT_SCALE_SURFACE		0.4f	// q3map_surfacelight surface
-#define RTX_LIGHT_SCALE_ENT_SPOT	0.5f
-#define RTX_LIGHT_SCALE_ENT_SKY		2.0f
-#define RTX_LIGHT_SCALE_ENT_AMBIENT	0.01f
-
-// Class of a world light entity. It picks the scale of the light entity. Lights with a material
-// ignore it.
+// Class of a world light entity. Only LIGHT_ENT_EDIT has a scale (pt_light_scale_edit). Lights
+// with a material ignore it.
 enum {
 	LIGHT_ENT_UNSET = 0,	// not yet classified
 	LIGHT_ENT_SPOT,			// the entity has a target

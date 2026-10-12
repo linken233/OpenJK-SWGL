@@ -232,7 +232,7 @@ Le menu envoie des commandes du mode (`ledit_select`, `ledit_set`, `ledit_goto`,
 
 Le **rayon d'émission** n'est pas une portée. Une sphère du tracer éclaire en 1/d², sans coupure. Le rayon d'émission règle seulement la douceur des ombres.
 
-Une sphère posée contre un mur éclaire la partie du mur que la sphère traverse : un point du mur à l'intérieur de la sphère voit l'émetteur sur tout son hémisphère (shaders `light_lists.h`, `sphere_light_contains`). Une sphère un peu derrière une surface est reflétée devant elle (64 unités au plus).
+Une sphère posée contre un mur éclaire la partie du mur que la sphère traverse : un point du mur à l'intérieur de la sphère voit l'émetteur sur un hémisphère qui passe sans saut de la direction du centre (à la surface de la sphère) à la normale du mur (au centre) (shaders `light_lists.h`, `sphere_light_contains`). Avec un grand rayon, l'éclairement est plat dans la sphère puis décroît en 1/d² dehors : plus le rayon est grand, plus ce plateau se voit. Une sphère un peu derrière une surface est reflétée devant elle (64 unités au plus).
 
 ## 6. Commandes
 
@@ -326,7 +326,7 @@ Le renderer redémarre l'accumulation (`pt_accumulation_rendering`) dès que la 
 ## 8. Intensités et échelles
 
 - Une lumière **ajoutée** a une intensité en unités de la clé `light` de q3map2, multipliée par `pt_light_scale_edit`. Cette échelle est la même partout : déplacer la lumière ne change pas sa luminosité.
-- Une **entité** du BSP garde l'unité `light` de q3map2 et la classe d'échelle calculée au chargement à sa position d'origine (spot, ciel ou ambiante ; facteurs fixes `RTX_LIGHT_SCALE_ENT_*` de `vk_rtx.h`, les cvars `pt_light_scale_ent_*`, `pt_light_scale_glow` et `pt_light_scale_surface` n'existent plus : l'édition à la main les remplace). La déplacer ou la modifier ne change pas sa classe.
+- Une **entité** du BSP garde l'unité `light` de q3map2 et la classe d'échelle calculée au chargement à sa position d'origine (spot, ciel ou ambiante ; sans facteur : les cvars `pt_light_scale_ent_*`, `pt_light_scale_glow` et `pt_light_scale_surface` n'existent plus, l'édition à la main les remplace). La déplacer ou la modifier ne change pas sa classe.
 - Une lumière **reconstruite** (`lgt`) garde son unité (unités de lightmap × `pt_lightgen_scale`).
 - Le clonage, la pipette et la copie de l'intensité (outil 5) convertissent l'intensité d'une source à l'autre, pour garder la même luminosité : I2 = I1 × échelle1 / échelle2.
 - Convertir une sphère en spot garde la luminosité sur l'axe du spot.

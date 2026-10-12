@@ -53,17 +53,14 @@ float vk_rtx_light_scale( const light_poly_t *light, qboolean world )
 {
 	float mat_scale = 10.f;
 	if ( light->material )
-		mat_scale = ( light->material->glow_emissive ? RTX_LIGHT_SCALE_GLOW : RTX_LIGHT_SCALE_SURFACE )
-			* RTX_LightEmissive_Scale( light->material );
+		mat_scale = RTX_LightEmissive_Scale( light->material );
 	else if ( world )
 	{
 		static cvar_t *pt_light_scale_edit;
 		if ( !pt_light_scale_edit )
 			pt_light_scale_edit = ri.Cvar_Get( "pt_light_scale_edit", "0.1", CVAR_ARCHIVE_ND );
 
-		mat_scale = light->ent_class == LIGHT_ENT_SPOT ? RTX_LIGHT_SCALE_ENT_SPOT
-			: light->ent_class == LIGHT_ENT_SKY ? RTX_LIGHT_SCALE_ENT_SKY
-			: light->ent_class == LIGHT_ENT_EDIT ? MAX( 0.f, pt_light_scale_edit->value ) : RTX_LIGHT_SCALE_ENT_AMBIENT;
+		mat_scale = light->ent_class == LIGHT_ENT_EDIT ? MAX( 0.f, pt_light_scale_edit->value ) : 1.f;
 	}
 
 	return mat_scale;

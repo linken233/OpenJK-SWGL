@@ -1637,8 +1637,7 @@ static float LE_IntensityScale( int id )
 		source = rec->source;
 	}
 
-	const float scale = entClass == LIGHT_ENT_SPOT ? RTX_LIGHT_SCALE_ENT_SPOT : entClass == LIGHT_ENT_SKY ? RTX_LIGHT_SCALE_ENT_SKY
-		: entClass == LIGHT_ENT_EDIT ? MAX( 0.0f, scaleEdit->value ) : RTX_LIGHT_SCALE_ENT_AMBIENT;
+	const float scale = entClass == LIGHT_ENT_EDIT ? MAX( 0.0f, scaleEdit->value ) : 1.0f;
 
 	return scale * ( source == RTX_LSRC_LGT ? pt_lightgen_scale->value : 1.0f );
 }

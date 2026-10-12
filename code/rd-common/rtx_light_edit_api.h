@@ -248,7 +248,7 @@ typedef struct rtxLightEditAPI_s {
 	int			(*Generation)( void );
 
 	// Factor from the intensity of a light to what the tracer emits, for its source and
-	// class (RTX_LIGHT_SCALE_*, pt_light_scale_edit, pt_lightgen_scale). -1 gives the factor of a new added light.
+	// class (pt_light_scale_edit, pt_lightgen_scale). -1 gives the factor of a new added light.
 	// A copy between two lights keeps its brightness with I2 = I1 * scale1 / scale2.
 	float		(*IntensityScale)( int id );
 

@@ -81,12 +81,24 @@ sphere_light_center(mat3 positions, vec3 p, vec3 n)
 }
 
 // True when the surface point p is inside a fixed sphere light (a light against a wall: the wall
-// crosses the sphere). Such a point sees the emitter over its whole hemisphere.
+// crosses the sphere). Such a point sees the emitter over a hemisphere around sphere_inside_axis.
 bool
 sphere_light_contains(mat3 positions, vec3 center, vec3 p)
 {
 	vec3 d = center - p;
 	return positions[1].z == 0 && dot(d, d) < square(positions[1].x);
+}
+
+// Axis of that hemisphere: the direction to the centre on the sphere surface, where the outside
+// sampling ends, turning to the surface normal at the centre. No step at the sphere surface.
+vec3
+sphere_inside_axis(mat3 positions, vec3 center, vec3 p, vec3 n)
+{
+	vec3 d = center - p;
+	float dist = max(length(d), 1e-4);
+	float t = 1.0 - min(dist / positions[1].x, 1.0);
+
+	return normalize(d / dist * (1.0 - t) + n * t);
 }
 
 float
@@ -97,7 +109,7 @@ projected_sphere_area(mat3 positions, vec3 p, vec3 n, vec3 V, float phong_exp, f
 
 	if (sphere_light_contains(positions, center, p))
 	{
-		float specular_in = phong(n, n, V, phong_exp) * phong_scale;
+		float specular_in = phong(n, sphere_inside_axis(positions, center, p, n), V, phong_exp) * phong_scale;
 		// Same unit as the outside case at the sphere surface: a hemisphere is 2.
 		return 2.0 * mix(1.0, specular_in, phong_weight);
 	}
@@ -280,12 +292,12 @@ sample_projected_sphere(vec3 p, vec3 n, mat3 positions, vec2 rnd, out vec3 light
 
 	if (sphere_light_contains(positions, light_center, p))
 	{
-		// Uniform direction over the hemisphere of n, to the point where it leaves the sphere. The
-		// normal there points inwards, toward p, like the normal of a sphere seen from outside.
+		// Uniform direction over the hemisphere around the axis, to the point where it leaves the
+		// sphere. The normal there points inwards, toward p, like the normal of a sphere seen from outside.
 		float y = rnd.x;
 		float r = sqrt(max(0, 1 - y * y));
 		float phi = 2.0 * M_PI * rnd.y;
-		mat3 basis = construct_ONB_frisvad(n);
+		mat3 basis = construct_ONB_frisvad(sphere_inside_axis(positions, light_center, p, n));
 		vec3 dir = basis[0] * (r * cos(phi)) + basis[1] * y + basis[2] * (r * sin(phi));
 
 		vec3 oc = p - light_center;
