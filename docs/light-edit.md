@@ -232,7 +232,7 @@ Le menu envoie des commandes du mode (`ledit_select`, `ledit_set`, `ledit_goto`,
 
 Le **rayon d'émission** n'est pas une portée. Une sphère du tracer éclaire en 1/d², sans coupure. Le rayon d'émission règle seulement la douceur des ombres.
 
-Une sphère posée contre un mur éclaire la partie du mur que la sphère traverse : un point du mur à l'intérieur de la sphère voit l'émetteur sur un hémisphère qui passe sans saut de la direction du centre (à la surface de la sphère) à la normale du mur (au centre) (shaders `light_lists.h`, `sphere_light_contains`). Avec un grand rayon, l'éclairement est plat dans la sphère puis décroît en 1/d² dehors : plus le rayon est grand, plus ce plateau se voit. Une sphère un peu derrière une surface est reflétée devant elle (64 unités au plus).
+Une sphère posée contre un mur éclaire la partie du mur que la sphère traverse : un point du mur à l'intérieur de la sphère voit l'émetteur sur un hémisphère qui passe sans saut de la direction du centre (à la surface de la sphère) à la normale du mur (au centre) (shaders `light_lists.h`, `sphere_light_contains`). Le poids de la sphère a un champ proche doux (`sphere_light_area`, exact à partir de 5 rayons) et la pondération de l'émission part de 0 à la surface de la sphère, comme dehors : aucun cercle ne se voit, même avec un grand rayon. Une sphère un peu derrière une surface est reflétée devant elle (64 unités au plus).
 
 ## 6. Commandes
 

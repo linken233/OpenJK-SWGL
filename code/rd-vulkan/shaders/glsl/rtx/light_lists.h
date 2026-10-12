@@ -89,6 +89,23 @@ sphere_light_contains(mat3 positions, vec3 center, vec3 p)
 	return positions[1].z == 0 && dot(d, d) < square(positions[1].x);
 }
 
+// Weight of a sphere light at a distance, in the units of the solid angle it covers. The exact value
+// falls with an infinite slope at the sphere surface, which shows as an edge on a wall that crosses a
+// large sphere. A fixed light uses a soft near field instead, R^2 / (d^2 + R^2 / 2), which meets the
+// exact value from 5 R. A dlight (positions[1].z > 0) keeps the exact value.
+float
+sphere_light_area(mat3 positions, float dist)
+{
+	float r = positions[1].x;
+	float exact = 2 * (1 - sqrt(max(0, 1 - square(r / max(dist, positions[1].z)))));
+
+	exact = min(exact, 2 * M_PI); //max solid angle
+	if (positions[1].z != 0)
+		return exact;
+
+	return mix(square(r) / (dist * dist + 0.5 * square(r)), exact, smoothstep(r, 5.0 * r, dist));
+}
+
 // Axis of that hemisphere: the direction to the centre on the sphere surface, where the outside
 // sampling ends, turning to the surface normal at the centre. No step at the sphere surface.
 vec3
@@ -110,8 +127,7 @@ projected_sphere_area(mat3 positions, vec3 p, vec3 n, vec3 V, float phong_exp, f
 	if (sphere_light_contains(positions, center, p))
 	{
 		float specular_in = phong(n, sphere_inside_axis(positions, center, p, n), V, phong_exp) * phong_scale;
-		// Same unit as the outside case at the sphere surface: a hemisphere is 2.
-		return 2.0 * mix(1.0, specular_in, phong_weight);
+		return sphere_light_area(positions, length(center - p)) * mix(1.0, specular_in, phong_weight);
 	}
 
 	vec3 position = center - p;
@@ -126,10 +142,7 @@ projected_sphere_area(mat3 positions, vec3 p, vec3 n, vec3 V, float phong_exp, f
 	float brdf = mix(1.0, specular, phong_weight);
 
 	// positions[1].z: the minimum distance of a dlight (add_dlights), 0 on other lights.
-	float irradiance = 2 * (1 - sqrt(max(0, 1 - square(sphere_radius / max(dist, positions[1].z)))));
-	irradiance = min(irradiance,  2 * M_PI); //max solid angle
-
-	return irradiance * brdf;
+	return sphere_light_area(positions, dist) * brdf;
 }
 
 float
@@ -305,8 +318,10 @@ sample_projected_sphere(vec3 p, vec3 n, mat3 positions, vec2 rnd, out vec3 light
 		float t = -b + sqrt(max(0, b * b - (dot(oc, oc) - square(sphere_radius))));
 
 		vec3 hit = p + dir * t;
-		light_normal = normalize(light_center - hit);
-		pdfw = 0.5;
+		// The callers weight a sample by -dot(light_normal, L), which a point outside the sphere
+		// sees going to 0 at the surface. Inside, it grows from 0 at the surface to 1 at the centre.
+		light_normal = -dir * (1.0 - min(length(light_center - p) / sphere_radius, 1.0));
+		pdfw = 1.0 / sphere_light_area(positions, length(light_center - p));
 		return hit;
 	}
 
@@ -315,9 +330,7 @@ sample_projected_sphere(vec3 p, vec3 n, mat3 positions, vec2 rnd, out vec3 light
 	float rdist = 1.0 / dist;
 	vec3 L = position * rdist;
 
-	float projected_area = 2 * (1 - sqrt(max(0, 1 - square(sphere_radius / max(dist, positions[1].z)))));
-	projected_area = min(projected_area,  2 * M_PI); //max solid angle
-	pdfw = 1.0 / projected_area;
+	pdfw = 1.0 / sphere_light_area(positions, dist);
 
 	mat3 onb = construct_ONB_frisvad(L);
 	vec3 diskpt;
