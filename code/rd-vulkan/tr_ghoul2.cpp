@@ -32,6 +32,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "tr_cache.h"
 
 #include <algorithm>
+#include <functional>
 
 #define	LL(x) x=LittleLong(x)
 #define	LS(x) x=LittleShort(x)
@@ -3113,8 +3114,16 @@ void R_G2_SnapReset( void )
 #endif
 		)
 	{
-		ri.Printf( PRINT_WARNING, "Ghoul2 snapshot pool is full: %d models, %d bones dropped. Those models are not drawn.\n",
-			snap.overflowModels, snap.overflowBones );
+		// snap is the buffer that the frontend reuses now: these counters belong to its last frame.
+		static int lastWarnTime = -100000;
+		const int now = ri.Milliseconds();
+
+		if ( now - lastWarnTime >= 5000 )
+		{
+			lastWarnTime = now;
+			ri.Printf( PRINT_WARNING, "Ghoul2 snapshot pool is full: %d models, %d bones dropped. Those models are not drawn.\n",
+				snap.overflowModels, snap.overflowBones );
+		}
 	}
 
 	snap.numModels = 0;
@@ -3492,6 +3501,7 @@ then evaluate every bone. The backend reads only the result in backEndData->g2.
 */
 typedef struct g2SnapJob_s {
 	CGhoul2Info_v		*ghoul2;
+	const void			*instance;	// &ghoul2[0]: wrappers with the same mItem share it
 	const trRefEntity_t	*ent;
 	mdxaBone_t			rootMatrix;
 	int					time;
@@ -3852,8 +3862,9 @@ void R_G2_SnapshotScene( void )
 			if ( !G2_SetupModelPointers( ghoul2 ) )
 				continue;
 
-			// Without the tracer only the models that a drawn surface asked for need a pose.
-			qboolean wanted = rtxScene;
+			// The tracer and the GPU skinning path pose every model of the scene, as the backend did.
+			// The CPU skinning path poses only the models that a drawn surface asked for.
+			qboolean wanted = (qboolean)( rtxScene || vk.vboGhoul2Active );
 
 			for ( int k = 0; k < ghoul2.size() && !wanted; k++ )
 			{
@@ -3868,6 +3879,10 @@ void R_G2_SnapshotScene( void )
 
 			g2SnapJob_t job;
 			job.ghoul2 = &ghoul2;
+			if ( ghoul2.size() <= 0 )
+				continue;
+
+			job.instance = &ghoul2[0];
 			job.ent = ent;
 			job.time = currentTime;
 			job.rtx = rtxScene;
@@ -3881,16 +3896,16 @@ void R_G2_SnapshotScene( void )
 			g2SnapJobs.push_back( job );
 		}
 
-		// Two entities can share one Ghoul2 instance. One job serves both; the last entity wins.
+		// Two entities can share one Ghoul2 instance, also through two wrappers. One job serves both; the last entity wins.
 		if ( g2SnapJobs.size() > 1 )
 		{
 			std::stable_sort( g2SnapJobs.begin(), g2SnapJobs.end(),
-				[]( const g2SnapJob_t &a, const g2SnapJob_t &b ) { return a.ghoul2 < b.ghoul2; } );
+				[]( const g2SnapJob_t &a, const g2SnapJob_t &b ) { return std::less<const void *>()( a.instance, b.instance ); } );
 
 			size_t out = 0;
 			for ( size_t i = 0; i < g2SnapJobs.size(); i++ )
 			{
-				if ( i + 1 < g2SnapJobs.size() && g2SnapJobs[i + 1].ghoul2 == g2SnapJobs[i].ghoul2 )
+				if ( i + 1 < g2SnapJobs.size() && g2SnapJobs[i + 1].instance == g2SnapJobs[i].instance )
 					continue;
 
 				g2SnapJobs[out++] = g2SnapJobs[i];

@@ -26,6 +26,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "qcommon.h"
 
 #include <mutex>
+#include <thread>
 
 #ifdef DEBUG_ZONE_ALLOCS
 #include "sstring.h"
@@ -251,9 +252,12 @@ extern refexport_t re;
 // The renderer turns this on while its render thread runs. The zone then takes a lock.
 static bool					gbZoneThreadSafe = false;
 static std::recursive_mutex	gZoneMutex;
+static std::thread::id		gZoneMainThread;
 
+// Call on the main thread. The thread that calls this is the main thread.
 void Z_SetThreadSafe(qboolean bOn)
 {
+	gZoneMainThread = std::this_thread::get_id();
 	gbZoneThreadSafe = (bOn != qfalse);
 }
 
@@ -262,7 +266,9 @@ class ZoneLock
 	bool mLocked;
 public:
 	ZoneLock() : mLocked(gbZoneThreadSafe) { if (mLocked) gZoneMutex.lock(); }
-	~ZoneLock() { if (mLocked) gZoneMutex.unlock(); }
+	~ZoneLock() { Unlock(); }
+	void Unlock() { if (mLocked) { gZoneMutex.unlock(); mLocked = false; } }
+	void Relock() { if (gbZoneThreadSafe && !mLocked) { gZoneMutex.lock(); mLocked = true; } }
 };
 
 #ifdef DEBUG_ZONE_ALLOCS
@@ -293,8 +299,10 @@ void *Z_Malloc(int iSize, memtag_t eTag, qboolean bZeroit, int /*unusedAlign*/)
 	{
 		if (gbMemFreeupOccured)
 		{
+			zoneLock.Unlock();	// the render thread needs the lock while this thread sleeps
 			Sys_Sleep(1000);	// sleep for a second, so Windows has a chance to shuffle mem to de-swiss-cheese it
 		}
+		zoneLock.Relock();
 
 		if (bZeroit) {
 			pMemory = (zoneHeader_t *) calloc ( iRealSize, 1 );
@@ -305,6 +313,18 @@ void *Z_Malloc(int iSize, memtag_t eTag, qboolean bZeroit, int /*unusedAlign*/)
 		{
 			// new bit, if we fail to malloc memory, try dumping some of the cached stuff that's non-vital and try again...
 			//
+
+			// The render thread must not free assets that the main thread uses: it fails here.
+			//
+			if (gbZoneThreadSafe && std::this_thread::get_id() != gZoneMainThread)
+			{
+				Com_Printf(S_COLOR_RED"Z_Malloc(): Failed to alloc %d bytes (TAG_%s) on the render thread !!!!!\n", iSize, psTagStrings[eTag]);
+				Com_Error(ERR_FATAL,"(Repeat): Z_Malloc(): Failed to alloc %d bytes (TAG_%s) on the render thread !!!!!\n", iSize, psTagStrings[eTag]);
+				return NULL;
+			}
+
+			// The call-outs below can wait for the render thread: release the zone lock.
+			zoneLock.Unlock();
 
 			// ditch the BSP cache...
 			//

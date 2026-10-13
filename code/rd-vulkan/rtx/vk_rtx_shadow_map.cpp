@@ -599,9 +599,9 @@ void vk_rtx_shadow_map_setup( const sun_light_t *light, const float *bbox_min, c
 		corner[1] = (i & 2) ? bbox_max[1] : bbox_min[1];
 		corner[2] = (i & 4) ? bbox_max[2] : bbox_min[2];
 #else
-		corner[0] = tr.viewParms.visBounds[(i >> 0) & 1][0];
-		corner[1] = tr.viewParms.visBounds[(i >> 1) & 1][1];
-		corner[2] = tr.viewParms.visBounds[(i >> 2) & 1][2];
+		corner[0] = backEnd.viewParms.visBounds[(i >> 0) & 1][0];
+		corner[1] = backEnd.viewParms.visBounds[(i >> 1) & 1][1];
+		corner[2] = backEnd.viewParms.visBounds[(i >> 2) & 1][2];
 #endif
 		corner[3] = 1.f;
 

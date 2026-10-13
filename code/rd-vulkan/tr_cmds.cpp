@@ -311,6 +311,12 @@ void R_SyncRenderThread( void )
 	R_WorldEffectsFlushQueue();
 }
 
+// Waits for the render thread but does not raise its error: safe in a destructor. Main thread.
+void R_WaitRenderThreadNoRaise( void )
+{
+	R_RenderThreadWait( VKP_RT_SYNC, qfalse );
+}
+
 // True while the render thread runs a frame. Main thread.
 qboolean R_RenderThreadBusy( void )
 {

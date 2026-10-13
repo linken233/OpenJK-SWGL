@@ -38,7 +38,7 @@ R2GoreTextureCoordinates::~R2GoreTextureCoordinates()
 	{
 		if ( tex_vbo[i] || tex[i] )
 		{
-			R_SyncRenderThread();
+			R_WaitRenderThreadNoRaise();	// a destructor must not throw the render thread error
 			break;
 		}
 	}

@@ -3025,7 +3025,8 @@ typedef struct goreUploads_s {
 } goreUploads_t;
 #endif
 
-#define BE_MAX_FOGS		64
+// Fog 0, the fogs of the BSP lump, the misc_bsp global fog copy and the LA goggles slot.
+#define BE_MAX_FOGS		(MAX_MAP_FOGS + 3)
 
 // all of the information needed by the back end must be
 // contained in a backEndData_t.
@@ -3079,6 +3080,7 @@ extern backEndData_t *backEndDataBuf[2];
 void	R_RenderThreadInit( void );
 void	R_RenderThreadShutdown( void );
 void	R_SyncRenderThread( void );
+void	R_WaitRenderThreadNoRaise( void );
 void	R_RenderThreadForceSync( int frames );
 void	R_RenderThreadSetSync( int frames );
 qboolean R_RenderThreadWanted( void );

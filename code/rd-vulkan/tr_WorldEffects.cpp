@@ -946,7 +946,7 @@ bool R_IsShaking(vec3_t pos)
 	WE_SyncQueued();
 	if (!pos)
 	{
-		pos = backEnd.viewParms.ori.origin;
+		pos = tr.refdef.vieworg;	// frontend value, the backend may run on its own thread
 	}
 	return (mOutside.mOutsideShake && mOutside.PointOutside(pos));
 }

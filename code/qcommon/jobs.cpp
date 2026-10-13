@@ -30,7 +30,8 @@ struct jobSlot_t {
 	std::atomic<int>	next;
 };
 
-static std::vector<std::thread>	s_threads;
+// Never freed: a joinable thread at CRT exit would call std::terminate on a fatal-error exit.
+static std::vector<std::thread>	&s_threads = *new std::vector<std::thread>;
 static std::mutex				s_mutex;
 static std::condition_variable	s_wake;
 static std::condition_variable	s_done;

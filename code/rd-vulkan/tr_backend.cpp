@@ -2036,7 +2036,7 @@ static const void *RB_ClearColor( const void *data )
 
 	backEnd.projection2D = qtrue;
 
-	if ( r_fastsky->integer )
+	if ( r_fastsky->integer || backEndDataBE->globalFog < 0 )
 		vk_clear_color_attachments( (float*)tr.clearColor );
 	else
 		vk_clear_color_attachments( (float*)backEndDataBE->fogs[backEndDataBE->globalFog].color );

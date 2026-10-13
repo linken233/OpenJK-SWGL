@@ -1201,6 +1201,7 @@ static void process_regular_entity(
 
 	InstanceBuffer *uniform_instance_buffer = &vk.uniform_instance_buffer;
 	uint32_t i;
+	const int job_base = instance_job_count;
 
 	mat4_t transform;
 	create_entity_matrix( transform, (trRefEntity_t*)entity, qfalse );
@@ -1225,7 +1226,10 @@ static void process_regular_entity(
 		}
 
 		if (  entity_mesh->mesh->indexOffset < 0 ) // failed to upload the vertex data - don't instance this mesh
+		{
+			instance_job_count = job_base;	// drop the jobs of the meshes before this one
 			return;
+		}
 
 		uint32_t material_id = compute_mesh_material_flags( entity, entity_mesh->mesh->modelIndex, entity_mesh->shader );
 
