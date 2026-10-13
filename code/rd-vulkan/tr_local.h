@@ -3084,6 +3084,7 @@ void	R_SyncRenderThreadAt( const char *file, int line, const char *func );
 // Each call site shows up in the r_renderThreadSyncLog output.
 #define R_SyncRenderThread()	R_SyncRenderThreadAt( __FILE__, __LINE__, __FUNCTION__ )
 void	R_WaitRenderThreadNoRaise( void );
+void	R_DeferredFree( void *ptr );
 void	R_RenderThreadForceSync( int frames );
 void	R_RenderThreadSetSync( int frames );
 qboolean R_RenderThreadWanted( void );

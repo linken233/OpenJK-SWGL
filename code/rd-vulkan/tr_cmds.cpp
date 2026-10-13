@@ -28,6 +28,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include <condition_variable>
 #include <mutex>
 #include <thread>
+#include <vector>
 
 /*
 =====================
@@ -480,16 +481,65 @@ static void R_RenderThreadWait( int perfSlot, qboolean raise, const char *file, 
 		R_RenderThreadRaise();
 }
 
+static void R_FlushDeferredOld( void );
+
 void R_SyncRenderThreadAt( const char *file, int line, const char *func )
 {
 	R_RenderThreadWait( VKP_RT_SYNC, qtrue, file, line, func );
 	R_WorldEffectsFlushQueue();
+
+	// The thread is idle: the frame that used the old pointers has finished.
+	if ( !rtIsThread )
+		R_FlushDeferredOld();
 }
 
 // Waits for the render thread but does not raise its error: safe in a destructor. Main thread.
 void R_WaitRenderThreadNoRaise( void )
 {
 	R_RenderThreadWait( VKP_RT_SYNC, qfalse, NULL, 0, "R_WaitRenderThreadNoRaise" );
+}
+
+/*
+==============
+Deferred free
+
+The backend reads gore data that the game can destroy while the thread runs. With the thread on,
+R_DeferredFree keeps the pointer until the frames that can reference it have finished.
+A pointer is released at the second R_IssueRenderCommands after the call: the first one
+finishes the frame in flight and issues the frame that may use the pointer.
+Main thread only.
+==============
+*/
+static std::vector<void *> rtDeferredNew;		// queued since the last R_IssueRenderCommands
+static std::vector<void *> rtDeferredOld;		// queued before the last R_IssueRenderCommands
+
+void R_DeferredFree( void *ptr )
+{
+	if ( !ptr )
+		return;
+
+	if ( !rt.running )
+	{
+		ri.Z_Free( ptr );
+		return;
+	}
+
+	rtDeferredNew.push_back( ptr );
+}
+
+static void R_FlushDeferredOld( void )
+{
+	for ( size_t i = 0; i < rtDeferredOld.size(); i++ )
+		ri.Z_Free( rtDeferredOld[i] );
+
+	rtDeferredOld.clear();
+}
+
+// Call with the render thread idle.
+static void R_RotateDeferredFree( void )
+{
+	R_FlushDeferredOld();
+	rtDeferredOld.swap( rtDeferredNew );
 }
 
 // True while the render thread runs a frame. Main thread.
@@ -563,6 +613,11 @@ void R_RenderThreadShutdown( void )
 	rt.wake.notify_all();
 	rt.thread.join();
 	rt.running = false;
+
+	R_FlushDeferredOld();
+	for ( size_t i = 0; i < rtDeferredNew.size(); i++ )
+		ri.Z_Free( rtDeferredNew[i] );
+	rtDeferredNew.clear();
 
 	ri.Z_SetThreadSafe( qfalse );
 	RB_PrintDrain();
@@ -685,6 +740,7 @@ void R_IssueRenderCommands( qboolean runPerformanceCounters ) {
 
 	// The render thread must finish the previous frame before this one starts.
 	R_RenderThreadWait( VKP_RT_WAIT, qtrue, NULL, 0, "R_IssueRenderCommands (previous frame)" );
+	R_RotateDeferredFree();
 
 	if ( runPerformanceCounters && R_RenderThreadLogOn() )
 		R_RenderThreadSyncLogFrame();

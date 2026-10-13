@@ -1100,7 +1100,7 @@ static void G2_GorePolys( const mdxmSurface_t *surface, CTraceSurface &TS, const
 				if ( gore->tex_vbo[TS.lod]->indexes )
 					Z_Free( gore->tex_vbo[TS.lod]->indexes );
 
-				Z_Free(gore->tex_vbo[TS.lod]);
+				R_DeferredFree( gore->tex_vbo[TS.lod] );	// the backend can still read the struct
 			}
 
 			gore->tex_vbo[TS.lod]=(srfG2GoreSurface_t *)goreSurface;
@@ -1158,7 +1158,7 @@ static void G2_GorePolys( const mdxmSurface_t *surface, CTraceSurface &TS, const
 		int *data=(int *)R_Malloc ( sizeof(int)*size, TAG_GHOUL2, qtrue );
 
 		if ( gore->tex[TS.lod] )
-			R_Free(gore->tex[TS.lod]);
+			R_DeferredFree( gore->tex[TS.lod] );	// the backend can still read the data
 
 		gore->tex[TS.lod]=(float *)data;
 		*data++=newNumVerts;
