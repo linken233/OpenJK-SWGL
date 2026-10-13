@@ -43,27 +43,28 @@ static void vk_create_surface_sprite_quad( void ) {
 //
 static uint32_t vk_alloc_ss_group( const vk_ss_group_def_t *def ) {
     vk_ss_group_t *group;
+	auto &ss = backEndData->ss;		// frontend
 
-    if ( tr.ss.groups_count >= SS_MAX_GROUP ) {
+    if ( ss.groups_count >= SS_MAX_GROUP ) {
         ri.Error(ERR_DROP, "alloc_pipeline: MAX_VK_PIPELINES reached");
         return 0;
     }
-	Com_Memset( &tr.ss.groups[tr.ss.groups_count], 0, sizeof(vk_ss_group_t) );
+	Com_Memset( &ss.groups[ss.groups_count], 0, sizeof(vk_ss_group_t) );
 
-    group = &tr.ss.groups[tr.ss.groups_count];
+    group = &ss.groups[ss.groups_count];
     group->def = *def;
 	group->num_commands = 0;
 	Com_Memset( &group->cmd, 0, sizeof(group->cmd) );
 
-    return tr.ss.groups_count++;
+    return ss.groups_count++;
 }
 
 static uint32_t vk_find_ss_group_ext( const vk_ss_group_def_t *def ) {
     const vk_ss_group_def_t *cur_def;
     uint32_t index;
 
-    for (index = 0; index < tr.ss.groups_count; index++) {
-        cur_def = &tr.ss.groups[index].def;
+    for (index = 0; index < backEndData->ss.groups_count; index++) {
+        cur_def = &backEndData->ss.groups[index].def;
         if (memcmp(cur_def, def, sizeof(*def)) == 0) {
             goto found;
         }
@@ -115,7 +116,7 @@ void vk_push_surface_sprites_cmd( const vk_ss_group_def_t *def, int firstInstanc
 {
 	uint32_t group_id = vk_find_ss_group_ext( def );
 
-	vk_ss_group_t *group = &tr.ss.groups[group_id];
+	vk_ss_group_t *group = &backEndData->ss.groups[group_id];
     
 #if 0
 	if ( vk_try_merge_surface_sprite_cmd( group, firstInstance, instanceCount ) ) 
@@ -866,7 +867,12 @@ void vk_clean_surface_sprites( void )
 	tr.ss.vbo = nullptr;	
 	tr.ss.ibo = nullptr;
 
-	tr.ss.groups_count = 0;
-	Com_Memset( tr.ss.groups, 0, ARRAY_LEN(tr.ss.groups) * sizeof(vk_ss_group_t) );
+	// Both buffers, when the render thread is on. The caller has synced it.
+	for ( int b = 0; b < 2; b++ ) {
+		if ( backEndDataBuf[b] ) {
+			backEndDataBuf[b]->ss.groups_count = 0;
+			Com_Memset( backEndDataBuf[b]->ss.groups, 0, sizeof(backEndDataBuf[b]->ss.groups) );
+		}
+	}
 }
 #endif // USE_VBO_SS

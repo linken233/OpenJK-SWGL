@@ -333,6 +333,8 @@ qboolean CModelCacheManager::LevelLoadEnd( qboolean deleteUnusedByLevel )
 
 qboolean C_Models_LevelLoadEnd( qboolean deleteUnusedByLevel )
 {
+	// This frees models that the backend may draw.
+	R_SyncRenderThread();
 	return CModelCache->LevelLoadEnd(deleteUnusedByLevel);
 }
 

@@ -25,6 +25,8 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "q_shared.h"
 #include "qcommon.h"
 
+#include <mutex>
+
 #ifdef DEBUG_ZONE_ALLOCS
 #include "sstring.h"
 int giZoneSnaphotNum=0;
@@ -246,12 +248,31 @@ char *_D_Z_Filename_WithoutPath(const char *psFilename)
 #include "../rd-common/tr_public.h"	// sorta hack sorta not
 extern refexport_t re;
 
+// The renderer turns this on while its render thread runs. The zone then takes a lock.
+static bool					gbZoneThreadSafe = false;
+static std::recursive_mutex	gZoneMutex;
+
+void Z_SetThreadSafe(qboolean bOn)
+{
+	gbZoneThreadSafe = (bOn != qfalse);
+}
+
+class ZoneLock
+{
+	bool mLocked;
+public:
+	ZoneLock() : mLocked(gbZoneThreadSafe) { if (mLocked) gZoneMutex.lock(); }
+	~ZoneLock() { if (mLocked) gZoneMutex.unlock(); }
+};
+
 #ifdef DEBUG_ZONE_ALLOCS
 void *_D_Z_Malloc ( int iSize, memtag_t eTag, qboolean bZeroit, const char *psFile, int iLine)
 #else
 void *Z_Malloc(int iSize, memtag_t eTag, qboolean bZeroit, int /*unusedAlign*/)
 #endif
 {
+	ZoneLock zoneLock;
+
 	gbMemFreeupOccured = qfalse;
 
 	if (iSize == 0)
@@ -573,6 +594,8 @@ void Z_Label(const void *pvAddress, const char *psLabel)
 //
 int Z_Free(void *pvAddress)
 {
+	ZoneLock zoneLock;
+
 	if (!TheZone.Stats.iCount)
 	{
 		//Com_Error(ERR_FATAL, "Z_Free(): Zone has been cleard already!");
@@ -631,6 +654,8 @@ int Z_MemSize(memtag_t eTag)
 //
 void Z_TagFree(memtag_t eTag)
 {
+	ZoneLock zoneLock;
+
 //#ifdef _DEBUG
 //	int iZoneBlocks = TheZone.Stats.iCount;
 //#endif

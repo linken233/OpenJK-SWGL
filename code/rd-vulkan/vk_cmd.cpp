@@ -82,6 +82,9 @@ VkCommandBuffer vk_begin_command_buffer( void )
     VkCommandBufferAllocateInfo alloc_info;
     VkCommandBuffer command_buffer;
 
+    // One-time command buffers share the command pool and the queue with the render thread.
+    R_SyncRenderThread();
+
     alloc_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
     alloc_info.pNext = NULL;
     alloc_info.commandPool = vk.command_pool;

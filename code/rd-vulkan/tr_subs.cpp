@@ -82,6 +82,100 @@ static void QDECL RB_PrintfInterposer( int level, const char *fmt, ... )
 	rbPrintCount++;
 }
 
+/*
+==============
+Backend error
+
+The engine error function jumps out of the frame. That is not safe on the render thread.
+RB_ErrorInterposer hands an error of the render thread to R_RenderThreadAbort. The main
+thread raises it with RB_RealError at its next wait.
+==============
+*/
+static void ( QDECL *rbRealError )( int errorLevel, const char *fmt, ... );
+
+static void QDECL RB_ErrorInterposer( int level, const char *fmt, ... )
+{
+	char		text[8192];
+	va_list		argptr;
+
+	va_start( argptr, fmt );
+	Q_vsnprintf( text, sizeof( text ), fmt, argptr );
+	va_end( argptr );
+
+	if ( R_OnRenderThread() )
+		R_RenderThreadAbort( level, text );
+
+	rbRealError( level, "%s", text );
+}
+
+void RB_RealError( int level, const char *text )
+{
+	rbRealError( level, "%s", text );
+}
+
+/*
+==============
+Console commands
+
+A console command runs on the main thread between two frames, and many of them change
+state that the backend reads. RB_CommandInterposer registers each command behind a stub
+that waits for the render thread first.
+==============
+*/
+#define RB_MAX_COMMANDS		128
+
+static xcommand_t	rbCommandFn[RB_MAX_COMMANDS];
+static char			rbCommandName[RB_MAX_COMMANDS][MAX_QPATH];
+static xcommand_t	rbCommandStub[RB_MAX_COMMANDS];
+static int			rbNumCommands;
+static void			( *rbRealAddCommand )( const char *cmd_name, xcommand_t function );
+
+template<int N> static void RB_CommandThunk( void )
+{
+	R_SyncRenderThread();
+	rbCommandFn[N]();
+}
+
+template<int N> struct RB_ThunkFill
+{
+	static void Run( xcommand_t *stubs )
+	{
+		RB_ThunkFill<N - 1>::Run( stubs );
+		stubs[N - 1] = RB_CommandThunk<N - 1>;
+	}
+};
+
+template<> struct RB_ThunkFill<0>
+{
+	static void Run( xcommand_t * ) {}
+};
+
+static void RB_AddCommandInterposer( const char *cmd_name, xcommand_t function )
+{
+	int i;
+
+	for ( i = 0; i < rbNumCommands; i++ )
+	{
+		if ( !Q_stricmp( rbCommandName[i], cmd_name ) )
+			break;
+	}
+
+	if ( i == rbNumCommands )
+	{
+		if ( rbNumCommands >= RB_MAX_COMMANDS )
+		{
+			rbRealAddCommand( cmd_name, function );
+			return;
+		}
+
+		Q_strncpyz( rbCommandName[i], cmd_name, sizeof( rbCommandName[i] ) );
+		rbNumCommands++;
+	}
+
+	rbCommandFn[i] = function;
+	rbRealAddCommand( cmd_name, rbCommandStub[i] );
+}
+
 void RB_PrintInstall( void )
 {
 	if ( ri.Printf == RB_PrintfInterposer )
@@ -89,6 +183,13 @@ void RB_PrintInstall( void )
 
 	rbRealPrintf = ri.Printf;
 	ri.Printf = RB_PrintfInterposer;
+
+	rbRealError = ri.Error;
+	ri.Error = RB_ErrorInterposer;
+
+	RB_ThunkFill<RB_MAX_COMMANDS>::Run( rbCommandStub );
+	rbRealAddCommand = ri.Cmd_AddCommand;
+	ri.Cmd_AddCommand = RB_AddCommandInterposer;
 }
 
 void RB_PrintBackendBegin( void )

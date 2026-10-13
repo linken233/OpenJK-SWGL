@@ -1219,7 +1219,7 @@ void vk_destroy_framebuffers( void )
 
 static qboolean vk_find_screenmap_drawsurfs( void )
 {
-    const void* curCmd = &backEndData->commands.cmds;
+    const void* curCmd = &backEndDataBE->commands.cmds;
     const drawBufferCommand_t* db_cmd;
     const drawSurfsCommand_t* ds_cmd;
 
@@ -1612,7 +1612,7 @@ void vk_render_ssao( const void *viewParms_ )
 
     push.radius     = r_ssaoRadius->value;
     push.intensity  = r_ssaoIntensity->value;
-    push.frameNoise = (float)( tr.frameCount & 63 ) * 0.0625f;
+    push.frameNoise = (float)( backEndDataBE->frameCount & 63 ) * 0.0625f;
     push.sliceCount = r_ssaoSlices->integer;
     push.stepCount  = r_ssaoSteps->integer;
 
@@ -1958,6 +1958,7 @@ static void vk_resize_geometry_buffer( void )
 
 void vk_wait_idle( void )
 {
+    R_SyncRenderThread();
     VK_CHECK(qvkDeviceWaitIdle(vk.device));
 }
 
@@ -2050,7 +2051,7 @@ void vk_end_frame( void )
         return;
 
     vk.frame_count = 0;
-    tr.ss.groups_count = 0;
+    backEndDataBE->ss.groups_count = 0;
 
     if ( vk.geometry_buffer_size_new )
     {

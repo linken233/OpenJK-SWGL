@@ -1191,7 +1191,7 @@ void ComputeColors( const int b, color4ub_t *dest, const shaderStage_t *pStage, 
 	case CGEN_LIGHTMAPSTYLE:
 		for (i = 0; i < tess.numVertexes; i++)
 		{
-			*(int *)dest[i] = *(int *)styleColors[pStage->lightmapStyle[b%2]]; 
+			*(int *)dest[i] = *(int *)backEndDataBE->styleColors[pStage->lightmapStyle[b%2]];
 		}
 		break;
 	}
@@ -1960,7 +1960,7 @@ static void vk_compute_colors( const int b, const shaderStage_t *pStage, int for
 			}
 			break;
 		case CGEN_LIGHTMAPSTYLE:
-			VectorScale4 (styleColors[pStage->lightmapStyle[b%2]], 1.0f / 255.0f, baseColor);
+			VectorScale4 (backEndDataBE->styleColors[pStage->lightmapStyle[b%2]], 1.0f / 255.0f, baseColor);
 			break;
 		case CGEN_LIGHTING_DIFFUSE:
 			// pass CalcVertexColor's per-vertex lighting straight through
@@ -2296,7 +2296,9 @@ void RB_SurfaceSpritesVBO( srfSprites_t *surf )
 	if ( !r_surfaceSprites->integer )
 		return;
 
-	if ( !tr.ss.groups_count )
+	auto &ssData = backEndDataBE->ss;
+
+	if ( !ssData.groups_count )
 		return;
 
 	RB_EndSurface();
@@ -2305,9 +2307,9 @@ void RB_SurfaceSpritesVBO( srfSprites_t *surf )
 	uint32_t i, j, offset, firstOffset, pipeline;
 	float push_constants[16]; // mvp transform
 
-	for ( i = 0; i < tr.ss.groups_count; i++ )
+	for ( i = 0; i < ssData.groups_count; i++ )
 	{
-		vk_ss_group_t *group = &tr.ss.groups[i];
+		vk_ss_group_t *group = &ssData.groups[i];
 
 		if ( !group->num_commands )
 			continue;
@@ -2419,7 +2421,7 @@ void RB_SurfaceSpritesVBO( srfSprites_t *surf )
 	}
 
 	if ( backEnd.viewParms.portalView == PV_NONE )
-		tr.ss.groups_count = 0;
+		ssData.groups_count = 0;
 
 	// ~sunny, not all state resets might be requried
 	tess.numVertexes = 0;
@@ -2455,13 +2457,18 @@ qboolean ComputeDistortionPass( int stage, vec4_t params, uint32_t *stateBits )
 	const float	t = backEnd.refdef.time;
 	float		stretchX, stretchY, alpha;
 
+	// The settings at the time of the swap: the cgame sets the globals during the next frame.
+	const float		distAlpha = backEndDataBE->distortionAlpha;
+	const float		distStretch = backEndDataBE->distortionStretch;
+	const qboolean	distNegate = backEndDataBE->distortionNegate;
+
 	if ( stage == 0 )
 	{
-		alpha = tr_distortionAlpha;
+		alpha = distAlpha;
 
-		if ( tr_distortionStretch )
+		if ( distStretch )
 		{
-			stretchX = stretchY = tr_distortionStretch;
+			stretchX = stretchY = distStretch;
 		}
 		else
 		{
@@ -2472,9 +2479,9 @@ qboolean ComputeDistortionPass( int stage, vec4_t params, uint32_t *stateBits )
 		*stateBits = GLS_DEPTHMASK_TRUE | GLS_SRCBLEND_SRC_ALPHA
 			| ( alpha != 1.0f ? GLS_DSTBLEND_SRC_ALPHA : GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA );
 	}
-	else if ( stage == 1 && tr_distortionAlpha == 1.0f && tr_distortionStretch == 0.0f )
+	else if ( stage == 1 && distAlpha == 1.0f && distStretch == 0.0f )
 	{
-		if ( tr_distortionNegate )
+		if ( distNegate )
 		{
 			alpha = 0.8f;
 			*stateBits = GLS_SRCBLEND_ZERO | GLS_DSTBLEND_ONE_MINUS_SRC_COLOR;

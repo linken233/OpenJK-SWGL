@@ -214,6 +214,7 @@ cvar_t	*r_patchStitching;
 cvar_t	*r_defaultImage;
 cvar_t	*r_device;
 cvar_t	*r_swapInterval;
+cvar_t	*r_renderThread;
 cvar_t	*r_timescale;
 cvar_t	*r_stencilbits;
 cvar_t	*r_ext_multisample;
@@ -1110,6 +1111,8 @@ void R_Register( void )
 	r_swapInterval						= ri.Cvar_Get("r_swapInterval",					"0",						CVAR_NONE);
 	r_timescale							= ri.Cvar_Get("timescale",						"1",						CVAR_NONE);
 
+	r_renderThread						= Cvar_Get( "r_renderThread",					"0",						CVAR_ARCHIVE_ND | CVAR_LATCH, "Run the back end on its own thread.\nApplies after vid_restart." );
+
 	// Vulkan
 	r_defaultImage						= Cvar_Get("r_defaultImage",						"",							CVAR_ARCHIVE_ND | CVAR_LATCH, "");
 	r_device							= Cvar_Get("r_device",							"-1",						CVAR_ARCHIVE_ND | CVAR_LATCH, "Select physical device to render:\n" \
@@ -1367,6 +1370,11 @@ void R_Init( void ) {
 
 	vk_debug("----- R_Init -----\n" );
 	ri.Printf(PRINT_ALL, "----- R_Init -----\n");
+
+	// The thread must be idle before the state it reads is cleared.
+	R_RenderThreadShutdown();
+	r_numVideoMaps = 0;
+
 	// clear all our internal state
 	Com_Memset( &tr, 0, sizeof( tr ) );
 	Com_Memset( &backEnd, 0, sizeof( backEnd ) );
@@ -1429,19 +1437,31 @@ void R_Init( void ) {
 	max_polys = Q_min( r_maxpolys->integer, DEFAULT_MAX_POLYS );
 	max_polyverts = Q_min( r_maxpolyverts->integer, DEFAULT_MAX_POLYVERTS );
 
-	const size_t g2PoolBytes = sizeof(mat3x4_t) * G2_SNAP_MAX_BONES;
-
-	ptr = (byte *)Hunk_Alloc( sizeof( *backEndData ) + sizeof(srfPoly_t) * max_polys + sizeof(polyVert_t) * max_polyverts + g2PoolBytes * 3, h_low);
-	backEndData = (backEndData_t *) ptr;
-	backEndData->polys = (srfPoly_t *) ((char *) ptr + sizeof( *backEndData ));
-	backEndData->polyVerts = (polyVert_t *) ((char *) ptr + sizeof( *backEndData ) + sizeof(srfPoly_t) * max_polys);
-
-	// Bone pools of the Ghoul2 snapshot.
+	// One buffer for the frontend and one for the backend when the render thread is on.
 	{
-		byte *pool = (byte *)( backEndData->polyVerts + max_polyverts );
-		backEndData->g2.bones = (mat3x4_t *)pool;
-		backEndData->g2.prevBones = (mat3x4_t *)( pool + g2PoolBytes );
-		backEndData->g2.rtxBones = (mat3x4_t *)( pool + g2PoolBytes * 2 );
+		const size_t g2PoolBytes = sizeof(mat3x4_t) * G2_SNAP_MAX_BONES;
+		const size_t bufferBytes = sizeof( *backEndData ) + sizeof(srfPoly_t) * max_polys + sizeof(polyVert_t) * max_polyverts + g2PoolBytes * 3;
+		const int numBuffers = R_RenderThreadWanted() ? 2 : 1;
+
+		for ( int b = 0; b < numBuffers; b++ )
+		{
+			ptr = (byte *)Hunk_Alloc( (int)bufferBytes, h_low);
+			backEndDataBuf[b] = (backEndData_t *) ptr;
+			backEndDataBuf[b]->polys = (srfPoly_t *) ((char *) ptr + sizeof( *backEndData ));
+			backEndDataBuf[b]->polyVerts = (polyVert_t *) ((char *) ptr + sizeof( *backEndData ) + sizeof(srfPoly_t) * max_polys);
+
+			// Bone pools of the Ghoul2 snapshot.
+			byte *pool = (byte *)( backEndDataBuf[b]->polyVerts + max_polyverts );
+			backEndDataBuf[b]->g2.bones = (mat3x4_t *)pool;
+			backEndDataBuf[b]->g2.prevBones = (mat3x4_t *)( pool + g2PoolBytes );
+			backEndDataBuf[b]->g2.rtxBones = (mat3x4_t *)( pool + g2PoolBytes * 2 );
+		}
+
+		if ( numBuffers == 1 )
+			backEndDataBuf[1] = NULL;
+
+		backEndData = backEndDataBuf[0];
+		backEndDataBE = backEndDataBuf[0];
 	}
 
 	R_InitNextFrame();
@@ -1491,6 +1511,8 @@ void R_Init( void ) {
 	vk_rtx_begin_registration();
 #endif
 
+	R_RenderThreadInit();
+
 	vk_debug("----- finished R_Init -----\n" );
 
 }
@@ -1504,6 +1526,9 @@ RE_Shutdown
 */
 void RE_Shutdown( qboolean destroyWindow, qboolean restarting ) {
 	vk_debug("RE_Shutdown( %i, %i )\n", destroyWindow, restarting);
+
+	// The thread stops first. The frame in flight uses the resources freed below.
+	R_RenderThreadShutdown();
 
 	for (size_t i = 0; i < numCommands; i++)
 		ri.Cmd_RemoveCommand(commands[i].cmd);
@@ -1561,6 +1586,12 @@ Touch all images to make sure they are resident
 =============
 */
 void RE_EndRegistration( void ) {
+	R_SyncRenderThread();
+
+	// The load is over (C_LevelLoadBegin made every frame run on the main thread). The first
+	// frames of the level can still load data in the backend: they run on the main thread too.
+	R_RenderThreadSetSync( 4 );
+
 	vk_wait_idle();
 
 	// command buffer is not in recording state at this stage
@@ -1639,6 +1670,11 @@ void C_LevelLoadBegin(const char *psMapName, ForceReload_e eForceReload)
 	static char sPrevMapName[MAX_QPATH]={0};
 	bool bDeleteModels = eForceReload == eForceReload_MODELS || eForceReload == eForceReload_ALL;
 
+	// Hunk_Clear frees the data of the backend before the renderer hears about it: until
+	// RE_EndRegistration, every frame runs on the main thread.
+	R_SyncRenderThread();
+	R_RenderThreadSetSync( 0x3fffffff );
+
 	if( bDeleteModels )
 	{
 		CModelCache->DeleteAll();
@@ -1664,6 +1700,7 @@ int C_GetLevel( void )
 
 void C_LevelLoadEnd( void )
 {
+	R_SyncRenderThread();
 	CModelCache->LevelLoadEnd( qfalse );
 	ri.SND_RegisterAudio_LevelLoadEnd( qfalse );
 	ri.S_RestartMusic();

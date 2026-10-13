@@ -2018,8 +2018,6 @@ typedef struct trGlobals_s {
 
 #ifdef USE_VBO_SS
 	struct {
-		vk_ss_group_t			groups[SS_MAX_GROUP];
-		uint32_t				groups_count;
 		VBO_t					*vbo;
 		IBO_t					*ibo;
 	} ss;
@@ -2218,6 +2216,7 @@ extern	cvar_t	*r_colorMipLevels;		// development aid to see texture mip usage
 extern	cvar_t	*r_picmip;				// controls picmip values
 extern	cvar_t	*r_finish;
 extern	cvar_t	*r_swapInterval;
+extern	cvar_t	*r_renderThread;
 extern	cvar_t	*r_timescale;			// the timescale cvar of the engine
 extern	cvar_t	*r_markcount;
 extern	cvar_t	*r_textureMode;
@@ -3030,6 +3029,20 @@ typedef struct goreUploads_s {
 // contained in a backEndData_t.
 typedef struct backEndData_s {
 	g2Snapshot_t		g2;
+#ifdef USE_VBO_SS
+	struct {
+		vk_ss_group_t	groups[SS_MAX_GROUP];	// surface sprite draws of the scene, filled by the frontend
+		uint32_t		groups_count;
+	} ss;
+#endif
+	color4ub_t			styleColors[MAX_LIGHT_STYLES];	// light styles at the time of the swap
+	int					frameCount;						// tr.frameCount at the time of the swap
+	float				distortionAlpha;				// cloak distortion settings at the time of the swap
+	float				distortionStretch;
+	qboolean			distortionPrePost;
+	qboolean			distortionNegate;
+	int					skyboxPortal;					// skyboxportal and drawskyboxportal at the time of the swap
+	int					drawSkyboxPortal;
 #ifdef _G2_GORE
 	goreUploads_t		goreVBOUploads;		// filled by R_UpdateGoreVBO in the frontend, consumed by vk_flush_gore_uploads
 	goreUploads_t		goreIBOUploads;
@@ -3050,7 +3063,34 @@ typedef struct backEndData_s {
 extern int max_polys;
 extern int max_polyverts;
 
+// Two buffers when r_renderThread is on. The frontend writes backEndData, the backend reads
+// backEndDataBE. With one buffer both point to the same data.
 extern backEndData_t *backEndData;
+extern backEndData_t *backEndDataBE;
+extern backEndData_t *backEndDataBuf[2];
+
+// Render thread (tr_cmds.cpp). All calls are main thread only, except R_SyncRenderThread
+// which does nothing on the render thread.
+void	R_RenderThreadInit( void );
+void	R_RenderThreadShutdown( void );
+void	R_SyncRenderThread( void );
+void	R_RenderThreadForceSync( int frames );
+void	R_RenderThreadSetSync( int frames );
+qboolean R_RenderThreadWanted( void );
+qboolean R_OnRenderThread( void );
+#if defined(_MSC_VER)
+__declspec(noreturn) void R_RenderThreadAbort( int level, const char *text );
+#else
+void	R_RenderThreadAbort( int level, const char *text ) __attribute__((noreturn));
+#endif
+void	RB_RealError( int level, const char *text );
+void	R_BackendCvarSetValue( const char *name, float value );
+void	R_BackendCvarSet( const char *name, const char *value );
+void	R_BackendCvarDrain( void );
+extern int	r_numVideoMaps;
+qboolean RB_WorldEffectsNeedSync( void );
+qboolean vkpt_physical_sky_load_pending( void );
+void	R_G2_SwapRenderSurfHeap( void );
 
 void *R_GetCommandBuffer( int bytes );
 

@@ -1475,22 +1475,24 @@ static void vk_record_gore_copies( VkCommandBuffer cmd, VkBuffer src, VkBuffer d
 // Records the queued gore copies. Call outside a render pass, before the first draw.
 void vk_flush_gore_uploads( VkCommandBuffer cmd )
 {
-	if ( !backEndData )
+	if ( !backEndDataBE )
 		return;
 
 	if ( !tr.goreVBO || !tr.goreIBO ) {
-		backEndData->goreVBOUploads.count = backEndData->goreIBOUploads.count = 0;
+		backEndDataBE->goreVBOUploads.count = backEndDataBE->goreIBOUploads.count = 0;
 		return;
 	}
 
-	vk_record_gore_copies( cmd, tr.goreVBO->staging.buffer, tr.goreVBO->buffer, &backEndData->goreVBOUploads );
-	vk_record_gore_copies( cmd, tr.goreIBO->staging.buffer, tr.goreIBO->buffer, &backEndData->goreIBOUploads );
+	vk_record_gore_copies( cmd, tr.goreVBO->staging.buffer, tr.goreVBO->buffer, &backEndDataBE->goreVBOUploads );
+	vk_record_gore_copies( cmd, tr.goreIBO->staging.buffer, tr.goreIBO->buffer, &backEndDataBE->goreIBOUploads );
 }
 
 void R_CreateGoreVBO( void )
 {
-	if ( backEndData )
-		backEndData->goreVBOUploads.count = backEndData->goreIBOUploads.count = 0;
+	for ( int b = 0; b < 2; b++ ) {
+		if ( backEndDataBuf[b] )
+			backEndDataBuf[b]->goreVBOUploads.count = backEndDataBuf[b]->goreIBOUploads.count = 0;
+	}
 
 	tr.goreVBO = R_CreateDynamicVBO( "Gore VBO", GORE_VERTEX_SIZE );
 
@@ -1589,6 +1591,8 @@ void R_UpdateGoreVBO( srfG2GoreSurface_t *goreSurface )
 		|| !R_QueueGoreUpload( &backEndData->goreVBOUploads, vbo_offset, vbo_size )
 		|| !R_QueueGoreUpload( &backEndData->goreIBOUploads, ibo_offset, ibo_size ) )
 	{
+		// This submits to the queue from the main thread.
+		R_SyncRenderThread();
 		R_UpdateDynamicBuffer(tr.goreVBO->buffer, tr.goreVBO->staging.buffer, vbo_offset, vbo_size);
 		R_UpdateDynamicBuffer(tr.goreIBO->buffer, tr.goreIBO->staging.buffer, ibo_offset, ibo_size);
 	}

@@ -3,6 +3,8 @@
 #include "tr_local.h"
 #include "vk_perf.h"
 
+#include <mutex>
+
 typedef struct {
 	double	sum;		// over the frames since the last Collect
 	double	frame;		// the frame in progress
@@ -12,22 +14,27 @@ typedef struct {
 static perfSlot_t	perf_time[VKP_TIME_COUNT];
 static perfSlot_t	perf_count[VKP_COUNT_COUNT];
 static int			perf_frames;
+static std::mutex	perf_mutex;		// the render thread and the main thread both write the slots
 
 static const char *const perf_time_name[VKP_TIME_COUNT] = {
-	"scene", "backend", "fence", "acquire", "submit", "idle", "present"
+	"scene", "backend", "fence", "acquire", "submit", "idle", "present", "rtwait", "rtsync"
 };
 
 static const char *const perf_count_name[VKP_COUNT_COUNT] = {
-	"refents", "dlights", "drawsurfs", "polys", "geom%"
+	"refents", "dlights", "drawsurfs", "polys", "geom%", "rtthread"
 };
 
 void vk_perf_time( int slot, double ms )
 {
+	std::lock_guard<std::mutex> lock( perf_mutex );
+
 	perf_time[slot].frame += ms;
 }
 
 void vk_perf_count( int slot, int value )
 {
+	std::lock_guard<std::mutex> lock( perf_mutex );
+
 	perf_count[slot].frame += value;
 }
 
@@ -43,6 +50,8 @@ static void perf_close_slot( perfSlot_t &s )
 // Called at the end of each frame, from RE_EndFrame.
 void vk_perf_end_frame( void )
 {
+	std::lock_guard<std::mutex> lock( perf_mutex );
+
 	for ( int i = 0; i < VKP_TIME_COUNT; i++ ) {
 		perf_close_slot( perf_time[i] );
 	}
@@ -54,6 +63,8 @@ void vk_perf_end_frame( void )
 
 static int vk_perf_collect( rdPerfEntry_t *out, int maxEntries )
 {
+	std::lock_guard<std::mutex> lock( perf_mutex );
+
 	const double	n = perf_frames > 0 ? 1.0 / perf_frames : 0.0;
 	int				num = 0;
 

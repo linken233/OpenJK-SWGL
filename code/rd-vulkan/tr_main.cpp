@@ -951,6 +951,10 @@ static qboolean SurfIsOffscreen( const drawSurf_t *drawSurf, vec4_t clipDest[128
 	R_RotateForViewer( &tr.ori, &tr.viewParms );
 
 	R_DecomposeSort(drawSurf->sort, &entityNum, &shader, &fogNum, &dlighted);
+
+	// This builds the surface in tess, the working buffer of the backend.
+	R_SyncRenderThread();
+
 	RB_BeginSurface(shader, fogNum);
 
 #ifdef USE_VBO
@@ -1673,7 +1677,7 @@ static void R_GenerateDrawSurfs( void ) {
 
 	
 #ifdef USE_VBO_SS
-	if ( tr.ss.groups_count )
+	if ( backEndData->ss.groups_count )
 	{
 		tr.shiftedEntityNum = (sortKey_t)REFENTITYNUM_WORLD << QSORT_REFENTITYNUM_SHIFT;
 

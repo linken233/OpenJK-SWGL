@@ -642,11 +642,11 @@ static size_t Q_snprintf(char *dest, size_t size, const char *fmt, ...)
 static int Cvar_ClampInteger(cvar_t *var, int min, int max)
 {
     if (var->integer < min) {
-        ri.Cvar_SetValue(var->name, min);
+        R_BackendCvarSetValue(var->name, (float)min);
         return min;
     }
     if (var->integer > max) {
-        ri.Cvar_SetValue(var->name, max);
+        R_BackendCvarSetValue(var->name, (float)max);
         return max;
     }
     return var->integer;
@@ -688,7 +688,7 @@ void vkpt_vertex_buffer_ensure_primbuf_size(uint32_t prim_count)
 	destroy_primbuf();
 
 	prim_count = (uint32_t)align(prim_count, PRIMBUF_SIZE_MIN);
-	ri.Cvar_SetValue(cvar_pt_primbuf->name, (int)prim_count);
+	R_BackendCvarSetValue(cvar_pt_primbuf->name, (float)(int)prim_count);
 
 	Com_Printf("Resizing the animation buffers to fit all meshes. Set pt_primbuf to at least %d to avoid this.\n", prim_count);
 

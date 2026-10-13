@@ -233,6 +233,9 @@ qhandle_t RE_RegisterSkin( const char *name ) {
 		}
 	}
 
+	// A new skin registers shaders.
+	R_SyncRenderThread();
+
 	// allocate a new skin
 	if ( tr.numSkins == MAX_SKINS ) {
 		ri.Printf(PRINT_WARNING, "WARNING: RE_RegisterSkin( '%s' ) MAX_SKINS hit\n", name );

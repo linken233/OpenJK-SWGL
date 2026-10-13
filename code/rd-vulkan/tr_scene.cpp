@@ -54,6 +54,11 @@ R_InitNextFrame
 void R_InitNextFrame( void ) {
 	backEndData->commands.used = 0;
 
+	ResetGhoul2RenderableSurfaceHeap();
+#ifdef USE_VBO_SS
+	backEndData->ss.groups_count = 0;
+#endif
+
 	r_firstSceneDrawSurf = 0;
 #ifdef USE_PMLIGHT
 	r_firstSceneLitSurf = 0;

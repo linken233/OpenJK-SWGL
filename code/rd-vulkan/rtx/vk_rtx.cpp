@@ -171,8 +171,10 @@ static VkExtent2D vk_rtx_get_screen_image_extent()
 
 void vk_rtx_cvar_handler( void ) 
 {
+	// The actions change state that the backend reads: wait for the render thread when one runs.
 	#define CVAR_CHANGED( _handle, _action ) \
 	if ( _handle->modified ) { \
+		R_SyncRenderThread(); \
 		_action(); \
 		_handle->modified = qfalse; \
 	}

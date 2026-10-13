@@ -224,6 +224,7 @@ void RTX_LightSky_CvarCheck( void )
 {
 	if ( pt_sky_per_map->modified )
 	{
+		R_SyncRenderThread();
 		pt_sky_per_map->modified = qfalse;
 		SkyChanged( (qboolean)( g_sky.mode != RTX_SKY_GLOBAL ) );
 	}

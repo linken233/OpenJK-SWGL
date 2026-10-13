@@ -12,6 +12,8 @@ typedef enum {
 	VKP_SUBMIT,			// back end: queue submit
 	VKP_IDLE,			// back end: queue wait idle after the frame
 	VKP_PRESENT,		// back end: queue present (waits for vsync)
+	VKP_RT_WAIT,		// main thread: R_IssueRenderCommands waits for the render thread to finish the previous frame
+	VKP_RT_SYNC,		// main thread: R_SyncRenderThread waits for the render thread (registration, uploads, ...)
 	VKP_TIME_COUNT
 } vkPerfTime_t;
 
@@ -21,6 +23,7 @@ typedef enum {
 	VKP_DRAWSURFS,
 	VKP_POLYS,
 	VKP_GEOMETRY_PCT,	// share of the geometry buffer that the frame used
+	VKP_RT_THREAD,		// 1 for a frame with the render thread on
 	VKP_COUNT_COUNT
 } vkPerfCount_t;
 
@@ -29,6 +32,7 @@ void	vk_perf_count( int slot, int value );
 void	vk_perf_end_frame( void );
 void	*vk_perf_get_api( void );
 
+// The slots are written by the main thread and by the render thread. A lock protects them.
 // Adds the time from construction to destruction to a slot.
 struct vk_perf_scope {
 	int		slot;

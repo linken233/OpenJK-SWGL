@@ -809,14 +809,16 @@ static void fx_surface_sprite( const ss_candidate_t *c, const ss_group_info_t *g
 // instance buffers; the tracer takes the nearest ones as quads of the sprite path.
 static void fx_surface_sprites( const trRefdef_t *refdef )
 {
-	if ( !r_surfaceSprites->integer || !tr.ss.groups_count )
+	const auto &ssData = backEndDataBE->ss;
+
+	if ( !r_surfaceSprites->integer || !ssData.groups_count )
 		return;
 
 	ss_candidates.clear();
 
-	for ( int gi = 0; gi < tr.ss.groups_count && gi < SS_MAX_GROUP; gi++ )
+	for ( int gi = 0; gi < (int)ssData.groups_count && gi < SS_MAX_GROUP; gi++ )
 	{
-		const vk_ss_group_t *group = &tr.ss.groups[gi];
+		const vk_ss_group_t *group = &ssData.groups[gi];
 		ss_group_info_t *info = ss_groups + gi;
 		Vk_Pipeline_Def def;
 

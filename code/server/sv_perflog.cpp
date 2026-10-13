@@ -220,6 +220,28 @@ static void PerfLog_Report( void )
 			}
 		}
 		Com_Printf( "     renderer ms (avg/worst):%s\n     renderer load:%s\n", msLine, cntLine );
+
+		// With a render thread: the back end runs beside the main thread. The main thread loses
+		// the time it waits for it.
+		float rtThread = 0.0f, rtWait = 0.0f, rtSync = 0.0f, rtBackend = 0.0f, rtWaitMax = 0.0f;
+
+		for ( int i = 0; i < numRd; i++ ) {
+			if ( !Q_stricmp( rd[i].name, "rtthread" ) ) {
+				rtThread = rd[i].avg;
+			} else if ( !Q_stricmp( rd[i].name, "rtwait" ) ) {
+				rtWait = rd[i].avg;
+				rtWaitMax = rd[i].max;
+			} else if ( !Q_stricmp( rd[i].name, "rtsync" ) ) {
+				rtSync = rd[i].avg;
+			} else if ( !Q_stricmp( rd[i].name, "backend" ) ) {
+				rtBackend = rd[i].avg;
+			}
+		}
+
+		if ( rtThread > 0.0f ) {
+			Com_Printf( "     render thread: back end %.1f ms on its own thread | main thread waits %.1f ms (frame end %.1f, worst %.1f; registration and uploads %.1f)\n",
+				rtBackend, rtWait + rtSync, rtWait, rtWaitMax, rtSync );
+		}
 	}
 
 	if ( com_perflog->integer >= 2 ) {

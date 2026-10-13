@@ -159,6 +159,9 @@ typedef struct {
 	int					(*Jobs_NumThreads)					( void );
 	qboolean			(*Jobs_IsWorkerThread)				( void );
 
+	// A renderer with its own thread turns the lock of the zone allocator on while that thread runs.
+	void				(*Z_SetThreadSafe)					( qboolean bOn );
+
 } refimport_t;
 
 extern refimport_t ri;

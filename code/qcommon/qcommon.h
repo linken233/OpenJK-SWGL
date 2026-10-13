@@ -683,6 +683,7 @@ int  Z_Validate( void );			// also used to insure all of these are paged in
 int   Z_MemSize	( memtag_t eTag );
 void  Z_TagFree	( memtag_t eTag );
 int   Z_Free	( void *ptr );	//returns bytes freed
+void  Z_SetThreadSafe( qboolean bOn );	// the zone takes a lock while a renderer thread allocates
 int	  Z_Size	( void *pvAddress);
 void  Z_MorphMallocTag( void *pvAddress, memtag_t eDesiredTag );
 qboolean Z_IsFromZone(const void *pvAddress, memtag_t eTag);	//returns size if true

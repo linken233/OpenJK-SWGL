@@ -23,6 +23,11 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 #include "tr_local.h"
 
+#include <atomic>
+#include <condition_variable>
+#include <mutex>
+#include <thread>
+
 /*
 =====================
 R_PerformanceCounters
@@ -81,6 +86,354 @@ void R_PerformanceCounters( void ) {
 }
 
 /*
+==============
+Render thread
+
+With r_renderThread on, R_IssueRenderCommands hands the finished frame to a thread and returns.
+The frontend of the next frame then runs while the thread runs the backend. The frontend
+writes backEndData, the backend reads backEndDataBE, and R_IssueRenderCommands swaps them.
+
+The main thread calls R_SyncRenderThread before it changes anything that the backend reads
+(shaders, images, models, the world, uploads to the GPU, console commands). It does nothing when
+the thread is idle, and nothing on the render thread itself.
+
+A frame that needs the engine on the main thread runs inline: screenshots, video maps,
+the first frames of a level, the load of a weather cache or a sky preset.
+==============
+*/
+#define RT_ERROR_TEXT	1024
+
+struct rtAbort_s {};		// thrown on the render thread by R_RenderThreadAbort
+
+struct renderThread_s {
+	std::thread					thread;
+	std::mutex					mutex;
+	std::condition_variable		wake;			// main thread -> thread: a frame is ready, or quit
+	std::condition_variable		done;			// thread -> main thread: the frame is finished
+	bool						running;		// the thread exists
+	bool						quit;
+	bool						pending;		// a frame is handed off and not finished
+	const void					*cmds;
+	int							failLevel;
+	char						failText[RT_ERROR_TEXT];
+	int							syncFrames;		// next frames that run on the main thread
+	qboolean					countersPending;	// the counters of the last handed off frame are not printed
+};
+
+// Not destroyed: after a fatal error the process exits with the thread alive, and the
+// destructor of a running std::thread ends the process.
+static renderThread_s &rt = *new renderThread_s();
+
+static std::atomic<bool>	rtBusy;				// pending, readable without the lock
+static std::atomic<bool>	rtFailed;			// the thread raised an error that the main thread did not raise yet
+static std::atomic<int>		rtBackendMsec;		// msec of the last frame of the thread
+static thread_local bool	rtIsThread = false;
+
+qboolean R_OnRenderThread( void )
+{
+	return rtIsThread ? qtrue : qfalse;
+}
+
+// Raises the error of the render thread on the calling (main) thread.
+static void R_RenderThreadRaise( void )
+{
+	int		level;
+	char	text[RT_ERROR_TEXT];
+
+	if ( !rtFailed.load() )
+		return;
+
+	{
+		std::lock_guard<std::mutex> lock( rt.mutex );
+		level = rt.failLevel;
+		Q_strncpyz( text, rt.failText, sizeof( text ) );
+		rtFailed.store( false );
+	}
+
+	RB_PrintDrain();
+	RB_RealError( level, text );
+}
+
+void R_RenderThreadAbort( int level, const char *text )
+{
+	{
+		std::lock_guard<std::mutex> lock( rt.mutex );
+
+		if ( !rtFailed.load() )
+		{
+			rt.failLevel = level;
+			Q_strncpyz( rt.failText, text, sizeof( rt.failText ) );
+			rtFailed.store( true );
+		}
+	}
+
+	throw rtAbort_s();
+}
+
+static void R_RenderThreadMain( void )
+{
+	rtIsThread = true;
+
+	for ( ;; )
+	{
+		const void *cmds;
+
+		{
+			std::unique_lock<std::mutex> lock( rt.mutex );
+
+			rt.wake.wait( lock, [] { return rt.pending || rt.quit; } );
+
+			if ( !rt.pending )
+				return;
+
+			cmds = rt.cmds;
+		}
+
+		try
+		{
+			RB_PrintBackendBegin();
+			RB_ExecuteRenderCommands( cmds );
+		}
+		catch ( const rtAbort_s & )
+		{
+		}
+		RB_PrintBackendEnd();
+
+		rtBackendMsec.store( backEnd.pc.msec );
+
+		{
+			std::lock_guard<std::mutex> lock( rt.mutex );
+
+			rt.pending = false;
+			rtBusy.store( false, std::memory_order_release );
+		}
+		rt.done.notify_all();
+	}
+}
+
+/*
+==============
+Cvar changes of the backend
+
+The cvar system is not safe to use from the render thread. The backend gives its changes to
+R_BackendCvarSet, which keeps them until the main thread applies them (R_BackendCvarDrain).
+==============
+*/
+#define RT_CVAR_QUEUE	16
+
+static struct {
+	char	name[64];
+	char	value[64];
+} rtCvarQueue[RT_CVAR_QUEUE];
+static int			rtCvarCount;
+static std::mutex	rtCvarMutex;
+
+void R_BackendCvarSet( const char *name, const char *value )
+{
+	if ( !rtIsThread )
+	{
+		ri.Cvar_Set( name, value );
+		return;
+	}
+
+	std::lock_guard<std::mutex> lock( rtCvarMutex );
+
+	if ( rtCvarCount < RT_CVAR_QUEUE )
+	{
+		Q_strncpyz( rtCvarQueue[rtCvarCount].name, name, sizeof( rtCvarQueue[0].name ) );
+		Q_strncpyz( rtCvarQueue[rtCvarCount].value, value, sizeof( rtCvarQueue[0].value ) );
+		rtCvarCount++;
+	}
+}
+
+void R_BackendCvarSetValue( const char *name, float value )
+{
+	char	text[64];
+
+	if ( value == (int)value )
+		Com_sprintf( text, sizeof( text ), "%i", (int)value );
+	else
+		Com_sprintf( text, sizeof( text ), "%f", value );
+
+	R_BackendCvarSet( name, text );
+}
+
+// Main thread.
+void R_BackendCvarDrain( void )
+{
+	for ( ;; )
+	{
+		char	name[64], value[64];
+
+		{
+			std::lock_guard<std::mutex> lock( rtCvarMutex );
+
+			if ( !rtCvarCount )
+				return;
+
+			Q_strncpyz( name, rtCvarQueue[0].name, sizeof( name ) );
+			Q_strncpyz( value, rtCvarQueue[0].value, sizeof( value ) );
+			rtCvarCount--;
+			memmove( &rtCvarQueue[0], &rtCvarQueue[1], sizeof( rtCvarQueue[0] ) * rtCvarCount );
+		}
+
+		ri.Cvar_Set( name, value );
+	}
+}
+
+// Waits until the render thread has finished its frame, then raises its error if it had one.
+// Main thread.
+static void R_RenderThreadWait( int perfSlot, qboolean raise = qtrue )
+{
+	if ( rtIsThread )
+		return;
+
+	if ( rtBusy.load( std::memory_order_acquire ) )
+	{
+		{
+			vk_perf_scope perf( perfSlot );
+			std::unique_lock<std::mutex> lock( rt.mutex );
+
+			rt.done.wait( lock, [] { return !rt.pending; } );
+		}
+
+		RB_PrintDrain();
+		R_BackendCvarDrain();
+	}
+
+	if ( raise )
+		R_RenderThreadRaise();
+}
+
+void R_SyncRenderThread( void )
+{
+	R_RenderThreadWait( VKP_RT_SYNC );
+}
+
+// At least the next frames run on the main thread.
+void R_RenderThreadForceSync( int frames )
+{
+	if ( frames > rt.syncFrames )
+		rt.syncFrames = frames;
+}
+
+// Exactly the next frames run on the main thread.
+void R_RenderThreadSetSync( int frames )
+{
+	rt.syncFrames = frames;
+}
+
+qboolean R_RenderThreadWanted( void )
+{
+	if ( !r_renderThread || !r_renderThread->integer )
+		return qfalse;
+
+	// Two renderers behind one refexport_t share the window and the ghoul2 instances.
+	if ( ri.Cvar_VariableIntegerValue( "g_FastRendererSwitch" ) )
+		return qfalse;
+
+	return ri.Z_SetThreadSafe ? qtrue : qfalse;
+}
+
+void R_RenderThreadInit( void )
+{
+	R_RenderThreadShutdown();
+
+	if ( !R_RenderThreadWanted() || backEndDataBuf[1] == NULL )
+	{
+		if ( r_renderThread && r_renderThread->integer )
+			ri.Printf( PRINT_ALL, "r_renderThread: not used (g_FastRendererSwitch or no zone lock)\n" );
+		return;
+	}
+
+	ri.Z_SetThreadSafe( qtrue );
+
+	rt.quit = false;
+	rt.pending = false;
+	rt.syncFrames = 4;
+	rt.countersPending = qfalse;
+	rtBusy.store( false );
+	rtFailed.store( false );
+	rtBackendMsec.store( 0 );
+	rt.thread = std::thread( R_RenderThreadMain );
+	rt.running = true;
+
+	ri.Printf( PRINT_ALL, "r_renderThread: back end on its own thread\n" );
+}
+
+void R_RenderThreadShutdown( void )
+{
+	if ( !rt.running )
+		return;
+
+	R_RenderThreadWait( VKP_RT_SYNC, qfalse );
+
+	{
+		std::lock_guard<std::mutex> lock( rt.mutex );
+		rt.quit = true;
+	}
+	rt.wake.notify_all();
+	rt.thread.join();
+	rt.running = false;
+
+	ri.Z_SetThreadSafe( qfalse );
+	RB_PrintDrain();
+
+	// An error of the last frame has no frame to stop any more: print it.
+	if ( rtFailed.exchange( false ) )
+		ri.Printf( PRINT_WARNING, "r_renderThread: error in the last frame: %s\n", rt.failText );
+}
+
+// True for a frame that must run on the main thread.
+static qboolean R_FrameNeedsMainThread( void )
+{
+	if ( rt.syncFrames > 0 )
+	{
+		rt.syncFrames--;
+		return qtrue;
+	}
+
+	// Screenshots write files. Video maps run the engine cinematic code. The weather cache
+	// and a sky preset read files.
+	if ( backEnd.screenshotMask || rb_captureRGBA || r_numVideoMaps > 0 || RB_WorldEffectsNeedSync() )
+		return qtrue;
+
+#ifdef USE_RTX
+	if ( vk.rtxActive && vkpt_physical_sky_load_pending() )
+		return qtrue;
+#endif
+
+	return qfalse;
+}
+
+/*
+==============
+R_RenderThreadSwapBuffers
+
+Copies the state that the backend reads and that the game changes during a frame, then
+gives the frontend buffer to the backend. Main thread, with the render thread idle.
+==============
+*/
+static void R_RenderThreadSwapBuffers( void )
+{
+	backEndData->frameCount = tr.frameCount;
+	Com_Memcpy( backEndData->styleColors, styleColors, sizeof( styleColors ) );
+	backEndData->distortionAlpha = tr_distortionAlpha;
+	backEndData->distortionStretch = tr_distortionStretch;
+	backEndData->distortionPrePost = tr_distortionPrePost;
+	backEndData->distortionNegate = tr_distortionNegate;
+	backEndData->skyboxPortal = skyboxportal;
+	backEndData->drawSkyboxPortal = drawskyboxportal;
+
+	if ( backEndDataBuf[1] )
+	{
+		backEndDataBE = backEndData;
+		backEndData = ( backEndData == backEndDataBuf[0] ) ? backEndDataBuf[1] : backEndDataBuf[0];
+		R_G2_SwapRenderSurfHeap();
+	}
+}
+
+/*
 ====================
 R_IssueRenderCommands
 ====================
@@ -98,6 +451,15 @@ void R_IssueRenderCommands( qboolean runPerformanceCounters ) {
 	// clear it out, in case this is a sync and not a buffer flip
 	cmdList->used = 0;
 
+	// The render thread must finish the previous frame before this one starts.
+	R_RenderThreadWait( VKP_RT_WAIT );
+
+	// The thread is idle: it is ok to look at the counters of its last frame.
+	if ( rt.countersPending ) {
+		rt.countersPending = qfalse;
+		R_PerformanceCounters();
+	}
+
 	if (backEnd.screenshotMask == 0) {
 		if (ri.VK_IsMinimized())
 			return; // skip backend when minimized
@@ -113,11 +475,28 @@ void R_IssueRenderCommands( qboolean runPerformanceCounters ) {
 
 	// actually start the commands going
 	if ( !r_skipBackEnd->integer ) {
+		R_RenderThreadSwapBuffers();
+
+		if ( rt.running && !R_FrameNeedsMainThread() ) {
+			{
+				std::lock_guard<std::mutex> lock( rt.mutex );
+
+				rt.cmds = backEndDataBE->commands.cmds;
+				rt.pending = true;
+				rtBusy.store( true, std::memory_order_release );
+			}
+			rt.wake.notify_one();
+
+			rt.countersPending = runPerformanceCounters;
+			return;
+		}
+
 		// let it start on the new batch
 		RB_PrintBackendBegin();
-		RB_ExecuteRenderCommands( cmdList->cmds );
+		RB_ExecuteRenderCommands( backEndDataBE->commands.cmds );
 		RB_PrintBackendEnd();
 		RB_PrintDrain();
+		rtBackendMsec.store( backEnd.pc.msec );
 	}
 
 	// at this point, the back end thread is idle, so it is ok
@@ -372,6 +751,9 @@ void RE_LAGoggles( void )
 		return;
 	}
 
+	// The backend reads the fog slot.
+	R_SyncRenderThread();
+
 	tr.refdef.doLAGoggles = qtrue;
 
 	fog_t *fog = &tr.world->fogs[tr.world->numfogs];
@@ -437,23 +819,24 @@ void RE_BeginFrame( stereoFrame_t stereoFrame ) {
 		return;
 	}
 	
-	glState.finishCalled = qfalse;
-
 	// An error that left the backend leaves the flag set.
 	RB_PrintBackendEnd();
 	RB_PrintDrain();
+	R_BackendCvarDrain();
 
+	// The frontend heap. The backend resets its own state at the start of the frame (RB_DrawBuffer).
 	ResetGhoul2RenderableSurfaceHeap();
-
-	backEnd.doneBloom = qfalse;
 
 	tr.frameCount++;
 	tr.frameSceneNum = 0;
+
+	// The rest changes state that the backend reads. It waits for the render thread first.
 
 	//
 	// texturemode stuff
 	//
 	if ( r_textureMode->modified ) {
+		R_SyncRenderThread();
 		vk_texture_mode( r_textureMode->string, qfalse );
 		r_textureMode->modified = qfalse;
 		vk_update_post_process_pipelines();
@@ -463,6 +846,7 @@ void RE_BeginFrame( stereoFrame_t stereoFrame ) {
 	// gamma stuff
 	//
 	if ( r_gamma->modified || r_greyscale->modified || r_dither->modified ) {
+		R_SyncRenderThread();
 		r_gamma->modified = qfalse;
 		r_greyscale->modified = qfalse;
 		r_dither->modified = qfalse;
@@ -472,6 +856,7 @@ void RE_BeginFrame( stereoFrame_t stereoFrame ) {
 	}
 
 	if ( cl_ratioFix->modified ) {
+		R_SyncRenderThread();
 		R_Set2DRatio();
 		cl_ratioFix->modified = qfalse;
 	}
@@ -481,13 +866,16 @@ void RE_BeginFrame( stereoFrame_t stereoFrame ) {
 #else
 	if ( r_fastsky->modified ) {
 #endif
+		R_SyncRenderThread();
 		vk_set_clearcolor();
 		r_fastsky->modified = qfalse;
 	}
 
-	if ( r_surfaceSprites->modified ) 
+	if ( r_surfaceSprites->modified )
 	{
-		tr.ss.groups_count = 0;
+		R_SyncRenderThread();
+		backEndData->ss.groups_count = 0;
+		backEndDataBE->ss.groups_count = 0;
 		r_surfaceSprites->modified = qfalse;
 	}
 
@@ -546,12 +934,21 @@ void RE_EndFrame( int *frontEndMsec, int *backEndMsec ) {
 	// may still be rendering into the current ones
 	R_InitNextFrame();
 
+	vk_perf_count( VKP_RT_THREAD, rt.running ? 1 : 0 );
 	vk_perf_end_frame();
 
 	if ( frontEndMsec ) {
 		*frontEndMsec = tr.frontEndMsec;
 	}
 	tr.frontEndMsec = 0;
+
+	// With the render thread, backEnd.pc belongs to the thread: give the msec of its last frame.
+	if ( rt.running ) {
+		if ( backEndMsec ) {
+			*backEndMsec = rtBackendMsec.load();
+		}
+		return;
+	}
 	if ( backEndMsec ) {
 		*backEndMsec = backEnd.pc.msec;
 	}
@@ -576,6 +973,8 @@ void RE_TakeVideoFrame( int width, int height, byte *captureBuffer, byte *encode
 
 	cmd->commandId = RC_VIDEOFRAME;
 #endif
+
+	R_SyncRenderThread();
 
 	backEnd.screenshotMask |= SCREENSHOT_AVI;
 	cmd = &backEnd.vcmd;

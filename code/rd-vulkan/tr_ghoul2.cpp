@@ -133,8 +133,12 @@ void G2Time_ReportTimers(void)
 // one view may hold, not how many exist. 4096 covers JKA's own scenes and nothing more;
 // a couple of hundred NPCs at roughly 25 surfaces each hit the ceiling and ERR_DROP.
 static const int MAX_RENDERABLE_SURFACES = 32768;
-static CRenderableSurface renderSurfHeap[MAX_RENDERABLE_SURFACES];
+
+// Two heaps: the frontend allocates from one while the render thread reads the other.
+// R_RenderThreadSwapBuffers swaps them with backEndData.
+static CRenderableSurface renderSurfHeap[2][MAX_RENDERABLE_SURFACES];
 static int currentRenderSurfIndex = 0;
+static int renderSurfHeapSelect = 0;
 
 static CRenderableSurface *AllocGhoul2RenderableSurface( void )
 {
@@ -145,14 +149,21 @@ static CRenderableSurface *AllocGhoul2RenderableSurface( void )
 		return NULL;
 	}
 
-	CRenderableSurface *rs = &renderSurfHeap[currentRenderSurfIndex++];
+	CRenderableSurface *rs = &renderSurfHeap[renderSurfHeapSelect][currentRenderSurfIndex++];
 
 	rs->Init();
 
 	return rs;
 }
 
+// Frontend heap only.
 void ResetGhoul2RenderableSurfaceHeap( void ) {
+	currentRenderSurfIndex = 0;
+}
+
+void R_G2_SwapRenderSurfHeap( void )
+{
+	renderSurfHeapSelect ^= 1;
 	currentRenderSurfIndex = 0;
 }
 
@@ -3919,7 +3930,7 @@ Backend. Puts the poses of the Ghoul2 models of a draw command in the bone UBO.
 */
 void RB_G2_UploadBones( const trRefdef_t *refdef )
 {
-	g2Snapshot_t &snap = backEndData->g2;
+	g2Snapshot_t &snap = backEndDataBE->g2;
 
 	for ( int i = refdef->g2SnapFirst; i < refdef->g2SnapFirst + refdef->g2SnapCount; i++ )
 	{
@@ -3942,7 +3953,7 @@ void RB_G2_UploadBones( const trRefdef_t *refdef )
 int RB_GetBoneUboOffset( const CRenderableSurface *surf )
 {
 	if ( surf->g2Snap >= 0 )
-		return backEndData->g2.models[surf->g2Snap].uboOffset;
+		return backEndDataBE->g2.models[surf->g2Snap].uboOffset;
 
 	return -1;
 }
@@ -4348,8 +4359,8 @@ void RB_SurfaceGhoul(CRenderableSurface* surf)
 	if ( surf->g2Snap < 0 )
 		return;
 
-	const g2SnapModel_t &snapModel = backEndData->g2.models[surf->g2Snap];
-	const mdxaBone_t *bones = (const mdxaBone_t *)( backEndData->g2.bones + snapModel.firstBone );
+	const g2SnapModel_t &snapModel = backEndDataBE->g2.models[surf->g2Snap];
+	const mdxaBone_t *bones = (const mdxaBone_t *)( backEndDataBE->g2.bones + snapModel.firstBone );
 
 #ifndef _G2_GORE //we use this later, for gore
 	delete surf;
@@ -5692,7 +5703,7 @@ frontend listed the meshes in R_G2_SnapBuildRtx; this reads only the snapshot.
 */
 void vk_rtx_AddGhoulSurfaces( trRefEntity_t *ent, int entityNum, int *mdxm_matrix_offset, mat3x4_t *mdxm_matrix_data )
 {
-	const g2Snapshot_t &snap = backEndData->g2;
+	const g2Snapshot_t &snap = backEndDataBE->g2;
 
 	for ( int k = 0; k < ent->g2RtxCount; k++ )
 	{

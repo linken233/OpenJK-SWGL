@@ -878,6 +878,7 @@ bool				COutside::SWeatherZone::mMarkedOutside = false;
 
 void RE_AddWeatherZone(vec3_t mins, vec3_t maxs)
 {
+	R_SyncRenderThread();
 	mOutside.AddWeatherZone(mins, maxs);
 }
 
@@ -920,6 +921,9 @@ bool R_SetTempGlobalFogColor(vec3_t color)
 
 		if (color[0] || color[1] || color[2])
 		{
+			// The backend reads the fog color.
+			R_SyncRenderThread();
+
 			if (!mOutside.mFogColorTempActive)
 			{
 				mOutside.mFogColor				= fog->parms.color;
@@ -934,6 +938,7 @@ bool R_SetTempGlobalFogColor(vec3_t color)
 		}
 		else if (mOutside.mFogColorTempActive)
 		{
+			R_SyncRenderThread();
 			mOutside.mFogColorTempActive = false;
 			R_SetGlobalFogColorFields(fog, mOutside.mFogColor.v, mOutside.mFogColorInt);
 		}
@@ -1598,6 +1603,8 @@ ratl::vector_vs<CWeatherParticleCloud, MAX_PARTICLE_CLOUDS>	mParticleClouds;
 ////////////////////////////////////////////////////////////////////////////////////////
 void R_InitWorldEffects(void)
 {
+	R_SyncRenderThread();
+
 	srand(ri.Milliseconds());
 
 	for (int i=0; i<mParticleClouds.size(); i++)
@@ -1620,6 +1627,15 @@ void R_InitWorldEffects(void)
 void R_ShutdownWorldEffects(void)
 {
 	R_InitWorldEffects();
+}
+
+////////////////////////////////////////////////////////////////////////////////////////
+// RB_WorldEffectsNeedSync - True while the next RB_RenderWorldEffects scans the world for the
+// point cache. That reads and writes a file and uses the collision code of the engine.
+////////////////////////////////////////////////////////////////////////////////////////
+qboolean RB_WorldEffectsNeedSync(void)
+{
+	return (tr.world && mParticleClouds.size() && !mOutside.Initialized()) ? qtrue : qfalse;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////
@@ -1754,6 +1770,9 @@ void RE_WorldEffectCommand(const char *command)
 	{
 		return;
 	}
+
+	// The backend updates and draws the particle clouds.
+	R_SyncRenderThread();
 
 	// RAII guard: this function has many early `return`s below, and
 	// COM_ParseExt() requires an active session -- COM_ParseSession's

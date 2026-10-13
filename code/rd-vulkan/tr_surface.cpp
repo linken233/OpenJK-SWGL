@@ -403,7 +403,7 @@ inline static uint32_t ComputeFinalVertexColor( const byte *colors ) {
 	r = g = b = 0;
 	for( k=0; k<MAXLIGHTMAPS; k++ ) {
 		if ( tess.shader->styles[k] < LS_UNUSED ) {
-			byte *styleColor = styleColors[tess.shader->styles[k]];
+			byte *styleColor = backEndDataBE->styleColors[tess.shader->styles[k]];
 
 			r += (uint32_t)(*colors++) * (uint32_t)(*styleColor++);
 			g += (uint32_t)(*colors++) * (uint32_t)(*styleColor++);

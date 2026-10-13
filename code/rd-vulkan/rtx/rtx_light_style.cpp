@@ -19,7 +19,7 @@ static qboolean		g_havePrev = qfalse;
 
 static float CurrentScale( int style )
 {
-	const byte *c = styleColors[style];
+	const byte *c = backEndDataBE->styleColors[style];	// backend: the colors at the time of the swap
 	const float s = ( c[0] + c[1] + c[2] ) * ( 1.0f / ( 3.0f * 255.0f ) );
 
 	return s < 0.0f ? 0.0f : s > 1.0f ? 1.0f : s;

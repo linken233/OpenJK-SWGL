@@ -12,6 +12,11 @@ by the Free Software Foundation.
 //
 // The engine gets this table from refexport_t::GetExtension( RD_PERF_API_NAME ). A renderer
 // without statistics returns NULL. All calls run on the main thread, between two frames.
+//
+// The list of entries is open: a renderer adds entries by name and the version stays. A renderer
+// with its own render thread gives "rtthread" (1 per frame while the thread runs), "rtwait" (time
+// of the main thread in the wait for the previous frame) and "rtsync" (time of the main thread in
+// waits for registration and uploads). "backend" is then the time of the render thread.
 
 #pragma once
 

@@ -24,7 +24,9 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "tr_local.h"
 #include "tr_WorldEffects.h"
 
-backEndData_t	*backEndData;
+backEndData_t	*backEndData;			// frontend
+backEndData_t	*backEndDataBE;			// backend
+backEndData_t	*backEndDataBuf[2];
 backEndState_t	backEnd;
 
 //bool tr_stencilled = false;
@@ -1859,6 +1861,10 @@ const void	*RB_DrawBuffer( const void *data ) {
 
 	cmd = (const drawBufferCommand_t *)data;
 
+	// The start of the frame. The frontend does not touch these any more.
+	glState.finishCalled = qfalse;
+	backEnd.doneBloom = qfalse;
+
 	vk_begin_frame();
 
 #ifdef USE_RTX
@@ -1892,6 +1898,7 @@ static int	rb_captureWidth, rb_captureHeight;
 
 void RE_CaptureNextFrame( byte *rgba, int width, int height )
 {
+	R_SyncRenderThread();
 	rb_captureRGBA = rgba;
 	rb_captureWidth = width;
 	rb_captureHeight = height;
@@ -1930,8 +1937,6 @@ const void	*RB_SwapBuffers( const void *data ) {
 
 	// finish any 2D drawing if needed
 	RB_EndSurface();
-
-	ResetGhoul2RenderableSurfaceHeap();
 
 	// texture swapping test
 	if ( r_showImages->integer ) {

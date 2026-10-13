@@ -33,6 +33,16 @@ R2GoreTextureCoordinates::R2GoreTextureCoordinates()
 
 R2GoreTextureCoordinates::~R2GoreTextureCoordinates()
 {
+	// The backend draws the gore of a frame from these buffers.
+	for ( int i = 0; i < MAX_LODS; i++ )
+	{
+		if ( tex_vbo[i] || tex[i] )
+		{
+			R_SyncRenderThread();
+			break;
+		}
+	}
+
 	for ( int i = 0; i < MAX_LODS; i++ )
 	{
 		if ( tex_vbo[i] )

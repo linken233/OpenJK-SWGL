@@ -26,6 +26,8 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 static char *s_shaderText = NULL;
 
+int r_numVideoMaps = 0;		// videoMap stages parsed since R_Init
+
 // the shader is parsed into these global variables, then copied into
 // dynamically allocated memory if it is valid.
 static	shaderStage_t	stages[MAX_SHADER_STAGES] = {{ 0 }};
@@ -1538,6 +1540,7 @@ static qboolean ParseStage(shaderStage_t *stage, const char **text)
 
 				stage->bundle[0].isVideoMap = qtrue;
 				stage->bundle[0].videoMapHandle = handle;
+				r_numVideoMaps++;	// the backend runs the cinematic: frames run on the main thread
 				stage->bundle[0].image[0] = tr.scratchImage[handle];
 			}
 			else {
@@ -4179,6 +4182,9 @@ shader_t *FinishShader( void )
 	int				stage, i, n, m, lmStage, numStyles;
 	qboolean		fogCollapse;
 	shaderStage_t	*lastStage[NUM_TEXTURE_BUNDLES];
+
+	// A new shader changes tr.shaders, the sort order and the pipelines that the backend reads.
+	R_SyncRenderThread();
 
 	hasLightmapStage = qfalse;
 	fogCollapse = qfalse;

@@ -109,16 +109,16 @@ void RB_EndSurface( void ) {
 		return;
 	}
 
-	if ( skyboxportal ) {
+	if ( backEndDataBE->skyboxPortal ) {
 		// world
 		if( !( backEnd.refdef.rdflags & RDF_SKYBOXPORTAL ) ) {
 			// don't process these tris at all
-			if( tess.shader->optimalStageIteratorFunc == RB_StageIteratorSky )	
+			if( tess.shader->optimalStageIteratorFunc == RB_StageIteratorSky )
 				return;
 		}
 
 		// portal sky
-		else if( !drawskyboxportal ) {
+		else if( !backEndDataBE->drawSkyboxPortal ) {
 			// /only/ process sky tris
 			if( !( tess.shader->optimalStageIteratorFunc == RB_StageIteratorSky ) )
 				return;

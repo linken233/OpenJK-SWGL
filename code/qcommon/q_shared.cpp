@@ -757,8 +757,14 @@ FIXME: make this buffer size safe someday
 char * QDECL va( const char *format, ... )
 {
 	va_list		argptr;
+#ifdef RENDERER
+	// The render thread and the main thread both call va.
+	static thread_local char	string[MAX_VA_BUFFERS][MAX_VA_STRING];
+	static thread_local int		index = 0;
+#else
 	static char	string[MAX_VA_BUFFERS][MAX_VA_STRING];	// in case va is called by nested functions
 	static int	index = 0;
+#endif
 	char		*buf;
 
 	va_start( argptr, format );
