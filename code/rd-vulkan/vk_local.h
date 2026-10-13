@@ -427,6 +427,11 @@ extern PFN_vkQueueSubmit								qvkQueueSubmit;
 extern PFN_vkQueueWaitIdle								qvkQueueWaitIdle;
 extern PFN_vkResetDescriptorPool						qvkResetDescriptorPool;
 extern PFN_vkResetFences								qvkResetFences;
+extern PFN_vkCreateQueryPool							qvkCreateQueryPool;
+extern PFN_vkDestroyQueryPool							qvkDestroyQueryPool;
+extern PFN_vkCmdResetQueryPool							qvkCmdResetQueryPool;
+extern PFN_vkCmdWriteTimestamp							qvkCmdWriteTimestamp;
+extern PFN_vkGetQueryPoolResults						qvkGetQueryPoolResults;
 extern PFN_vkUpdateDescriptorSets						qvkUpdateDescriptorSets;
 extern PFN_vkWaitForFences								qvkWaitForFences;
 extern PFN_vkAcquireNextImageKHR						qvkAcquireNextImageKHR;
@@ -1736,6 +1741,22 @@ void		vk_create_framebuffers( void );
 void		vk_destroy_framebuffers( void );
 void		vk_create_sync_primitives( void );
 void		vk_destroy_sync_primitives( void );
+
+// GPU frame timing with timestamp queries (vk_perf.cpp), shown by com_perflog.
+typedef enum {
+	VKP_TS_START,		// first trace command buffer (RTX only)
+	VKP_TS_MAIN_TOP,	// start of the main command buffer
+	VKP_TS_MAIN_COLOR,	// the main command buffer has the swapchain image
+	VKP_TS_ACCEL_END,	// end of the TLAS build (RTX only)
+	VKP_TS_RT_END,		// end of the post command buffer (RTX only)
+	VKP_TS_MAIN_END,	// end of the main command buffer
+	VKP_TS_COUNT
+} vkGpuStamp_t;
+
+void		vk_gpu_timer_create( void );
+void		vk_gpu_timer_destroy( void );
+void		vk_gpu_timer_begin_frame( int index, qboolean fenceWaited );
+void		vk_gpu_timer_write( VkCommandBuffer cmd, int stamp, VkPipelineStageFlagBits stage );
 void		vk_release_geometry_buffers( void );
 void		vk_release_indirect_buffers( void );
 void		vk_wait_idle( void );

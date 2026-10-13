@@ -225,7 +225,7 @@ static void PerfLog_Report( void )
 	rdPerfEntry_t	rd[RD_PERF_MAX];
 	int				numRd = 0;
 	float			sorted[PERF_MAX_WINDOW];
-	char			msLine[512], cntLine[512];
+	char			msLine[1024], cntLine[512];
 	int				npcs, used;
 
 	const int n = perf_count;

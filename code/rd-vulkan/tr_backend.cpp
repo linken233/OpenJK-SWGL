@@ -2055,6 +2055,7 @@ extern const void *R_DrawWireframeAutomap( const void *data ); //tr_world.cpp
 void RB_ExecuteRenderCommands( const void *data ) {
 	int		t1, t2;
 	vk_perf_scope perfBackend( VKP_BACKEND );
+	vk_perf_cpu_scope perfBackendCpu( VKP_BACKEND_CPU );
 
 	t1 = ri.Milliseconds()*r_timescale->value;
 

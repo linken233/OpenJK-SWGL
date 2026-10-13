@@ -24,7 +24,7 @@ by the Free Software Foundation.
 
 #define RD_PERF_API_NAME	"rdPerf_v1"
 #define RD_PERF_API_VERSION	1
-#define RD_PERF_MAX			24
+#define RD_PERF_MAX			32
 
 typedef enum {
 	RD_PERF_MS,			// milliseconds per frame

@@ -143,6 +143,11 @@ PFN_vkQueueSubmit								qvkQueueSubmit;
 PFN_vkQueueWaitIdle								qvkQueueWaitIdle;
 PFN_vkResetDescriptorPool						qvkResetDescriptorPool;
 PFN_vkResetFences								qvkResetFences;
+PFN_vkCreateQueryPool							qvkCreateQueryPool;
+PFN_vkDestroyQueryPool							qvkDestroyQueryPool;
+PFN_vkCmdResetQueryPool							qvkCmdResetQueryPool;
+PFN_vkCmdWriteTimestamp							qvkCmdWriteTimestamp;
+PFN_vkGetQueryPoolResults						qvkGetQueryPoolResults;
 PFN_vkUpdateDescriptorSets						qvkUpdateDescriptorSets;
 PFN_vkWaitForFences								qvkWaitForFences;
 PFN_vkAcquireNextImageKHR						qvkAcquireNextImageKHR;
@@ -1364,6 +1369,11 @@ __initStart:
 	INIT_DEVICE_FUNCTION(vkResetCommandBuffer)
 	INIT_DEVICE_FUNCTION(vkResetDescriptorPool)
 	INIT_DEVICE_FUNCTION(vkResetFences)
+	INIT_DEVICE_FUNCTION(vkCreateQueryPool)
+	INIT_DEVICE_FUNCTION(vkDestroyQueryPool)
+	INIT_DEVICE_FUNCTION(vkCmdResetQueryPool)
+	INIT_DEVICE_FUNCTION(vkCmdWriteTimestamp)
+	INIT_DEVICE_FUNCTION(vkGetQueryPoolResults)
 	INIT_DEVICE_FUNCTION(vkUnmapMemory)
 	INIT_DEVICE_FUNCTION(vkUpdateDescriptorSets)
 	INIT_DEVICE_FUNCTION(vkWaitForFences)
@@ -1551,6 +1561,11 @@ void vk_deinit_library( void )
 	qvkResetCommandBuffer = NULL;
 	qvkResetDescriptorPool = NULL;
 	qvkResetFences = NULL;
+	qvkCreateQueryPool = NULL;
+	qvkDestroyQueryPool = NULL;
+	qvkCmdResetQueryPool = NULL;
+	qvkCmdWriteTimestamp = NULL;
+	qvkGetQueryPoolResults = NULL;
 	qvkUnmapMemory = NULL;
 	qvkUpdateDescriptorSets = NULL;
 	qvkWaitForFences = NULL;

@@ -85,6 +85,8 @@ void vk_create_sync_primitives( void )
 	vk.image_uploaded = VK_NULL_HANDLE;
 	vk.aux_fence_wait = qfalse;
 #endif
+
+	vk_gpu_timer_create();
 }
 
 void vk_destroy_sync_primitives( void )
@@ -92,6 +94,8 @@ void vk_destroy_sync_primitives( void )
     uint32_t i;
 
     vk_debug("Destroy Sempahore and Fence\n");
+
+	vk_gpu_timer_destroy();
 
 #ifdef USE_UPLOAD_QUEUE
 	qvkDestroySemaphore( vk.device, vk.image_uploaded2, NULL );
@@ -1763,6 +1767,8 @@ void vk_begin_frame( void )
 #endif
 	vk.cmd = &vk.tess[ vk.cmd_index ];
 
+	qboolean fenceWaited = qfalse;
+
 	if ( vk.cmd->waitForFence ) {
 		vk.cmd->waitForFence = qfalse;
 		vk_perf_scope perfFence( VKP_FENCE_WAIT );
@@ -1776,8 +1782,12 @@ void vk_begin_frame( void )
 				ri.Error( ERR_FATAL, "Vulkan: %s returned %s", "vkWaitForFences", vk_result_string( res ) );
 			}
 		}
+		fenceWaited = ( res == VK_SUCCESS ) ? qtrue : qfalse;
 		VK_CHECK( qvkResetFences( vk.device, 1, &vk.cmd->rendering_finished_fence ) );
     }
+
+	// The fence of the previous use of this command buffer is done: its timestamps are ready.
+	vk_gpu_timer_begin_frame( vk.cmd_index, fenceWaited );
 
 	if ( !ri.VK_IsMinimized() && !vk.cmd->swapchain_image_acquired ) {
 		qboolean retry = qfalse;
@@ -1805,6 +1815,9 @@ _retry:
     begin_info.pInheritanceInfo = VK_NULL_HANDLE;
 
     VK_CHECK( qvkBeginCommandBuffer( vk.cmd->command_buffer, &begin_info ) );
+
+	vk_gpu_timer_write( vk.cmd->command_buffer, VKP_TS_MAIN_TOP, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT );
+	vk_gpu_timer_write( vk.cmd->command_buffer, VKP_TS_MAIN_COLOR, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT );
 
 #ifdef _G2_GORE
 	// the gore marks added since the last frame, before the first render pass
@@ -2126,6 +2139,8 @@ void vk_end_frame( void )
     }
 
     vk_end_render_pass();
+
+	vk_gpu_timer_write( vk.cmd->command_buffer, VKP_TS_MAIN_END, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT );
 
     VK_CHECK( qvkEndCommandBuffer( vk.cmd->command_buffer ) );
  

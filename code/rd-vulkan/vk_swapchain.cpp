@@ -179,7 +179,9 @@ void vk_create_swapchain( VkPhysicalDevice physical_device, VkDevice device,
         image_count = MIN( MIN( image_count, surface_caps.maxImageCount ), MAX_SWAPCHAIN_IMAGES );
     }
 
-    ri.Printf( PRINT_ALL, "selected presentation mode: %s, image count: %i\n", vk_pmode_to_str( present_mode ), image_count );
+    ri.Printf( PRINT_ALL, "selected presentation mode: %s, image count: %i, r_swapInterval %i\n", vk_pmode_to_str( present_mode ), image_count, r_swapInterval->integer );
+    vk_perf_set_present_mode( present_mode == VK_PRESENT_MODE_IMMEDIATE_KHR ? 0 : present_mode == VK_PRESENT_MODE_MAILBOX_KHR ? 1
+        : present_mode == VK_PRESENT_MODE_FIFO_KHR ? 2 : present_mode == VK_PRESENT_MODE_FIFO_RELAXED_KHR ? 3 : 4 );
 
 #ifdef USE_RTX
     // The tracer keeps two frames of history; a third swapchain image just adds latency

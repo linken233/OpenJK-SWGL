@@ -2776,6 +2776,7 @@ static void vk_begin_trace_rays( world_t &worldData, trRefdef_t *refdef, referen
 	{
 		VkCommandBuffer trace_cmd_buf = vkpt_begin_command_buffer(&vk.cmd_buffers_graphics);
 
+		vk_gpu_timer_write( trace_cmd_buf, VKP_TS_START, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT );
 
 		update_transparency(trace_cmd_buf, refdef, ubo->V);
 
@@ -2803,6 +2804,8 @@ static void vk_begin_trace_rays( world_t &worldData, trRefdef_t *refdef, referen
 		vkpt_pt_create_toplevel( trace_cmd_buf, vk.current_frame_index, upload_info );
 		vkpt_pt_update_descripter_set_bindings( vk.current_frame_index );
 		END_PERF_MARKER( trace_cmd_buf, PROFILER_BVH_UPDATE );
+
+		vk_gpu_timer_write( trace_cmd_buf, VKP_TS_ACCEL_END, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT );
 
 		BEGIN_PERF_MARKER( trace_cmd_buf, PROFILER_SHADOW_MAP );
 		if ( god_rays_enabled )
@@ -2937,6 +2940,8 @@ static void vk_begin_trace_rays( world_t &worldData, trRefdef_t *refdef, referen
 			VkBufferCopy copyRegion = { 0, 0, sizeof(ReadbackBuffer) };
 			qvkCmdCopyBuffer( post_cmd_buf, vk.buf_readback.buffer, vk.buf_readback_staging[vk.current_frame_index].buffer, 1, &copyRegion);
 		}
+
+		vk_gpu_timer_write( post_cmd_buf, VKP_TS_RT_END, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT );
 
 		vkpt_submit_command_buffer_simple( post_cmd_buf, vk.queue_graphics, true );
 	}
