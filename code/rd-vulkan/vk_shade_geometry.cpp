@@ -1168,7 +1168,7 @@ void ComputeColors( const int b, color4ub_t *dest, const shaderStage_t *pStage, 
 	{
 		const fog_t *fog;
 
-		fog = tr.world->fogs + tess.fogNum;
+		fog = backEndDataBE->fogs + tess.fogNum;
 
 		for (i = 0; i < tess.numVertexes; i++) {
 			*(int *)&dest[i] = fog->colorInt;
@@ -1375,7 +1375,7 @@ const fogProgramParms_t *RB_CalcFogProgramParms( void )
 
 	Com_Memset(parm.fogDepthVector, 0, sizeof(parm.fogDepthVector));
 
-	fog = tr.world->fogs + tess.fogNum;
+	fog = backEndDataBE->fogs + tess.fogNum;
 
 	// all fogging distance is based on world Z units
 	VectorSubtract(backEnd.ori.origin, backEnd.viewParms.ori.origin, local);
@@ -1454,7 +1454,7 @@ static void vk_set_fog_params( vkUniform_t *uniform, int *fogStage )
 	if (tess.fogNum && tess.shader->fogPass) {
 		if ( vk.hw_fog ) {
 			// re-use these bits
-			uniform->fog.fogDistanceVector[0] = tr.world ? (tr.world->globalFog - 1) : -1;
+			uniform->fog.fogDistanceVector[0] = backEndDataBE->numFogs ? (backEndDataBE->globalFog - 1) : -1;
 			uniform->fog.fogDistanceVector[1] = tess.fogNum ? (tess.fogNum - 1) : -1;
 			uniform->fog.fogDistanceVector[2] = backEnd.isGlowPass ? 0.0f : 1.0f;
 			uniform->fog.fogDistanceVector[3] = 0; // is_entity (for non vbo models mode)
@@ -1533,7 +1533,7 @@ static void RB_FogPass( void ) {
 	const fog_t *fog;
 	int			i;
 
-	fog = tr.world->fogs + tess.fogNum;
+	fog = backEndDataBE->fogs + tess.fogNum;
 
 	for (i = 0; i < tess.numVertexes; i++) {
 		*(int*)&tess.svars.colors[0][i] = fog->colorInt;
@@ -1914,7 +1914,7 @@ static void vk_compute_colors( const int b, const shaderStage_t *pStage, int for
 			break;
 		case CGEN_FOG:
 			{
-				fog_t *fog = tr.world->fogs + tess.fogNum;
+				const fog_t *fog = backEndDataBE->fogs + tess.fogNum;
 				VectorCopy4(fog->color, baseColor);
 			}
 			break;

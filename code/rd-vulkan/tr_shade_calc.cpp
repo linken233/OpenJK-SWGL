@@ -940,7 +940,7 @@ void RB_CalcFogTexCoords( float *st ) {
 	vec3_t			localVec;
 	vec4_t			fogDistanceVector, fogDepthVector;
 
-	fog = tr.world->fogs + tess.fogNum;
+	fog = backEndDataBE->fogs + tess.fogNum;
 
 	// all fogging distance is based on world Z units
 	VectorSubtract( backEnd.ori.origin, backEnd.viewParms.ori.origin, localVec );

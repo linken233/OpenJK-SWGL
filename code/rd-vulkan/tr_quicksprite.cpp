@@ -93,7 +93,7 @@ void CQuickSpriteSystem::Flush( void )
 		const fog_t *fog;
 		int			i;
 
-		fog = tr.world->fogs + mFogIndex;
+		fog = backEndDataBE->fogs + mFogIndex;
 
 		for (i = 0; i < tess.numVertexes; i++) {
 			*(int*)&tess.svars.colors[0][i] = fog->colorInt;
