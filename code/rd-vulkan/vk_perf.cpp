@@ -21,7 +21,7 @@ static const char *const perf_time_name[VKP_TIME_COUNT] = {
 };
 
 static const char *const perf_count_name[VKP_COUNT_COUNT] = {
-	"refents", "dlights", "drawsurfs", "polys", "geom%", "rtthread"
+	"refents", "dlights", "drawsurfs", "polys", "geom%", "rtthread", "rtinline", "rtsyncleft"
 };
 
 void vk_perf_time( int slot, double ms )

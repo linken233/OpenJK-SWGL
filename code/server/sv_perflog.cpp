@@ -5,6 +5,7 @@
 #include "../server/exe_headers.h"
 
 #include "server.h"
+#include "../client/client.h"
 #include "../rd-common/perf_stats_api.h"
 
 #include <algorithm>
@@ -88,6 +89,59 @@ void PerfLog_Init( void )
 {
 	com_perflog = Cvar_Get( "com_perflog", "0", 0 );
 	com_perflogFrames = Cvar_Get( "com_perflogFrames", "30", 0 );
+}
+
+static const char *PerfLog_ClientStateName( int state )
+{
+	static const char *const names[] = {
+		"uninitialized", "disconnected", "connecting", "challenging", "connected",
+		"loading", "primed", "active", "cinematic"
+	};
+
+	return ( state >= 0 && state < (int)ARRAY_LEN( names ) ) ? names[state] : "?";
+}
+
+// Writes the state of the connection between the client and the local server: the client state,
+// the server and its client slot, the pause flags, and whether a saved game load is in progress.
+static void PerfLog_DescribeConnection( char *out, int size )
+{
+	static const char *const svNames[] = { "dead", "loading", "game" };
+	static const char *const slotNames[] = { "free", "zombie", "connected", "primed", "active" };
+	extern qboolean gbAlreadyDoingLoad;
+
+	const int running = com_sv_running ? com_sv_running->integer : 0;
+	const int slot = ( running && svs.clients ) ? (int)svs.clients[0].state : -1;
+
+	Com_sprintf( out, size, "client %s, server %s (%s), client slot %s, cl_paused %i, sv_paused %i, loading %i, catcher %i, sv.time %i",
+		PerfLog_ClientStateName( cls.state ),
+		running ? "running" : "off",
+		( (int)sv.state >= 0 && (int)sv.state < 3 ) ? svNames[sv.state] : "?",
+		( slot >= 0 && slot < 5 ) ? slotNames[slot] : "none",
+		cl_paused ? cl_paused->integer : 0, sv_paused ? sv_paused->integer : 0,
+		(int)gbAlreadyDoingLoad, Key_GetCatcher(), sv.time );
+}
+
+// Called by CL_Frame. Prints one line when the connection state changes. A load or a map change
+// does this a few times, so the line is rare.
+void PerfLog_ConnectionTrace( void )
+{
+	static int	last[5] = { -1, -1, -1, -1, -1 };
+	int			cur[5];
+	char		text[256];
+
+	cur[0] = cls.state;
+	cur[1] = com_sv_running ? com_sv_running->integer : 0;
+	cur[2] = ( cur[1] && svs.clients ) ? (int)svs.clients[0].state : -1;
+	cur[3] = cl_paused ? cl_paused->integer : 0;
+	cur[4] = cur[1] ? (int)sv.state : -1;
+
+	if ( !memcmp( cur, last, sizeof( cur ) ) ) {
+		return;
+	}
+	memcpy( last, cur, sizeof( cur ) );
+
+	PerfLog_DescribeConnection( text, sizeof( text ) );
+	Com_Printf( "connection: %s\n", text );
 }
 
 // Game code that runs inside the server frame: called by SV_Frame around every call into the game.
@@ -199,6 +253,14 @@ static void PerfLog_Report( void )
 		com_frameNumber, fps, wall * inv, p95, (double)sorted[n - 1],
 		perf_sumWork * inv, perf_sumSv * inv, perf_sumGame * inv, perf_maxGame, perf_gameFrames, n,
 		perf_sumCl * inv, npcs, used );
+
+	// A client that is not in the game for a whole interval is a stalled load: show why.
+	if ( cls.state != CA_ACTIVE ) {
+		char text[256];
+
+		PerfLog_DescribeConnection( text, sizeof( text ) );
+		Com_Printf( "     connection: %s\n", text );
+	}
 
 	if ( perf_traces > 0 ) {
 		Com_Printf( "     world traces/frame %i: same args as earlier this frame %i%%, as the previous frame %i%%\n",

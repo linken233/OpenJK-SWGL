@@ -24,6 +24,8 @@ typedef enum {
 	VKP_POLYS,
 	VKP_GEOMETRY_PCT,	// share of the geometry buffer that the frame used
 	VKP_RT_THREAD,		// 1 for a frame with the render thread on
+	VKP_RT_INLINE,		// 1 for a frame whose back end ran on the main thread while the thread runs
+	VKP_RT_SYNC_LEFT,	// frames that the render thread still must run on the main thread
 	VKP_COUNT_COUNT
 } vkPerfCount_t;
 

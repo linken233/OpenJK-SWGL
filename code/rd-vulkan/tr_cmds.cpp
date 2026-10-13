@@ -323,6 +323,7 @@ static int			rtLogNumSites;
 static int			rtLogReasons[RTR_COUNT];
 static int			rtLogFrames;
 static int			rtLogInlineFrames;
+static qboolean		rtInlineLast;	// the last frame ran its back end on the main thread
 static std::mutex	rtLogMutex;
 
 static qboolean R_RenderThreadLogOn( void )
@@ -781,7 +782,9 @@ void R_IssueRenderCommands( qboolean runPerformanceCounters ) {
 	if ( !r_skipBackEnd->integer ) {
 		R_RenderThreadSwapBuffers();
 
-		if ( rt.running && !R_FrameNeedsMainThread() ) {
+		rtInlineLast = ( rt.running && R_FrameNeedsMainThread() ) ? qtrue : qfalse;
+
+		if ( rt.running && !rtInlineLast ) {
 			{
 				std::lock_guard<std::mutex> lock( rt.mutex );
 
@@ -1236,6 +1239,8 @@ void RE_EndFrame( int *frontEndMsec, int *backEndMsec ) {
 	R_InitNextFrame();
 
 	vk_perf_count( VKP_RT_THREAD, rt.running ? 1 : 0 );
+	vk_perf_count( VKP_RT_INLINE, rtInlineLast ? 1 : 0 );
+	vk_perf_count( VKP_RT_SYNC_LEFT, rt.syncFrames );
 	vk_perf_end_frame();
 
 	if ( frontEndMsec ) {

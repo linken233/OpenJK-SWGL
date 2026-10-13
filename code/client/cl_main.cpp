@@ -765,6 +765,7 @@ CL_Frame
 extern cvar_t	*cl_newClock;
 static unsigned int frameCount;
 float avgFrametime=0.0;
+void PerfLog_ConnectionTrace( void );	// server/sv_perflog.cpp
 void CL_Frame ( int msec,float fractionMsec ) {
 
 	if ( !com_cl_running->integer ) {
@@ -773,6 +774,8 @@ void CL_Frame ( int msec,float fractionMsec ) {
 
 	// load the ref / cgame if needed
 	CL_StartHunkUsers();
+
+	PerfLog_ConnectionTrace();
 
 	if ( cls.state == CA_DISCONNECTED && !( Key_GetCatcher( ) & KEYCATCH_UI )
 		&& !com_sv_running->integer ) {
