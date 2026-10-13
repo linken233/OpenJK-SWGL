@@ -185,6 +185,9 @@ if(BuildSPEngine)
 
 		"${SPDir}/qcommon/files.cpp"
 
+		"${SPDir}/qcommon/jobs.cpp"
+		"${SPDir}/qcommon/jobs.h"
+
 		"${SPDir}/qcommon/md4.cpp"
 		"${SPDir}/qcommon/msg.cpp"
 		"${SPDir}/qcommon/net_chan.cpp"
@@ -396,6 +399,10 @@ if(BuildSPEngine)
     # Transparently use either bundled or system zlib.
     list(APPEND SPEngineIncludeDirectories ${ZLIB_INCLUDE_DIR})
     list(APPEND SPEngineLibraries          ${ZLIB_LIBRARIES})
+
+	# The job pool uses std::thread.
+	find_package(Threads REQUIRED)
+	list(APPEND SPEngineLibraries          ${CMAKE_THREAD_LIBS_INIT})
 
 	# project macro so we can invoke it twice: for jk2 and for ja
 	function(add_sp_project ProjectName Label SPDirName InstallDir Component)

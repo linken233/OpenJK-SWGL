@@ -34,6 +34,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "sys/sys_loadlib.h"
 #include "qcommon/ojk_saved_game.h"
 #include "cl_dualref.h"
+#include "qcommon/jobs.h"
 
 #define	RETRANSMIT_TIMEOUT	3000	// time between connection packet retransmits
 
@@ -1092,6 +1093,10 @@ static void Hunk_ClearToMark_Second( void ) {
 #define DEFAULT_RENDER_LIBRARY	"rdsp_swgl"
 #endif
 
+static qboolean CL_RefIsWorkerThread( void ) {
+	return Jobs_IsWorkerThread() ? qtrue : qfalse;
+}
+
 void CL_InitRef( void ) {
 	refexport_t	*ret;
 	static refimport_t rit;
@@ -1205,6 +1210,10 @@ void CL_InitRef( void ) {
 	rit.SV_PointContents = SV_PointContents;
 
 	rit.saved_game = &ojk::SavedGame::get_instance();
+
+	rit.Jobs_ParallelFor = Jobs_ParallelFor;
+	rit.Jobs_NumThreads = Jobs_NumThreads;
+	rit.Jobs_IsWorkerThread = CL_RefIsWorkerThread;
 
 	ret = GetRefAPI( REF_API_VERSION, &rit );
 

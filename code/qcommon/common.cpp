@@ -29,6 +29,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "sstring.h"	// to get Gil's string class, because MS's doesn't compile properly in here
 #include "stringed_ingame.h"
 #include "game_version.h"
+#include "jobs.h"
 #include "../shared/sys/sys_local.h"
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
@@ -1190,6 +1191,7 @@ void Com_Init( char *commandLine ) {
 		com_showtrace = Cvar_Get ("com_showtrace", "0", CVAR_CHEAT);
 		com_speeds = Cvar_Get ("com_speeds", "0", 0);
 		PerfLog_Init();
+		Jobs_Init();
 
 #ifdef G2_PERFORMANCE_ANALYSIS
 		com_G2Report = Cvar_Get("com_G2Report", "0", 0);
@@ -1651,6 +1653,7 @@ Com_Shutdown
 =================
 */
 void Com_Shutdown (void) {
+	Jobs_Shutdown();
 	CM_ClearMap();
 
 	if (logfile) {

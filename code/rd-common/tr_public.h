@@ -154,6 +154,11 @@ typedef struct {
 	// one applies its ramp to the finished frame instead.
 	qboolean			(*WIN_GammaInSoftware)				( void );
 
+	// Job pool (qcommon/jobs.h). Job functions must be thread-safe.
+	void				(*Jobs_ParallelFor)					( int count, int grain, void (*fn)( int begin, int end, void *ctx ), void *ctx );
+	int					(*Jobs_NumThreads)					( void );
+	qboolean			(*Jobs_IsWorkerThread)				( void );
+
 } refimport_t;
 
 extern refimport_t ri;
