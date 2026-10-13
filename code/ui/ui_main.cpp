@@ -1913,6 +1913,25 @@ static qboolean UI_RunMenuScript ( const char **args )
 			ui.Cmd_ExecuteText( EXEC_APPEND, "characterButtonClick\n");
 			return qtrue;
 		}
+		if (Q_stricmp(name, "characterFactionClick") == 0)
+		{
+			const char *slot;
+			if (String_Parse(args, &slot))
+			{
+				ui.Cmd_ExecuteText( EXEC_APPEND, va("characterFactionClick %s\n", slot));
+			}
+			return qtrue;
+		}
+		if (Q_stricmp(name, "characterFactionPreviousPage") == 0)
+		{
+			ui.Cmd_ExecuteText( EXEC_APPEND, "characterFactionPreviousPage\n");
+			return qtrue;
+		}
+		if (Q_stricmp(name, "characterFactionNextPage") == 0)
+		{
+			ui.Cmd_ExecuteText( EXEC_APPEND, "characterFactionNextPage\n");
+			return qtrue;
+		}
 		if (Q_stricmp(name, "characterVariantClick") == 0)
 		{
 			const char *slot;

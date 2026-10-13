@@ -44,6 +44,8 @@ static const int variantsPerPage = 4;		// squares of a page: buttons variantButt
 static const int tagsPerPage = 9;			// rows of a page: buttons tagButton1..9 of the menu
 static int tagPage = 0;					// page of the tag rows (the character grid behind keeps ui_character_page)
 static int configPage = 0;					// page of the My Characters grid
+static int factionPage = 0;					// page of the faction rows of the left column
+static const int factionsPerPage = 9;		// rows of a page: buttons factionButton1..9 of the menu
 static int filteredPages = 0;				// page count of the character grid at the last filter (0: no filter yet)
 qboolean searchChanged = qtrue;
 
@@ -68,7 +70,6 @@ extern vmCvar_t ui_c_filter_name;
 extern vmCvar_t ui_character_screen;
 extern vmCvar_t ui_character_selected;
 extern vmCvar_t ui_character_page;
-extern vmCvar_t ui_faction_page;
 extern vmCvar_t ui_character_index;
 
 #pragma endregion
@@ -222,6 +223,7 @@ static void ShowCharacterScreen()
 	cgi_UI_Run_Command("hide selScreen");
 	cgi_UI_Run_Command("hide searchDisabled");
 	cgi_UI_Run_Command("hide characterButtons");
+	cgi_UI_Run_Command("hide factionButtons");
 	cgi_UI_Run_Command("hide tagButtons");
 	cgi_UI_Run_Command("show charScreen");
 	cgi_UI_Run_Command("hide tabPowers");
@@ -251,22 +253,6 @@ void CG_Characters_CharacterClick_f()
 	//Update CVAR
 	cgi_Cvar_Update(&ui_character_screen);	
 	cgi_Cvar_Update(&ui_character_selected);
-	if (Q_stricmp(ui_character_screen.string, "factions") == 0)
-	{
-		int selectedFaction = (getCurrentPage() * 15) + ui_character_selected.integer - 1;
-		if(selectedFaction >= loadedFactions || selectedFaction < 0)
-		{
-			//Draw warning in debug$
-			#ifdef DEBUG
-			Com_Printf("Invalid faction selected: %d\n", selectedFaction);
-			#endif // DEBUG
-			return;
-		}
-		//Toggle the selected faction filter
-		factionsData[selectedFaction].selectedFilter = factionsData[selectedFaction].selectedFilter ? qfalse : qtrue;
-		RefreshAfterFilterChange();
-		return;
-	}
 	if (Q_stricmp(ui_character_screen.string, "tags") == 0)
 	{
 		const int selectedTag = (tagPage * tagsPerPage) + ui_character_selected.integer - 1;
@@ -309,6 +295,40 @@ void CG_Characters_CharacterClick_f()
 	}
 }
 
+// characterFactionClick <slot 1..9>: show only the characters of this faction. A click on the shown faction shows all of them again.
+void CG_Characters_FactionClick_f()
+{
+	const int selectedFaction = factionPage * factionsPerPage + atoi(CG_Argv(1)) - 1;
+	if (selectedFaction < 0 || selectedFaction >= loadedFactions)
+	{
+		return;
+	}
+	const qboolean wasSelected = factionsData[selectedFaction].selectedFilter;
+	for (int i = 0; i < loadedFactions; i++)
+	{
+		factionsData[i].selectedFilter = qfalse;
+	}
+	factionsData[selectedFaction].selectedFilter = wasSelected ? qfalse : qtrue;
+	RefreshAfterFilterChange();
+}
+
+// characterFactionPreviousPage / characterFactionNextPage: page of the faction rows, with wrap-around.
+static void ChangeFactionPage(int step)
+{
+	const int pages = Q_max(1, (loadedFactions + factionsPerPage - 1) / factionsPerPage);
+	factionPage = (factionPage + step + pages) % pages;
+}
+
+void CG_Characters_FactionPreviousPage_f()
+{
+	ChangeFactionPage(-1);
+}
+
+void CG_Characters_FactionNextPage_f()
+{
+	ChangeFactionPage(1);
+}
+
 // characterBack: Back of the character screen. The menu shows the selection screen; this sets its grid.
 void CG_Characters_Back_f()
 {
@@ -325,6 +345,7 @@ void CG_Characters_Back_f()
 		// No search on this grid: the menu shows the search field again with the selection screen.
 		cgi_UI_Run_Command("hide searchNameInput");
 		cgi_UI_Run_Command("show searchDisabled");
+		cgi_UI_Run_Command("hide factionButtons");
 	}
 	cgi_Cvar_Set("ui_character_screen", backScreen);
 }
@@ -368,10 +389,6 @@ void CG_Characters_VariantNextPage_f()
 
 int getMaxPage() {
 	cgi_Cvar_Update(&ui_character_screen);
-	if (Q_stricmp(ui_character_screen.string, "factions") == 0)
-	{
-		return Q_max(1, (loadedFactions + 14) / 15);
-	}
 	// The tags screen shows the character grid behind the tags.
 	if (Q_stricmp(ui_character_screen.string, "characters") == 0 || Q_stricmp(ui_character_screen.string, "tags") == 0)
 	{
@@ -384,15 +401,9 @@ int getMaxPage() {
 	return 0;
 }
 
-// Page of the grid of the shown screen. Each grid keeps its page: characters and tags ui_character_page,
-// factions ui_faction_page, My Characters configPage.
+// Page of the grid of the shown screen. Each grid keeps its page: characters and tags ui_character_page, My Characters configPage.
 int getCurrentPage() {
 	cgi_Cvar_Update(&ui_character_screen);
-	if (Q_stricmp(ui_character_screen.string, "factions") == 0)
-	{
-		cgi_Cvar_Update(&ui_faction_page);
-		return ui_faction_page.integer;
-	}
 	if (Q_stricmp(ui_character_screen.string, "myconfigs") == 0)
 	{
 		return configPage;
@@ -403,11 +414,7 @@ int getCurrentPage() {
 
 void setCurrentPage(int currentPage) {
 	cgi_Cvar_Update(&ui_character_screen);
-	if (Q_stricmp(ui_character_screen.string, "factions") == 0)
-	{
-		cgi_Cvar_Set("ui_faction_page", va("%d", currentPage));
-	}
-	else if (Q_stricmp(ui_character_screen.string, "myconfigs") == 0)
+	if (Q_stricmp(ui_character_screen.string, "myconfigs") == 0)
 	{
 		configPage = currentPage;
 	}
@@ -480,6 +487,7 @@ void CG_Characters_ResetSearch_f()
 	{
 		tagsData[i].selectedFilter = qfalse;
 	}
+	factionPage = 0;
 	searchChanged = qtrue;
 	UpdateSearchFromCvar();
 	cgi_Cvar_Set("ui_character_page", "0");
@@ -653,62 +661,45 @@ void CG_DrawCharacters() {
 		va("Page %d of %d (showing %d characters)", currentPage + 1, maxPage, filteredCharacters), cgs.media.qhFontSmall, colorTable[CT_WHITE], ALIGN_RIGHT);
 }
 
-void CG_DrawFactions() {
-	int marginX = 5, marginY = 4;
-	int startX = 114, startY = 88;
+// Faction rows of the left column, under the "Faction" title of the menu: one row of 98 x 22 per faction
+// (the shown faction highlighted) and the page arrows at the bottom. The buttons factionButton1..9,
+// factionPrev and factionNext of IngameSWGLChars.menu have the same rects.
+void CG_DrawFactionList() {
+	int rowX = 11, rowY = 196, rowW = 98, rowH = 22, rowPitch = 24;
+	int textInset = 5;
+	int textLift = 3;			// the font draws its glyphs low in the line: raise the text to center it in the row
+	int pageTextCenterX = 60;	// center of the column
+	int pageTextY = 422;		// between the page arrows of the menu (y 420, 14 high)
+	float pageTextScale = 0.5f;
+	vec4_t textColor = { 1.0f, 1.0f, 1.0f, 1.0f };
+	vec4_t selectedColor = { 1.0f, 0.682f, 0.0f, 1.0f };
+	vec4_t pageTextColor = { 1.0f, 0.682f, 0.0f, 1.0f };
 
-	int bgSizeX = 94, bgSizeY = 114;
 
-	int iconSizeX = 72, iconSizeY = 72;
-	int iconOffsetX = 11, iconOffsetY = 11;
+	const int pages = Q_max(1, (loadedFactions + factionsPerPage - 1) / factionsPerPage);
+	factionPage = Com_Clamp(0, pages - 1, factionPage);
 
-	int nameSizeX = 82, nameSizeY = 16;
-	int nameOffsetX = 6, nameOffsetY = 90;
-
-	int posX = startX, posY = startY;
-
-	char text[1024] = { 0 };
-	qhandle_t background = cgi_R_RegisterShaderNoMip("gfx/menu/w_character_icon_bg");
-	qhandle_t background_selected = cgi_R_RegisterShaderNoMip("gfx/menu/w_character_icon_bg_s");
-
-	int currentPage = getCurrentPage();
-	int maxPage = getMaxPage();
-	if (currentPage >= maxPage)
+	const int beginIndex = factionPage * factionsPerPage;
+	const int endIndex = Q_min(loadedFactions, beginIndex + factionsPerPage);
+	for (int i = beginIndex; i < endIndex; i++)
 	{
-		currentPage = 0;
-		setCurrentPage(0);
-	}
-	int beginIndex = (currentPage * 15);
-	int endIndex = beginIndex + 15;
+		const characterFaction_t *faction = &factionsData[i];
+		const int y = rowY + (i - beginIndex) * rowPitch;
+		char text[128];
 
-	//DrawsFactions
-	for (int i = beginIndex;factionsData[i].code != 0 && factionsData[i].code[0] != '\0' && i < endIndex; i++)
-	{
-		characterFaction_t *faction = &factionsData[i];
-		//Draw Background
-		CG_DrawPic(posX, posY, bgSizeX, bgSizeY, faction->selectedFilter ? background_selected : background);
-		//Draw Character Icons
-		qhandle_t icon = cgi_R_RegisterShaderNoMip(faction->icon);
-		CG_DrawPic(posX + iconOffsetX, posY + iconOffsetY, iconSizeX, iconSizeY, icon);
-
-		//Translate & draw name
-		if (!cgi_SP_GetStringTextString(va("%s", faction->nameKey), text, sizeof(text)))
+		if (!cgi_SP_GetStringTextString(faction->nameKey, text, sizeof(text)))
 		{
-			Com_sprintf(text, sizeof(faction->nameKey), faction->nameKey);
+			Q_strncpyz(text, faction->nameKey, sizeof(text));
 		}
-		CG_DrawTextInBox(posX + nameOffsetX, posY + nameOffsetY, nameSizeX, nameSizeY,
-			text, cgs.media.qhFontSmall, colorTable[CT_WHITE]);
-
-		//switch to next position
-		int nextLine = ((i-beginIndex) + 1) / 5;
-		int nextColumn = ((i - beginIndex) + 1) % 5;
-		posX = startX + nextColumn * (bgSizeX + marginX);
-		posY = startY + nextLine * (bgSizeY + marginY);
+		CG_DrawTextInBox(rowX + textInset, y + (rowH - 16) / 2 - textLift, rowW - 2 * textInset, 16,
+			text, cgs.media.qhFontSmall, faction->selectedFilter ? selectedColor : textColor);
 	}
+	cgi_R_SetColor(NULL);
 
-	CG_DrawTextInBox(114, 441, 490, 18,	// under the grid (x 114 to 604), right-aligned on its right edge
-		va("Page %d of %d (showing %d factions)", currentPage + 1, maxPage, loadedFactions), cgs.media.qhFontSmall, colorTable[CT_WHITE], ALIGN_RIGHT);
-
+	const char *pageText = va("%d / %d", factionPage + 1, pages);
+	const int textWidth = cgi_R_Font_StrLenPixels(pageText, cgs.media.qhFontSmall, pageTextScale);
+	cgi_R_Font_DrawString(pageTextCenterX - textWidth / 2, pageTextY, pageText, pageTextColor, cgs.media.qhFontSmall, -1, pageTextScale);
+	cgi_R_SetColor(NULL);
 }
 
 // Tags screen: the character grid behind, then the panel tag_bg (113 90 120 255) with one row of 104 x 22 per tag
@@ -932,12 +923,9 @@ void CG_DrawCharactersMenu() {
 	// The ownerdraw is the last menu item: without a reset, the pictures take the color of the text painted before.
 	cgi_R_SetColor(NULL);
 	cgi_Cvar_Update(&ui_character_screen);
-	if (Q_stricmp(ui_character_screen.string, "factions") == 0)
+	if (Q_stricmp(ui_character_screen.string, "characters") == 0)
 	{
-		CG_DrawFactions();
-	}
-	else if (Q_stricmp(ui_character_screen.string, "characters") == 0)
-	{
+		CG_DrawFactionList();
 		CG_DrawCharacters();
 	}
 	else if (Q_stricmp(ui_character_screen.string, "myconfigs") == 0)
@@ -952,6 +940,7 @@ void CG_DrawCharactersMenu() {
 	}
 	else if (Q_stricmp(ui_character_screen.string, "tags") == 0)
 	{
+		CG_DrawFactionList();
 		CG_DrawTags();
 	}
 }
