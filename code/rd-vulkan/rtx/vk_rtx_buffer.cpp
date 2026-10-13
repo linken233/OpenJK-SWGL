@@ -342,6 +342,76 @@ static void copy_bsp_lights( world_t *world, LightBuffer *lbo )
 	buffer_unmap( vk.buf_light_counts_history + history_index );
 }
 
+// Job context of the two PVS passes of inject_model_lights. A job owns a range of PVS bytes,
+// so it owns the clusters j * 8 + k of that range: no two jobs write the same counter or list.
+typedef struct {
+	world_t				*world;
+	const int			*local_counts;
+	int					*cluster_counts;
+	int					num_model_lights;
+	const light_poly_t	*lights;
+	int					*tails;
+	uint32_t			*dst_lists;
+	const uint32_t		*dst_offsets;
+	int					model_light_offset;
+} injectLightsCtx_t;
+
+static void inject_count_range( int begin, int end, void *p )
+{
+	const injectLightsCtx_t *c = (const injectLightsCtx_t *)p;
+
+	for ( int cl = 0; cl < c->world->numClusters; cl++ )
+	{
+		if ( !c->local_counts[cl] )
+			continue;
+
+		const byte *mask = BSP_GetPvs( c->world, cl );
+
+		for ( int j = begin; j < end; j++ )
+		{
+			if ( !mask[j] )
+				continue;
+
+			for ( int k = 0; k < 8; ++k )
+			{
+				if ( mask[j] & ( 1 << k ) )
+					c->cluster_counts[j * 8 + k] += c->local_counts[cl];
+			}
+		}
+	}
+}
+
+static void inject_write_range( int begin, int end, void *p )
+{
+	const injectLightsCtx_t *c = (const injectLightsCtx_t *)p;
+
+	for ( int nlight = 0; nlight < c->num_model_lights; nlight++ )
+	{
+		const byte *mask = BSP_GetPvs( c->world, c->lights[nlight].cluster );
+
+		if ( !mask )
+			continue;
+
+		for ( int j = begin; j < end; j++ )
+		{
+			if ( !mask[j] )
+				continue;
+
+			for ( int k = 0; k < 8; ++k )
+			{
+				if ( mask[j] & ( 1 << k ) )
+				{
+					const int other_cluster = j * 8 + k;
+					const int list_index = c->tails[other_cluster]++;
+					// assert we're not writing into the space reserved for following cluster
+					assert( list_index < (int)c->dst_offsets[other_cluster + 1] );
+					c->dst_lists[list_index] = c->model_light_offset + nlight;
+				}
+			}
+		}
+	}
+}
+
 static void inject_model_lights( world_t* world, int num_model_lights, light_poly_t* transformed_model_lights, int model_light_offset, LightBuffer *lbo)
 {
 	uint32_t *dst_list_offsets = lbo->light_list_offsets;
@@ -359,22 +429,21 @@ static void inject_model_lights( world_t* world, int num_model_lights, light_pol
 
 	// Count the number of model lights visible from each cluster, using the PVS
 
-	for (int c = 0; c < world->numClusters; c++)
-	{
-		if (local_light_counts[c])
-		{
-			const byte* mask = BSP_GetPvs(world, c);
+	// A job takes a range of PVS bytes. Small lists stay on the calling thread.
+	injectLightsCtx_t jobCtx;
+	jobCtx.world = world;
+	jobCtx.local_counts = local_light_counts;
+	jobCtx.cluster_counts = cluster_light_counts;
+	jobCtx.num_model_lights = num_model_lights;
+	jobCtx.lights = transformed_model_lights;
+	jobCtx.tails = light_list_tails;
+	jobCtx.dst_lists = dst_lists;
+	jobCtx.dst_offsets = dst_list_offsets;
+	jobCtx.model_light_offset = model_light_offset;
 
-			for (int j = 0; j < world->clusterBytes; j++) {
-				if (mask[j]) {
-					for (int k = 0; k < 8; ++k) {
-						if (mask[j] & (1 << k))
-							cluster_light_counts[j * 8 + k] += local_light_counts[c];
-					}
-				}
-			}
-		}
-	}
+	const int pvs_grain = MAX( 8, 2048 / MAX( 1, num_model_lights ) );
+
+	RTX_ParallelFor( world->clusterBytes, pvs_grain, inject_count_range, &jobCtx );
 
 	// Count the total required list size
 
@@ -424,27 +493,7 @@ static void inject_model_lights( world_t* world, int num_model_lights, light_pol
 
 	// Write the model light indices into the light lists
 
-	for (int nlight = 0; nlight < num_model_lights; nlight++)
-	{
-		const byte* mask = BSP_GetPvs(world, transformed_model_lights[nlight].cluster);
-
-		if (!mask) continue;
-
-		for (int j = 0; j < world->clusterBytes; j++) {
-			if (mask[j]) {
-				for (int k = 0; k < 8; ++k) {
-					if (mask[j] & (1 << k))
-					{
-						int other_cluster = j * 8 + k;
-						int list_index = light_list_tails[other_cluster]++;
-						// assert we're not writing into the space reserved for following cluster
-						assert(list_index < dst_list_offsets[other_cluster + 1]);
-						dst_lists[list_index] = model_light_offset + nlight;
-					}
-				}
-			}
-		}
-	}
+	RTX_ParallelFor( world->clusterBytes, pvs_grain, inject_write_range, &jobCtx );
 
 #if defined(_DEBUG)
 	// Verify tight packing

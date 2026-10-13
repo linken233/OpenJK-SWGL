@@ -22,8 +22,9 @@ int		Jobs_NumThreads( void );
 bool	Jobs_IsWorkerThread( void );
 
 // Run fn over [0,count) in chunks of at least grain items. Blocks until all chunks end.
-// The caller thread executes chunks too. Runs inline when there are no workers, when the
-// range is small, when called from a worker, or when another ParallelFor is active.
+// The caller thread executes chunks too. Two callers on different threads can run at once,
+// sharing the workers. Runs inline when there are no workers, when the range is small, when
+// called from a worker, or when both job slots are taken.
 void	Jobs_ParallelFor( int count, int grain, jobRangeFn_t fn, void *ctx );
 
 #endif

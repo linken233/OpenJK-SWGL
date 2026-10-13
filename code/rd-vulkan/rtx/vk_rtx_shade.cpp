@@ -409,7 +409,8 @@ static void fill_model_instance_distortion( uint32_t *data, const trRefdef_t *re
 	data[1] |= INSTANCE_DISTORT_CROP;
 }
 
-static void fill_model_instance_shader_data( InstanceBuffer *uniform_instance_buffer, int current_instance_index, const trRefdef_t *refdef, trRefEntity_t* entity, shader_t *shader )
+// distortion: the caller checked vk_rtx_is_distortion_entity, which a job must not call.
+static void fill_model_instance_shader_data( InstanceBuffer *uniform_instance_buffer, int current_instance_index, const trRefdef_t *refdef, trRefEntity_t* entity, shader_t *shader, qboolean distortion )
 {
 	uint32_t forceRGBGen = 0;
 
@@ -561,7 +562,7 @@ static void fill_model_instance_shader_data( InstanceBuffer *uniform_instance_bu
 		}
 	}
 
-	if ( shader && vk_rtx_is_distortion_entity( entity ) )
+	if ( shader && distortion )
 		fill_model_instance_distortion( data, refdef, entity, shader );
 	else if ( shader && vk_rtx_is_nodepth_entity( entity ) )
 		data[1] |= INSTANCE_NODEPTH;
@@ -884,7 +885,7 @@ void vk_rtx_add_entity_mesh( maliasmesh_t *mesh, shader_t *shader, int bone_offs
 
 static qboolean vk_rtx_collect_entity_meshes( const model_t* model, const uint32_t entityNum, trRefEntity_t *entity, int *mdxm_matrix_offset, mat3x4_t *mdxm_matrix_data )
 {
-	Com_Memset( &entity_meshes, NULL, sizeof(vk_rtx_entity_mesh_t) * SHADER_MAX_ENTITIES );
+	// Only entries below entity_mesh_count are read, and vk_rtx_add_entity_mesh sets all their fields.
 	entity_mesh_count = 0;
 
 	switch (model->type)
@@ -1078,7 +1079,7 @@ static void process_bsp_entity(
 	ModelInstance* mi = uniform_instance_buffer->model_instances + current_instance_idx;
 	// calc_color reads the entity color here; without it a brush model got the data another
 	// instance left at this index.
-	fill_model_instance_shader_data( uniform_instance_buffer, current_instance_idx, refdef, entity, NULL );
+	fill_model_instance_shader_data( uniform_instance_buffer, current_instance_idx, refdef, entity, NULL, qfalse );
 	memcpy(&mi->transform, transform, sizeof(transform));
 	memcpy(&mi->transform_prev, transform, sizeof(transform));
 	mi->material = 0;
@@ -1119,7 +1120,64 @@ static void process_bsp_entity(
 	(*instance_count)++;
 }
 
-static void process_regular_entity( 
+// One mesh instance whose data a job writes. process_regular_entity fills the list in order.
+typedef struct {
+	trRefEntity_t	*entity;
+	maliasmesh_t	*mesh;
+	shader_t		*shader;
+	uint32_t		material_id;
+	int				bone_offset;
+	int				instance_index;
+	int				render_prim_offset;
+	qboolean		distortion;		// the distortion data uses tess and backEnd, so it stays on the calling thread
+	mat4_t			transform;
+} vk_rtx_instance_job_t;
+
+static vk_rtx_instance_job_t	instance_jobs[SHADER_MAX_ENTITIES];
+static int						instance_job_count;
+
+typedef struct {
+	const trRefdef_t	*refdef;
+	qboolean			serial_pass;
+} instanceJobCtx_t;
+
+// Each job writes only the slots of its own instance index.
+static void instance_job_range( int begin, int end, void *p )
+{
+	const instanceJobCtx_t *ctx = (const instanceJobCtx_t *)p;
+	InstanceBuffer *buffer = &vk.uniform_instance_buffer;
+
+	for ( int n = begin; n < end; n++ )
+	{
+		const vk_rtx_instance_job_t *job = &instance_jobs[n];
+
+		if ( job->distortion != ctx->serial_pass )
+			continue;
+
+		ModelInstance *mi = &buffer->model_instances[job->instance_index];
+
+		fill_model_instance_shader_data( buffer, job->instance_index, ctx->refdef, job->entity, job->shader, job->distortion );
+		fill_model_instance( mi, job->entity, job->mesh, job->shader, job->transform, qfalse, qfalse, job->material_id, job->bone_offset );
+
+		mi->render_buffer_idx = VERTEX_BUFFER_INSTANCED;
+		mi->render_prim_offset = job->render_prim_offset;
+	}
+}
+
+static void vk_rtx_run_instance_jobs( const trRefdef_t *refdef )
+{
+	instanceJobCtx_t ctx;
+	ctx.refdef = refdef;
+
+	// Grain 8: one job is a few hundred nanoseconds to a few microseconds.
+	ctx.serial_pass = qfalse;
+	RTX_ParallelFor( instance_job_count, 8, instance_job_range, &ctx );
+
+	ctx.serial_pass = qtrue;
+	instance_job_range( 0, instance_job_count, &ctx );
+}
+
+static void process_regular_entity(
 	const uint32_t entityNum,
 	const trRefdef_t *refdef,
 	trRefEntity_t *entity, 
@@ -1209,14 +1267,24 @@ static void process_regular_entity(
 
 		memcpy(&model_entity_ids[entity_frame_num][current_instance_index], &hash, sizeof(uint32_t));
 		
-		//ModelInstance* mi = uniform_instance_buffer->model_instances + current_instance_index;
-		ModelInstance* mi = &uniform_instance_buffer->model_instances[current_instance_index];
+		// The instance data is written later by vk_rtx_run_instance_jobs, in parallel.
+		// Everything that depends on the running counters is decided here, in order.
+		{
+			vk_rtx_instance_job_t *job = &instance_jobs[instance_job_count++];
 
-		fill_model_instance_shader_data( uniform_instance_buffer, current_instance_index, refdef, entity,  entity_mesh->shader );
-		fill_model_instance( mi, entity, entity_mesh->mesh, 
-							  entity_mesh->shader,  transform, is_viewer_weapon, is_double_sided, 
-							  material_id, entity_mesh->bone_offset 
-		);
+			// Calling it here keeps the jobs from writing the lighting of a shared entity.
+			R_SetupEntityLighting( refdef, entity );
+
+			job->entity = entity;
+			job->mesh = entity_mesh->mesh;
+			job->shader = entity_mesh->shader;
+			job->material_id = material_id;
+			job->bone_offset = entity_mesh->bone_offset;
+			job->instance_index = current_instance_index;
+			job->render_prim_offset = current_num_instanced_prim;
+			job->distortion = ( entity_mesh->shader && vk_rtx_is_distortion_entity( entity ) ) ? qtrue : qfalse;
+			Com_Memcpy( job->transform, transform, sizeof( job->transform ) );
+		}
 
 
 #if 0
@@ -1236,9 +1304,6 @@ static void process_regular_entity(
 #endif
 		{
 			uniform_instance_buffer->animated_model_indices[current_animated_index] = current_instance_index;
-
-			mi->render_buffer_idx = VERTEX_BUFFER_INSTANCED;
-			mi->render_prim_offset = current_num_instanced_prim;
 
 			current_animated_index++;
 			current_num_instanced_prim += entity_mesh->mesh->numIndexes / 3;
@@ -1268,11 +1333,78 @@ static void process_regular_entity(
 	*num_instanced_prim = current_num_instanced_prim;
 }
 
-static void prepare_entities( EntityUploadInfo *upload_info, const trRefdef_t *refdef ) 
+typedef struct {
+	InstanceBuffer	*buffer;
+	const int		*cur_ids;
+	const int		*prev_ids;
+	int				cur_count;
+	int				prev_count;
+} entityMatchCtx_t;
+
+// Finds the previous frame instance of each current instance. A job writes only its own entries.
+static void match_current_to_prev_range( int begin, int end, void *p )
+{
+	const entityMatchCtx_t *c = (const entityMatchCtx_t *)p;
+
+	for ( int i = begin; i < end; i++ )
+	{
+		entity_hash_t hash;
+		memcpy( &hash, &c->cur_ids[i], sizeof( entity_hash_t ) );
+
+		if ( hash.entity == 0u )
+			continue;
+
+		for ( int j = c->prev_count - 1; j >= 0; j-- )
+		{
+			if ( c->cur_ids[i] != c->prev_ids[j] )
+				continue;
+
+			c->buffer->model_current_to_prev[i] = j;
+
+			// Copy the "prev" instance paramters from the previous frame's instance buffer
+			ModelInstance* mi_curr = c->buffer->model_instances + i;
+			ModelInstance* mi_prev = model_instances_prev + j;
+
+			memcpy(mi_curr->transform_prev, mi_prev->transform, sizeof(mi_curr->transform_prev));
+			mi_curr->prim_offset_curr_pose_prev_frame = mi_prev->prim_offset_curr_pose_curr_frame;
+			mi_curr->prim_offset_prev_pose_prev_frame = mi_prev->prim_offset_prev_pose_curr_frame;
+			mi_curr->pose_lerp_prev_frame = mi_prev->pose_lerp_curr_frame;
+			mi_curr->mdxm_matrix_offset_prev = mi_prev->mdxm_matrix_offset_curr;
+			break;
+		}
+	}
+}
+
+// Finds the current instance of each previous frame instance.
+static void match_prev_to_current_range( int begin, int end, void *p )
+{
+	const entityMatchCtx_t *c = (const entityMatchCtx_t *)p;
+
+	for ( int j = begin; j < end; j++ )
+	{
+		entity_hash_t hash;
+		memcpy( &hash, &c->prev_ids[j], sizeof( entity_hash_t ) );
+
+		if ( hash.entity == 0u )
+			continue;
+
+		for ( int i = c->cur_count - 1; i >= 0; i-- )
+		{
+			if ( c->cur_ids[i] == c->prev_ids[j] )
+			{
+				c->buffer->model_prev_to_current[j] = i;
+				break;
+			}
+		}
+	}
+}
+
+static void prepare_entities( EntityUploadInfo *upload_info, const trRefdef_t *refdef )
 {
 	uint32_t i;
 
 	entity_frame_num = !entity_frame_num;
+	instance_job_count = 0;
 
 	{
 		static float last_float_time = 0.0f;
@@ -1492,6 +1624,9 @@ static void prepare_entities( EntityUploadInfo *upload_info, const trRefdef_t *r
 	{
 	}
 
+	// The meshes are counted. Write the instance data of all of them.
+	vk_rtx_run_instance_jobs( refdef );
+
 	// bind
 	upload_info->num_instances = instance_idx;
 	upload_info->num_prims  = num_instanced_prim;
@@ -1501,26 +1636,17 @@ static void prepare_entities( EntityUploadInfo *upload_info, const trRefdef_t *r
 	memset(instance_buffer->mlight_prev_to_current, ~0u, sizeof(instance_buffer->mlight_prev_to_current));
 
 	model_entity_id_count[entity_frame_num] = model_instance_idx;
-	for(int i = 0; i < model_entity_id_count[entity_frame_num]; i++) {
-		for(int j = 0; j < model_entity_id_count[!entity_frame_num]; j++) {
-			entity_hash_t hash;
-			memcpy(&hash, &model_entity_ids[entity_frame_num][i], sizeof(entity_hash_t));
+	{
+		// A repeated id makes the last match win, as in the serial double loop.
+		entityMatchCtx_t match;
+		match.buffer = instance_buffer;
+		match.cur_ids = model_entity_ids[entity_frame_num];
+		match.prev_ids = model_entity_ids[!entity_frame_num];
+		match.cur_count = model_entity_id_count[entity_frame_num];
+		match.prev_count = model_entity_id_count[!entity_frame_num];
 
-			if(model_entity_ids[entity_frame_num][i] == model_entity_ids[!entity_frame_num][j] && hash.entity != 0u) {
-				instance_buffer->model_current_to_prev[i] = j;
-				instance_buffer->model_prev_to_current[j] = i;
-
-				// Copy the "prev" instance paramters from the previous frame's instance buffer
-				ModelInstance* mi_curr = instance_buffer->model_instances + i;
-				ModelInstance* mi_prev = model_instances_prev + j;
-
-				memcpy(mi_curr->transform_prev, mi_prev->transform, sizeof(mi_curr->transform_prev));
-				mi_curr->prim_offset_curr_pose_prev_frame = mi_prev->prim_offset_curr_pose_curr_frame;
-				mi_curr->prim_offset_prev_pose_prev_frame = mi_prev->prim_offset_prev_pose_curr_frame;
-				mi_curr->pose_lerp_prev_frame = mi_prev->pose_lerp_curr_frame;
-				mi_curr->mdxm_matrix_offset_prev = mi_prev->mdxm_matrix_offset_curr;
-			}
-		}
+		RTX_ParallelFor( match.cur_count, 16, match_current_to_prev_range, &match );
+		RTX_ParallelFor( match.prev_count, 16, match_prev_to_current_range, &match );
 	}
 
 	mdxm_matrix_count[entity_frame_num] = mdxm_matrix_offset;

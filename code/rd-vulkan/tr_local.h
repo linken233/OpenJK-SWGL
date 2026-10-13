@@ -3268,6 +3268,9 @@ extern  cvar_t  *pt_nrd_direct;
 extern  cvar_t  *pt_nrd_validation;
 extern  cvar_t  *pt_dlight_radius;
 extern  cvar_t  *pt_dlight_min_dist;
+extern  cvar_t  *pt_jobs;
+// Job pool loop, or a plain serial call when pt_jobs is 0.
+void	RTX_ParallelFor( int count, int grain, void (*fn)( int begin, int end, void *ctx ), void *ctx );
 extern  cvar_t  *pt_dlight_lift;
 extern  cvar_t  *pt_lightgen_scale;
 extern  cvar_t  *pt_light_scale_edit;

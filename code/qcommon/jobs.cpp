@@ -14,59 +14,70 @@
 
 static cvar_t	*com_jobThreads;
 
-// One job is active at a time. Workers wait on s_wake and claim chunks from s_next.
-// All fields except s_next are guarded by s_mutex.
+// Up to JOBS_MAX_SLOTS jobs run at the same time, one for each caller thread.
+// Workers wait on s_wake, pick an open slot and claim chunks from its next counter.
+// All slot fields except next are guarded by s_mutex.
+#define JOBS_MAX_SLOTS	2
+
+struct jobSlot_t {
+	bool				inUse;			// a caller owns the slot
+	bool				open;			// the job accepts new workers
+	int					activeWorkers;
+	jobRangeFn_t		fn;
+	void				*ctx;
+	int					count;
+	int					chunk;
+	std::atomic<int>	next;
+};
+
 static std::vector<std::thread>	s_threads;
 static std::mutex				s_mutex;
 static std::condition_variable	s_wake;
 static std::condition_variable	s_done;
-static std::mutex				s_submitMutex;
 static bool						s_quit;
-static bool						s_open;			// a job accepts new workers
-static unsigned					s_generation;
-static int						s_activeWorkers;
-
-static jobRangeFn_t				s_fn;
-static void						*s_ctx;
-static int						s_count;
-static int						s_chunk;
-static std::atomic<int>			s_next;
+static jobSlot_t				s_slots[JOBS_MAX_SLOTS];
 
 static thread_local bool		t_isWorker;
 
-static void Jobs_RunChunks( void ) {
+static void Jobs_RunChunks( jobSlot_t *slot ) {
 	for ( ;; ) {
-		const int begin = s_next.fetch_add( s_chunk );
-		if ( begin >= s_count ) {
+		const int begin = slot->next.fetch_add( slot->chunk );
+		if ( begin >= slot->count ) {
 			break;
 		}
-		const int end = ( begin + s_chunk < s_count ) ? begin + s_chunk : s_count;
-		s_fn( begin, end, s_ctx );
+		const int end = ( begin + slot->chunk < slot->count ) ? begin + slot->chunk : slot->count;
+		slot->fn( begin, end, slot->ctx );
 	}
 }
 
-static void Jobs_WorkerMain( void ) {
-	unsigned seen = 0;
+// Call with s_mutex held. A slot with no chunk left is not worth joining.
+static jobSlot_t *Jobs_FindOpenSlot( void ) {
+	for ( int i = 0; i < JOBS_MAX_SLOTS; i++ ) {
+		if ( s_slots[i].open && s_slots[i].next.load() < s_slots[i].count ) {
+			return &s_slots[i];
+		}
+	}
+	return NULL;
+}
 
+static void Jobs_WorkerMain( void ) {
 	t_isWorker = true;
 
 	std::unique_lock<std::mutex> lock( s_mutex );
 	for ( ;; ) {
-		s_wake.wait( lock, [&] { return s_quit || s_generation != seen; } );
+		jobSlot_t *slot = NULL;
+
+		s_wake.wait( lock, [&] { return s_quit || ( slot = Jobs_FindOpenSlot() ) != NULL; } );
 		if ( s_quit ) {
 			return;
 		}
-		seen = s_generation;
-		if ( !s_open ) {
-			continue;	// the job ended before this worker woke
-		}
-		s_activeWorkers++;
+		slot->activeWorkers++;
 		lock.unlock();
 
-		Jobs_RunChunks();
+		Jobs_RunChunks( slot );
 
 		lock.lock();
-		if ( --s_activeWorkers == 0 ) {
+		if ( --slot->activeWorkers == 0 ) {
 			s_done.notify_all();
 		}
 	}
@@ -122,7 +133,13 @@ void Jobs_Init( void ) {
 	}
 
 	s_quit = false;
-	s_open = false;
+	for ( int i = 0; i < JOBS_MAX_SLOTS; i++ ) {
+		s_slots[i].inUse = false;
+		s_slots[i].open = false;
+		s_slots[i].activeWorkers = 0;
+		s_slots[i].count = 0;
+		s_slots[i].next.store( 0 );
+	}
 	for ( int i = 0; i < want; i++ ) {
 		try {
 			s_threads.push_back( std::thread( Jobs_WorkerMain ) );
@@ -170,35 +187,43 @@ void Jobs_ParallelFor( int count, int grain, jobRangeFn_t fn, void *ctx ) {
 		return;
 	}
 
-	// A second concurrent caller runs inline instead of waiting.
-	std::unique_lock<std::mutex> submit( s_submitMutex, std::try_to_lock );
-	if ( !submit.owns_lock() ) {
-		fn( 0, count, ctx );
-		return;
-	}
-
 	// About four chunks per thread balances uneven items without much atomic traffic.
 	int chunk = count / ( ( numThreads + 1 ) * 4 );
 	if ( chunk < grain ) {
 		chunk = grain;
 	}
 
+	// A caller finds a free slot, or runs inline when every slot is taken.
+	jobSlot_t *slot = NULL;
 	{
 		std::lock_guard<std::mutex> g( s_mutex );
-		s_fn = fn;
-		s_ctx = ctx;
-		s_count = count;
-		s_chunk = chunk;
-		s_next.store( 0 );
-		s_open = true;
-		s_generation++;
+		for ( int i = 0; i < JOBS_MAX_SLOTS; i++ ) {
+			if ( !s_slots[i].inUse ) {
+				slot = &s_slots[i];
+				break;
+			}
+		}
+		if ( slot ) {
+			slot->inUse = true;
+			slot->fn = fn;
+			slot->ctx = ctx;
+			slot->count = count;
+			slot->chunk = chunk;
+			slot->next.store( 0 );
+			slot->open = true;
+		}
+	}
+	if ( !slot ) {
+		fn( 0, count, ctx );
+		return;
 	}
 	s_wake.notify_all();
 
-	Jobs_RunChunks();
+	Jobs_RunChunks( slot );
 
-	// Close the job so late workers skip it, then wait for workers still inside fn.
+	// Close the job so late workers skip it, wait for workers still inside fn, then free the slot.
 	std::unique_lock<std::mutex> lock( s_mutex );
-	s_open = false;
-	s_done.wait( lock, [] { return s_activeWorkers == 0; } );
+	slot->open = false;
+	s_done.wait( lock, [slot] { return slot->activeWorkers == 0; } );
+	slot->inUse = false;
 }

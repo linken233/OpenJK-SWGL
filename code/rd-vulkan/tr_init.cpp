@@ -260,6 +260,7 @@ cvar_t	*pt_accumulation_rendering_framenum;
 cvar_t	*pt_denoiser;
 cvar_t	*pt_dlight_radius;
 cvar_t	*pt_dlight_min_dist;
+cvar_t	*pt_jobs;
 cvar_t	*pt_dlight_lift;
 cvar_t	*pt_lightgen_scale;
 // Read by the backend: registered here so the backend never calls Cvar_Get.
@@ -948,6 +949,14 @@ static const size_t numCommands = ARRAY_LEN( commands );
 R_Register
 ===============
 */
+void RTX_ParallelFor( int count, int grain, void (*fn)( int begin, int end, void *ctx ), void *ctx )
+{
+	if ( pt_jobs && pt_jobs->integer && ri.Jobs_ParallelFor )
+		ri.Jobs_ParallelFor( count, grain, fn, ctx );
+	else if ( count > 0 )
+		fn( 0, count, ctx );
+}
+
 void R_Register( void )
 {
 	//FIXME: lol badness
@@ -1198,6 +1207,7 @@ void R_Register( void )
 	 * reach, which is what the port used to do. */
 	pt_dlight_radius					= ri.Cvar_Get("pt_dlight_radius",					"2",	CVAR_NONE);
 	pt_dlight_min_dist					= ri.Cvar_Get("pt_dlight_min_dist",					"0.433",	CVAR_NONE);	// fraction of the raster radius, 0 disables it
+	pt_jobs								= ri.Cvar_Get("pt_jobs",							"1",	CVAR_NONE);	// 1 = the RTX CPU preparation runs on the job pool, 0 = serial
 	pt_dlight_lift						= ri.Cvar_Get("pt_dlight_lift",						"16",	CVAR_NONE);	// units a dlight on a surface moves off it, 0 disables it
 	/* Overall level of the lights read from the map's entity lump. q3map2's `light` key
 	 * is an inverse-square strength with no absolute unit, so the conversion to the
