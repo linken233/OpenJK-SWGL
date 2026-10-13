@@ -2170,7 +2170,7 @@ static void vk_rtx_prepare_fog_ubo( vkUniformRTX_t *ubo, const trRefdef_t *refde
 	// The LA goggles fog replaces every other fog: one box around the world.
 	if ( refdef->doLAGoggles )
 	{
-		const fog_t *fog = tr.world->fogs + tr.world->numfogs;
+		const fog_t *fog = backEndDataBE->fogs + backEndDataBE->numFogs;
 		const float depth = fog->parms.depthForOpaque < 1.0f ? 1.0f : fog->parms.depthForOpaque;
 
 		VectorSet( ubo->fog_volumes[0], -65536.0f, -65536.0f, -65536.0f );
@@ -2180,9 +2180,9 @@ static void vk_rtx_prepare_fog_ubo( vkUniformRTX_t *ubo, const trRefdef_t *refde
 		return;
 	}
 
-	for ( int i = 1; i < tr.world->numfogs && count < MAX_FOG_VOLUMES; i++ )
+	for ( int i = 1; i < backEndDataBE->numFogs && count < MAX_FOG_VOLUMES; i++ )
 	{
-		const fog_t *fog = tr.world->fogs + i;
+		const fog_t *fog = backEndDataBE->fogs + i;
 		const float depth = fog->parms.depthForOpaque < 1.0f ? 1.0f : fog->parms.depthForOpaque;
 		float (*v)[4] = ubo->fog_volumes + count * 3;
 
