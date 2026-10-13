@@ -215,6 +215,7 @@ cvar_t	*r_defaultImage;
 cvar_t	*r_device;
 cvar_t	*r_swapInterval;
 cvar_t	*r_renderThread;
+cvar_t	*r_renderThreadSyncLog;
 cvar_t	*r_timescale;
 cvar_t	*r_stencilbits;
 cvar_t	*r_ext_multisample;
@@ -1121,6 +1122,7 @@ void R_Register( void )
 	r_timescale							= ri.Cvar_Get("timescale",						"1",						CVAR_NONE);
 
 	r_renderThread						= Cvar_Get( "r_renderThread",					"0",						CVAR_ARCHIVE_ND | CVAR_LATCH, "Run the back end on its own thread.\nApplies after vid_restart." );
+	r_renderThreadSyncLog				= Cvar_Get( "r_renderThreadSyncLog",			"0",						CVAR_NONE, "Print the places that wait for the render thread,\nevery com_perflogFrames frames." );
 
 	// Vulkan
 	r_defaultImage						= Cvar_Get("r_defaultImage",						"",							CVAR_ARCHIVE_ND | CVAR_LATCH, "");

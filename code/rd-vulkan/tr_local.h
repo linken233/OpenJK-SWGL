@@ -2217,6 +2217,7 @@ extern	cvar_t	*r_picmip;				// controls picmip values
 extern	cvar_t	*r_finish;
 extern	cvar_t	*r_swapInterval;
 extern	cvar_t	*r_renderThread;
+extern	cvar_t	*r_renderThreadSyncLog;
 extern	cvar_t	*r_timescale;			// the timescale cvar of the engine
 extern	cvar_t	*r_markcount;
 extern	cvar_t	*r_textureMode;
@@ -3079,7 +3080,9 @@ extern backEndData_t *backEndDataBuf[2];
 // which does nothing on the render thread.
 void	R_RenderThreadInit( void );
 void	R_RenderThreadShutdown( void );
-void	R_SyncRenderThread( void );
+void	R_SyncRenderThreadAt( const char *file, int line, const char *func );
+// Each call site shows up in the r_renderThreadSyncLog output.
+#define R_SyncRenderThread()	R_SyncRenderThreadAt( __FILE__, __LINE__, __FUNCTION__ )
 void	R_WaitRenderThreadNoRaise( void );
 void	R_RenderThreadForceSync( int frames );
 void	R_RenderThreadSetSync( int frames );

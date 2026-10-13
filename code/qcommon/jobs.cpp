@@ -10,6 +10,15 @@
 #include <atomic>
 #include <vector>
 
+#ifdef _WIN32
+#include <windows.h>
+#elif defined(__linux__)
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+#include <sched.h>
+#endif
+
 #define JOBS_MAX_THREADS	16
 
 static cvar_t	*com_jobThreads;
@@ -114,6 +123,35 @@ static void Jobs_Test_f( void ) {
 		Jobs_NumThreads(), ctx.total, serial, ( ctx.total == serial ) ? "OK" : "MISMATCH" );
 }
 
+/*
+Counts the CPUs that the process may use. Reads the affinity mask at the time of the call:
+an affinity set after this call does not change the pool.
+*/
+static int Jobs_UsableCpus( const char **source ) {
+#ifdef _WIN32
+	DWORD_PTR processMask = 0, systemMask = 0;
+
+	if ( GetProcessAffinityMask( GetCurrentProcess(), &processMask, &systemMask ) && processMask ) {
+		int count = 0;
+		for ( ; processMask; processMask &= processMask - 1 ) {
+			count++;
+		}
+		*source = "process affinity mask";
+		return count;
+	}
+#elif defined(__linux__)
+	cpu_set_t set;
+
+	CPU_ZERO( &set );
+	if ( sched_getaffinity( 0, sizeof( set ), &set ) == 0 && CPU_COUNT( &set ) > 0 ) {
+		*source = "sched_getaffinity";
+		return CPU_COUNT( &set );
+	}
+#endif
+	*source = "hardware_concurrency";
+	return (int)std::thread::hardware_concurrency();
+}
+
 void Jobs_Init( void ) {
 	int want;
 
@@ -122,9 +160,11 @@ void Jobs_Init( void ) {
 	com_jobThreads = Cvar_Get( "com_jobThreads", "-1", CVAR_ARCHIVE_ND | CVAR_LATCH );
 	Cmd_AddCommand( "jobs_test", Jobs_Test_f );
 
+	const char *source = "com_jobThreads";
 	want = com_jobThreads->integer;
 	if ( want < 0 ) {
-		want = (int)std::thread::hardware_concurrency() - 2;
+		// The main thread and the render thread use two CPUs.
+		want = Jobs_UsableCpus( &source ) - 2;
 	}
 	if ( want < 0 ) {
 		want = 0;
@@ -148,7 +188,7 @@ void Jobs_Init( void ) {
 			break;
 		}
 	}
-	Com_Printf( "Job pool: %d worker threads\n", (int)s_threads.size() );
+	Com_Printf( "Job pool: %d worker threads (%s)\n", (int)s_threads.size(), source );
 }
 
 void Jobs_Shutdown( void ) {

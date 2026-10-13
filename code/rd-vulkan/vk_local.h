@@ -1759,7 +1759,9 @@ void		vk_create_shader_modules( void );
 void		vk_destroy_shader_modules( void );
 
 // command
-VkCommandBuffer vk_begin_command_buffer( void );
+VkCommandBuffer vk_begin_command_buffer_at( const char *file, int line, const char *func );
+// The wait log of the render thread names the caller.
+#define vk_begin_command_buffer()	vk_begin_command_buffer_at( __FILE__, __LINE__, __FUNCTION__ )
 void		vk_end_command_buffer( VkCommandBuffer command_buffer, const char *location );
 void		vk_create_command_pool( void );
 void		vk_create_command_buffer( void );

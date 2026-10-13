@@ -24,6 +24,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "tr_local.h"
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <mutex>
 #include <thread>
@@ -281,15 +282,181 @@ void R_BackendCvarDrain( void )
 	}
 }
 
+/*
+==============
+Wait log (r_renderThreadSyncLog)
+
+Counts, for each place that waits for the render thread, the calls, the calls that waited
+and the time waited. Every com_perflogFrames frames R_RenderThreadSyncLogFrame prints the
+sites with the most waited time, then clears the counters.
+==============
+*/
+#define RT_LOG_SITES	128
+#define RT_LOG_TOP		12
+
+enum {
+	RTR_SYNC_FRAMES,		// R_RenderThreadForceSync / SetSync (load, init, vid_restart)
+	RTR_SCREENSHOT,
+	RTR_CAPTURE,
+	RTR_VIDEOMAP,
+	RTR_WEATHER,
+	RTR_SKY_LOAD,
+	RTR_COUNT
+};
+
+static const char *rtReasonNames[RTR_COUNT] = {
+	"syncFrames", "screenshot", "capture", "videomap", "weather", "skyLoad"
+};
+
+struct rtLogSite_s {
+	const char	*file;
+	int			line;
+	const char	*tag;
+	int			calls;
+	int			waited;
+	double		ms;
+};
+
+static rtLogSite_s	rtLogSites[RT_LOG_SITES];
+static int			rtLogNumSites;
+static int			rtLogReasons[RTR_COUNT];
+static int			rtLogFrames;
+static int			rtLogInlineFrames;
+static std::mutex	rtLogMutex;
+
+static qboolean R_RenderThreadLogOn( void )
+{
+	return ( r_renderThreadSyncLog && r_renderThreadSyncLog->integer ) ? qtrue : qfalse;
+}
+
+static void R_RenderThreadLogAdd( const char *file, int line, const char *tag, qboolean waited, double ms )
+{
+	std::lock_guard<std::mutex> lock( rtLogMutex );
+	rtLogSite_s	*site = NULL;
+
+	for ( int i = 0; i < rtLogNumSites; i++ )
+	{
+		rtLogSite_s *s = &rtLogSites[i];
+
+		if ( s->line == line && ( s->file == file || ( s->file && file && !strcmp( s->file, file ) ) )
+			&& ( s->tag == tag || ( s->tag && tag && !strcmp( s->tag, tag ) ) ) )
+		{
+			site = s;
+			break;
+		}
+	}
+
+	if ( !site )
+	{
+		if ( rtLogNumSites >= RT_LOG_SITES )
+			return;
+
+		site = &rtLogSites[rtLogNumSites++];
+		site->file = file;
+		site->line = line;
+		site->tag = tag;
+		site->calls = 0;
+		site->waited = 0;
+		site->ms = 0.0;
+	}
+
+	site->calls++;
+	if ( waited )
+	{
+		site->waited++;
+		site->ms += ms;
+	}
+}
+
+static const char *R_RenderThreadLogBaseName( const char *path )
+{
+	const char *name = path;
+
+	for ( const char *p = path; *p; p++ )
+	{
+		if ( *p == '/' || *p == '\\' )
+			name = p + 1;
+	}
+	return name;
+}
+
+// Prints and clears the counters. Main thread, once per frame.
+static void R_RenderThreadSyncLogFrame( void )
+{
+	int		window = ri.Cvar_VariableIntegerValue( "com_perflogFrames" );
+	int		order[RT_LOG_SITES];
+	int		count, shown;
+
+	if ( window < 1 )
+		window = 30;
+
+	if ( ++rtLogFrames < window )
+		return;
+
+	std::lock_guard<std::mutex> lock( rtLogMutex );
+
+	count = rtLogNumSites;
+	for ( int i = 0; i < count; i++ )
+		order[i] = i;
+
+	// Insertion sort, the most waited time first.
+	for ( int i = 1; i < count; i++ )
+	{
+		const int key = order[i];
+		int j = i - 1;
+
+		while ( j >= 0 && ( rtLogSites[order[j]].ms < rtLogSites[key].ms
+			|| ( rtLogSites[order[j]].ms == rtLogSites[key].ms && rtLogSites[order[j]].calls < rtLogSites[key].calls ) ) )
+		{
+			order[j + 1] = order[j];
+			j--;
+		}
+		order[j + 1] = key;
+	}
+
+	ri.Printf( PRINT_ALL, "rtsync: %d frames, %d ran inline\n", rtLogFrames, rtLogInlineFrames );
+
+	shown = count < RT_LOG_TOP ? count : RT_LOG_TOP;
+	for ( int i = 0; i < shown; i++ )
+	{
+		const rtLogSite_s *s = &rtLogSites[order[i]];
+
+		if ( s->file )
+			ri.Printf( PRINT_ALL, "rtsync:   %s:%d %s  calls %d  waited %d  %.2f ms\n",
+				R_RenderThreadLogBaseName( s->file ), s->line, s->tag, s->calls, s->waited, s->ms );
+		else
+			ri.Printf( PRINT_ALL, "rtsync:   %s  calls %d  waited %d  %.2f ms\n",
+				s->tag, s->calls, s->waited, s->ms );
+	}
+
+	ri.Printf( PRINT_ALL, "rtsync: inline reasons" );
+	for ( int i = 0; i < RTR_COUNT; i++ )
+		ri.Printf( PRINT_ALL, " %s %d", rtReasonNames[i], rtLogReasons[i] );
+	ri.Printf( PRINT_ALL, "\n" );
+
+	rtLogNumSites = 0;
+	rtLogFrames = 0;
+	rtLogInlineFrames = 0;
+	memset( rtLogReasons, 0, sizeof( rtLogReasons ) );
+}
+
 // Waits until the render thread has finished its frame, then raises its error if it had one.
-// Main thread.
-static void R_RenderThreadWait( int perfSlot, qboolean raise = qtrue )
+// Main thread. The file, line and tag name the caller for the wait log.
+static void R_RenderThreadWait( int perfSlot, qboolean raise, const char *file, int line, const char *tag )
 {
 	if ( rtIsThread )
 		return;
 
-	if ( rtBusy.load( std::memory_order_acquire ) )
+	const qboolean log = R_RenderThreadLogOn();
+	const bool busy = rtBusy.load( std::memory_order_acquire );
+
+	if ( busy )
 	{
+		std::chrono::steady_clock::time_point begin;
+
+		if ( log )
+			begin = std::chrono::steady_clock::now();
+
 		{
 			vk_perf_scope perf( perfSlot );
 			std::unique_lock<std::mutex> lock( rt.mutex );
@@ -297,24 +464,32 @@ static void R_RenderThreadWait( int perfSlot, qboolean raise = qtrue )
 			rt.done.wait( lock, [] { return !rt.pending; } );
 		}
 
+		if ( log )
+			R_RenderThreadLogAdd( file, line, tag, qtrue,
+				std::chrono::duration<double, std::milli>( std::chrono::steady_clock::now() - begin ).count() );
+
 		RB_PrintDrain();
 		R_BackendCvarDrain();
+	}
+	else if ( log )
+	{
+		R_RenderThreadLogAdd( file, line, tag, qfalse, 0.0 );
 	}
 
 	if ( raise )
 		R_RenderThreadRaise();
 }
 
-void R_SyncRenderThread( void )
+void R_SyncRenderThreadAt( const char *file, int line, const char *func )
 {
-	R_RenderThreadWait( VKP_RT_SYNC );
+	R_RenderThreadWait( VKP_RT_SYNC, qtrue, file, line, func );
 	R_WorldEffectsFlushQueue();
 }
 
 // Waits for the render thread but does not raise its error: safe in a destructor. Main thread.
 void R_WaitRenderThreadNoRaise( void )
 {
-	R_RenderThreadWait( VKP_RT_SYNC, qfalse );
+	R_RenderThreadWait( VKP_RT_SYNC, qfalse, NULL, 0, "R_WaitRenderThreadNoRaise" );
 }
 
 // True while the render thread runs a frame. Main thread.
@@ -379,7 +554,7 @@ void R_RenderThreadShutdown( void )
 	if ( !rt.running )
 		return;
 
-	R_RenderThreadWait( VKP_RT_SYNC, qfalse );
+	R_RenderThreadWait( VKP_RT_SYNC, qfalse, NULL, 0, "R_RenderThreadShutdown" );
 
 	{
 		std::lock_guard<std::mutex> lock( rt.mutex );
@@ -400,23 +575,48 @@ void R_RenderThreadShutdown( void )
 // True for a frame that must run on the main thread.
 static qboolean R_FrameNeedsMainThread( void )
 {
+	const qboolean log = R_RenderThreadLogOn();
+	qboolean need = qfalse;
+
 	if ( rt.syncFrames > 0 )
 	{
 		rt.syncFrames--;
-		return qtrue;
+		need = qtrue;
+		if ( log )
+			rtLogReasons[RTR_SYNC_FRAMES]++;
 	}
 
 	// Screenshots write files. Video maps run the engine cinematic code. The weather cache
 	// and a sky preset read files.
 	if ( backEnd.screenshotMask || rb_captureRGBA || r_numVideoMaps > 0 || RB_WorldEffectsNeedSync() )
-		return qtrue;
+	{
+		need = qtrue;
+		if ( log )
+		{
+			if ( backEnd.screenshotMask )
+				rtLogReasons[RTR_SCREENSHOT]++;
+			if ( rb_captureRGBA )
+				rtLogReasons[RTR_CAPTURE]++;
+			if ( r_numVideoMaps > 0 )
+				rtLogReasons[RTR_VIDEOMAP]++;
+			if ( RB_WorldEffectsNeedSync() )
+				rtLogReasons[RTR_WEATHER]++;
+		}
+	}
 
 #ifdef USE_RTX
 	if ( vk.rtxActive && vkpt_physical_sky_load_pending() )
-		return qtrue;
+	{
+		need = qtrue;
+		if ( log )
+			rtLogReasons[RTR_SKY_LOAD]++;
+	}
 #endif
 
-	return qfalse;
+	if ( need && log )
+		rtLogInlineFrames++;
+
+	return need;
 }
 
 /*
@@ -484,7 +684,10 @@ void R_IssueRenderCommands( qboolean runPerformanceCounters ) {
 	renderCommandList_t	*cmdList;
 
 	// The render thread must finish the previous frame before this one starts.
-	R_RenderThreadWait( VKP_RT_WAIT );
+	R_RenderThreadWait( VKP_RT_WAIT, qtrue, NULL, 0, "R_IssueRenderCommands (previous frame)" );
+
+	if ( runPerformanceCounters && R_RenderThreadLogOn() )
+		R_RenderThreadSyncLogFrame();
 
 	// The thread is idle: apply the weather commands that the game gave during its frame.
 	R_WorldEffectsFlushQueue();
