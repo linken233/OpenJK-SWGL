@@ -1669,6 +1669,7 @@ animoverride <name>: forces the animation override <name> on the player.
 animoverride default: forces _humanoid.gla, also on a model with animoverride.cfg.
 animoverride none: removes it. The player uses the override of its model again, if it has one.
 animoverride: shows the animation file set of the player.
+An optional last argument <targetname> applies it to the NPC with that targetname instead of the player.
 =================
 */
 extern qboolean G_SetAnimOverride(gentity_t *ent, const char *overrideName);
@@ -1678,13 +1679,26 @@ void Cmd_AnimOverride_f(gentity_t *ent)
 	{
 		const int fileIndex = ent->client->clientInfo.animFileIndex;
 		const char *fileSet = (fileIndex >= 0 && fileIndex < level.numKnownAnimFileSets) ? level.knownAnimFileSets[fileIndex].filename : "none";
-		gi.SendServerCommand(ent - g_entities, va("print \"Animation file set: %s\nUsage: animoverride <name> | default | none\n\"", fileSet));
+		gi.SendServerCommand(ent - g_entities, va("print \"Animation file set: %s\nUsage: animoverride <name> | default | none [targetname]\n\"", fileSet));
 		return;
 	}
 
 	char overrideName[MAX_QPATH];
 	Q_strncpyz(overrideName, gi.argv(1), sizeof(overrideName));
-	if (!G_SetAnimOverride(ent, Q_stricmp(overrideName, "none") ? overrideName : ""))
+
+	gentity_t *target = ent;
+	if (gi.argc() >= 3)
+	{
+		const char *targetname = gi.argv(2);
+		target = G_Find(NULL, FOFS(targetname), (char *)targetname);
+		if (!target || !target->client)
+		{
+			gi.SendServerCommand(ent - g_entities, va("print \"animoverride: no NPC with targetname %s\n\"", targetname));
+			return;
+		}
+	}
+
+	if (!G_SetAnimOverride(target, Q_stricmp(overrideName, "none") ? overrideName : ""))
 	{
 		gi.SendServerCommand(ent - g_entities, va("print \"animoverride: %s is not used, see the console\n\"", overrideName));
 	}
