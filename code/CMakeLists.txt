@@ -238,6 +238,7 @@ if(BuildSPEngine)
 		"${SPDir}/server/sv_game.cpp"
 		"${SPDir}/server/sv_init.cpp"
 		"${SPDir}/server/sv_main.cpp"
+		"${SPDir}/server/sv_perflog.cpp"
 		"${SPDir}/server/sv_savegame.cpp"
 		"${SPDir}/server/sv_snapshot.cpp"
 		"${SPDir}/server/sv_world.cpp"

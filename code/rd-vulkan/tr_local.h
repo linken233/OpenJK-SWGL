@@ -155,6 +155,7 @@ typedef enum {
 
 // Vulkan
 #include "vk_local.h"
+#include "vk_perf.h"
 
 // GL constants substitutions
 typedef enum {

@@ -1739,6 +1739,10 @@ void RE_CaptureNextFrame( byte *rgba, int width, int height );
 
 static void *RE_GetExtension( const char *name )
 {
+	if ( !Q_stricmp( name, RD_PERF_API_NAME ) ) {
+		return vk_perf_get_api();
+	}
+
 #ifdef USE_RTX
 	return RTX_LightEdit_GetExtension( name );
 #else

@@ -1979,6 +1979,7 @@ const void	*RB_SwapBuffers( const void *data ) {
 #else
 	if ( backEnd.doneSurfaces && !glState.finishCalled ) {
 #endif
+		vk_perf_scope perfIdle( VKP_IDLE );
 		vk_queue_wait_idle();
 	}
 
@@ -2078,6 +2079,7 @@ RB_ExecuteRenderCommands
 extern const void *R_DrawWireframeAutomap( const void *data ); //tr_world.cpp
 void RB_ExecuteRenderCommands( const void *data ) {
 	int		t1, t2;
+	vk_perf_scope perfBackend( VKP_BACKEND );
 
 	t1 = ri.Milliseconds()*ri.Cvar_VariableValue( "timescale" );
 

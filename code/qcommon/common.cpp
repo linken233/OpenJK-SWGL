@@ -1189,6 +1189,7 @@ void Com_Init( char *commandLine ) {
 		com_fixedtime = Cvar_Get ("fixedtime", "0", CVAR_CHEAT);
 		com_showtrace = Cvar_Get ("com_showtrace", "0", CVAR_CHEAT);
 		com_speeds = Cvar_Get ("com_speeds", "0", 0);
+		PerfLog_Init();
 
 #ifdef G2_PERFORMANCE_ANALYSIS
 		com_G2Report = Cvar_Get("com_G2Report", "0", 0);
@@ -1502,8 +1503,11 @@ void Com_Frame( void ) {
 			timeBeforeServer = Sys_Milliseconds ();
 		}
 
+		const double perfWorkStart = PerfLog_Now();
+
 		SV_Frame (msec, fractionMsec);
 
+		const double perfServerEnd = PerfLog_Now();
 
 		//
 		// client system
@@ -1536,6 +1540,8 @@ void Com_Frame( void ) {
 				timeAfter = Sys_Milliseconds ();
 			}
 		}
+
+		PerfLog_EndFrame( perfWorkStart, perfServerEnd, PerfLog_Now() );
 
 
 		//

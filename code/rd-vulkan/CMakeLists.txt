@@ -83,6 +83,8 @@ set(SPVulkanRendererFiles
 	"${SPDir}/rd-vulkan/vk_frame.cpp"
 	"${SPDir}/rd-vulkan/vk_image.cpp"
 	"${SPDir}/rd-vulkan/vk_normalmap.cpp"
+	"${SPDir}/rd-vulkan/vk_perf.cpp"
+	"${SPDir}/rd-vulkan/vk_perf.h"
 	"${SPDir}/rd-vulkan/vk_mikktspace.cpp"
 	"${SPDir}/rd-vulkan/vk_pbr.cpp"
 	"${SPDir}/rd-vulkan/vk_cubemap.cpp"

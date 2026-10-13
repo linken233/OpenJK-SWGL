@@ -535,6 +535,8 @@ void RE_EndFrame( int *frontEndMsec, int *backEndMsec ) {
 	// may still be rendering into the current ones
 	R_InitNextFrame();
 
+	vk_perf_end_frame();
+
 	if ( frontEndMsec ) {
 		*frontEndMsec = tr.frontEndMsec;
 	}

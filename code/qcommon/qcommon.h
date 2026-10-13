@@ -619,6 +619,7 @@ void		Com_StartupVariable( const char *match );
 
 extern	cvar_t	*com_developer;
 extern	cvar_t	*com_speeds;
+extern	cvar_t	*com_perflog;
 extern	cvar_t	*com_timescale;
 extern	cvar_t	*com_sv_running;
 extern	cvar_t	*com_cl_running;
@@ -636,6 +637,13 @@ extern	cvar_t	*com_busyWait;
 // both client and server must agree to pause
 extern	cvar_t	*cl_paused;
 extern	cvar_t	*sv_paused;
+
+// com_perflog: a summary of the frame times every com_perflogFrames frames (server/sv_perflog.cpp)
+void	PerfLog_Init( void );
+double	PerfLog_Now( void );
+void	PerfLog_AddGame( double ms );
+void	PerfLog_NoteTrace( const vec3_t start, const vec3_t end, const vec3_t mins, const vec3_t maxs, int contentmask );
+void	PerfLog_EndFrame( double workStart, double svEnd, double clEnd );
 
 // com_speeds times
 extern	int		time_game;

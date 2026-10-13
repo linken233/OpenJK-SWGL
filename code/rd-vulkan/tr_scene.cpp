@@ -535,6 +535,7 @@ void RE_RenderScene( const refdef_t *fd ) {
 	viewParms_t		parms;
 	int				startTime;
 	static	int		lastTime = 0;
+	vk_perf_scope	perfScene( VKP_SCENE );
 
 	if (!tr.registered) {
 		return;
@@ -706,6 +707,12 @@ void RE_RenderScene( const refdef_t *fd ) {
 	tr.numDrawSurfCmds = 0;
 
 	R_RenderView(&parms);
+
+	vk_perf_count( VKP_ENTITIES, tr.refdef.num_entities );
+	vk_perf_count( VKP_DLIGHTS, tr.refdef.num_dlights );
+	vk_perf_count( VKP_DRAWSURFS, tr.refdef.numDrawSurfs );
+	vk_perf_count( VKP_POLYS, tr.refdef.numPolys );
+
 	if (tr.needScreenMap)
 	{
 		if (lastRenderCommand == RC_DRAW_BUFFER) {

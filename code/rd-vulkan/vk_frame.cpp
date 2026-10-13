@@ -1765,6 +1765,7 @@ void vk_begin_frame( void )
 
 	if ( vk.cmd->waitForFence ) {
 		vk.cmd->waitForFence = qfalse;
+		vk_perf_scope perfFence( VKP_FENCE_WAIT );
 		res = qvkWaitForFences( vk.device, 1, &vk.cmd->rendering_finished_fence, VK_FALSE, 1e10 );
 		if ( res != VK_SUCCESS ) {
 			if ( res == VK_ERROR_DEVICE_LOST ) {
@@ -1780,6 +1781,7 @@ void vk_begin_frame( void )
 
 	if ( !ri.VK_IsMinimized() && !vk.cmd->swapchain_image_acquired ) {
 		qboolean retry = qfalse;
+		vk_perf_scope perfAcquire( VKP_ACQUIRE );
 _retry:
         res = qvkAcquireNextImageKHR( vk.device, vk.swapchain, 5 * 1000000000ULL, vk.cmd->image_acquired, VK_NULL_HANDLE, &vk.cmd->swapchain_image_index );
 		// when running via RDP: "Application has already acquired the maximum number of images (0x2)"
@@ -2182,8 +2184,13 @@ void vk_end_frame( void )
         submit_info.pSignalSemaphores = NULL;
     }
 
-    VK_CHECK( qvkQueueSubmit( vk.queue, 1, &submit_info, vk.cmd->rendering_finished_fence ) );
+	{
+		vk_perf_scope perfSubmit( VKP_SUBMIT );
+		VK_CHECK( qvkQueueSubmit( vk.queue, 1, &submit_info, vk.cmd->rendering_finished_fence ) );
+	}
     vk.cmd->waitForFence = qtrue;
+
+	vk_perf_count( VKP_GEOMETRY_PCT, (int)( vk.cmd->vertex_buffer_offset * 100 / vk.geometry_buffer_size ) );
 
 	// A frame used more than 3/4 of the geometry buffer: double it before the next
 	// frame, so that a later frame does not overflow and get dropped.
@@ -2220,7 +2227,10 @@ void vk_present_frame( void )
 
     vk.cmd->swapchain_image_acquired = qfalse;
 
-	res = qvkQueuePresentKHR( vk.queue, &present_info );
+	{
+		vk_perf_scope perfPresent( VKP_PRESENT );
+		res = qvkQueuePresentKHR( vk.queue, &present_info );
+	}
 	switch ( res ) {
 		case VK_SUCCESS:
 			break;

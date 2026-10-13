@@ -859,6 +859,10 @@ Ghoul2 Insert End
 		maxs = vec3_origin;
 	}
 
+	if ( com_perflog->integer ) {
+		PerfLog_NoteTrace( start, end, mins, maxs, contentmask );
+	}
+
 	memset ( &clip, 0, sizeof ( moveclip_t ) - sizeof(clip.trace.G2CollisionMap ));
 
 	// clip to world
