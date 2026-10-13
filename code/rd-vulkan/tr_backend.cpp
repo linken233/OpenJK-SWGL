@@ -1628,17 +1628,17 @@ static void vk_update_fog_constants(const trRefdef_t* refdef)
 	size_t size;
 	vkUniformFog_t uniform = {};
 
-	uniform.num_fogs = tr.world ? ( tr.world->numfogs - 1 ) : 0;
+	uniform.num_fogs = backEndDataBE->numFogs ? ( backEndDataBE->numFogs - 1 ) : 0;
 
-	// RE_LAGoggles fills the slot past numfogs, and every surface uses it.
-	if ( tr.world && refdef->doLAGoggles )
+	// RE_LAGoggles fills the slot past numFogs, and every surface uses it.
+	if ( backEndDataBE->numFogs && refdef->doLAGoggles )
 		uniform.num_fogs++;
 
 	size = sizeof(vec4_t);
 
 	for ( i = 0; i < MIN(uniform.num_fogs, 16); ++i )
 	{
-		const fog_t *fog = tr.world->fogs + i + 1;
+		const fog_t *fog = backEndDataBE->fogs + i + 1;
 		vkUniformFogEntry_t *fogData = uniform.fogs + i;
 
 		VectorCopy4( fog->surface, fogData->plane );
@@ -2039,7 +2039,7 @@ static const void *RB_ClearColor( const void *data )
 	if ( r_fastsky->integer )
 		vk_clear_color_attachments( (float*)tr.clearColor );
 	else
-		vk_clear_color_attachments( (float*)tr.world->fogs[tr.world->globalFog].color );
+		vk_clear_color_attachments( (float*)backEndDataBE->fogs[backEndDataBE->globalFog].color );
 
 	backEnd.projection2D = qfalse;
 

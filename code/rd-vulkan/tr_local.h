@@ -3025,6 +3025,8 @@ typedef struct goreUploads_s {
 } goreUploads_t;
 #endif
 
+#define BE_MAX_FOGS		64
+
 // all of the information needed by the back end must be
 // contained in a backEndData_t.
 typedef struct backEndData_s {
@@ -3037,6 +3039,9 @@ typedef struct backEndData_s {
 #endif
 	color4ub_t			styleColors[MAX_LIGHT_STYLES];	// light styles at the time of the swap
 	int					frameCount;						// tr.frameCount at the time of the swap
+	int					numFogs;						// tr.world->numfogs and globalFog at the time of the swap
+	int					globalFog;
+	fog_t				fogs[BE_MAX_FOGS];				// copy of tr.world->fogs[0, numFogs], the slot past numFogs is the LA goggles fog
 	float				distortionAlpha;				// cloak distortion settings at the time of the swap
 	float				distortionStretch;
 	qboolean			distortionPrePost;
@@ -3089,6 +3094,8 @@ void	R_BackendCvarSet( const char *name, const char *value );
 void	R_BackendCvarDrain( void );
 extern int	r_numVideoMaps;
 qboolean RB_WorldEffectsNeedSync( void );
+void	R_WorldEffectsFlushQueue( void );
+qboolean R_RenderThreadBusy( void );
 qboolean vkpt_physical_sky_load_pending( void );
 void	R_G2_SwapRenderSurfHeap( void );
 

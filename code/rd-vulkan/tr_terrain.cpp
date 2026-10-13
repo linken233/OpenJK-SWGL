@@ -309,7 +309,7 @@ void CTRLandScape::Render(void)
 	// Done as a separate iteration to reduce the number of tesses created
 	if(mWaterShader && (mWaterShader != tr.defaultShader))
 	{
-		RB_BeginSurface( mWaterShader, tr.world->globalFog );
+		RB_BeginSurface( mWaterShader, backEndDataBE->globalFog );
 
 		for(y = mPatchMiny; y < mPatchMaxy; y++ )
 		{
@@ -935,7 +935,7 @@ void RB_SurfaceTerrain( surfaceInfo_t *surf )
 	srfTerrain_t *ls = (srfTerrain_t *)surf;
 	CTRLandScape *landscape = ls->landscape;
 
-	TerrainFog = tr.world->globalFog;
+	TerrainFog = backEndDataBE->globalFog;
 
 	landscape->CalculateRegion();
 	landscape->Reset();

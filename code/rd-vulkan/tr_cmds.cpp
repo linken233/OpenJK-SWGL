@@ -308,6 +308,13 @@ static void R_RenderThreadWait( int perfSlot, qboolean raise = qtrue )
 void R_SyncRenderThread( void )
 {
 	R_RenderThreadWait( VKP_RT_SYNC );
+	R_WorldEffectsFlushQueue();
+}
+
+// True while the render thread runs a frame. Main thread.
+qboolean R_RenderThreadBusy( void )
+{
+	return rtBusy.load( std::memory_order_acquire ) ? qtrue : qfalse;
 }
 
 // At least the next frames run on the main thread.
@@ -408,6 +415,34 @@ static qboolean R_FrameNeedsMainThread( void )
 
 /*
 ==============
+R_SnapshotFogs
+
+Copies the fog volumes, the global fog and the LA goggles slot into the frontend buffer.
+The backend reads the copy, so the game can change the fogs while the thread runs.
+==============
+*/
+static void R_SnapshotFogs( void )
+{
+	int		count;
+
+	if ( !tr.world || !tr.world->fogs )
+	{
+		backEndData->numFogs = 0;
+		backEndData->globalFog = -1;
+		return;
+	}
+
+	count = tr.world->numfogs + 1;
+	if ( count > BE_MAX_FOGS )
+		count = BE_MAX_FOGS;
+
+	backEndData->numFogs = count - 1;
+	backEndData->globalFog = ( tr.world->globalFog < count - 1 ) ? tr.world->globalFog : -1;
+	Com_Memcpy( backEndData->fogs, tr.world->fogs, count * sizeof( fog_t ) );
+}
+
+/*
+==============
 R_RenderThreadSwapBuffers
 
 Copies the state that the backend reads and that the game changes during a frame, then
@@ -417,6 +452,7 @@ gives the frontend buffer to the backend. Main thread, with the render thread id
 static void R_RenderThreadSwapBuffers( void )
 {
 	backEndData->frameCount = tr.frameCount;
+	R_SnapshotFogs();
 	Com_Memcpy( backEndData->styleColors, styleColors, sizeof( styleColors ) );
 	backEndData->distortionAlpha = tr_distortionAlpha;
 	backEndData->distortionStretch = tr_distortionStretch;
@@ -441,6 +477,12 @@ R_IssueRenderCommands
 void R_IssueRenderCommands( qboolean runPerformanceCounters ) {
 	renderCommandList_t	*cmdList;
 
+	// The render thread must finish the previous frame before this one starts.
+	R_RenderThreadWait( VKP_RT_WAIT );
+
+	// The thread is idle: apply the weather commands that the game gave during its frame.
+	R_WorldEffectsFlushQueue();
+
 	cmdList = &backEndData->commands;
 	assert(cmdList);
 	// add an end-of-list command
@@ -450,9 +492,6 @@ void R_IssueRenderCommands( qboolean runPerformanceCounters ) {
 
 	// clear it out, in case this is a sync and not a buffer flip
 	cmdList->used = 0;
-
-	// The render thread must finish the previous frame before this one starts.
-	R_RenderThreadWait( VKP_RT_WAIT );
 
 	// The thread is idle: it is ok to look at the counters of its last frame.
 	if ( rt.countersPending ) {
@@ -750,9 +789,6 @@ void RE_LAGoggles( void )
 	if ( !tr.world ) {
 		return;
 	}
-
-	// The backend reads the fog slot.
-	R_SyncRenderThread();
 
 	tr.refdef.doLAGoggles = qtrue;
 
