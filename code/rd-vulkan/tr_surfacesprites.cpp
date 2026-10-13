@@ -339,7 +339,7 @@ static void RB_VerticalSurfaceSprite(vec3_t loc, float width, float height, byte
 	float points[16];
 	color4ub_t color;
 
-	angle = ((loc[0] + loc[1]) * 0.02 + (tr.refdef.time * 0.0015));
+	angle = ((loc[0] + loc[1]) * 0.02 + (backEnd.refdef.time * 0.0015));
 
 	if (windidle > 0.0)
 	{
@@ -451,7 +451,7 @@ static void RB_VerticalSurfaceSpriteWindPoint(vec3_t loc, float width, float hei
 
 	//	wind += 1.0-windforce;
 
-	angle = (loc[0] + loc[1]) * 0.02 + (tr.refdef.time * 0.0015);
+	angle = (loc[0] + loc[1]) * 0.02 + (backEnd.refdef.time * 0.0015);
 
 	if (curWindSpeed < 80.0)
 	{
@@ -481,7 +481,7 @@ static void RB_VerticalSurfaceSpriteWindPoint(vec3_t loc, float width, float hei
 
 	loc2[0] += height * winddiff[0] * windforce;
 	loc2[1] += height * winddiff[1] * windforce;
-	loc2[2] -= height * windforce * (0.75 + 0.15 * sin((tr.refdef.time + 500 * windforce) * 0.01));
+	loc2[2] -= height * windforce * (0.75 + 0.15 * sin((backEnd.refdef.time + 500 * windforce) * 0.01));
 
 	if (flattened)
 	{
@@ -1331,7 +1331,7 @@ static void RB_DrawEffectSurfaceSprites(const shaderStage_t *stage, const ss_inp
 		{
 			for (posj = 0; posj < (1.0 - posi); posj += step)
 			{
-				effecttime = (tr.refdef.time + 10000.0 * randomchart[randomindex]) / stage->ss->fxDuration;
+				effecttime = (backEnd.refdef.time + 10000.0 * randomchart[randomindex]) / stage->ss->fxDuration;
 				effectpos = (float)effecttime - (int)effecttime;
 
 				randomindex2 = randomindex + effecttime;

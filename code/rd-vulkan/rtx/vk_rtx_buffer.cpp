@@ -56,10 +56,6 @@ float vk_rtx_light_scale( const light_poly_t *light, qboolean world )
 		mat_scale = RTX_LightEmissive_Scale( light->material );
 	else if ( world )
 	{
-		static cvar_t *pt_light_scale_edit;
-		if ( !pt_light_scale_edit )
-			pt_light_scale_edit = ri.Cvar_Get( "pt_light_scale_edit", "0.1", CVAR_ARCHIVE_ND );
-
 		mat_scale = light->ent_class == LIGHT_ENT_EDIT ? MAX( 0.f, pt_light_scale_edit->value ) : 1.f;
 	}
 

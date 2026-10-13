@@ -301,14 +301,7 @@ VkResult vkpt_tone_mapping_record_cmd_buffer( VkCommandBuffer cmd_buf, float fra
 
 	// 0 keeps the hue of bright colors, 1 maps each channel and bright colors go to white,
 	// as in the rasterizer.
-	static cvar_t *tm_per_channel;
-	if ( !tm_per_channel )
-		tm_per_channel = ri.Cvar_Get( "tm_per_channel", "1", CVAR_ARCHIVE_ND );
-
-	// Contrast around the middle gray, in SDR and HDR. 1 for no change.
-	static cvar_t *tm_contrast;
-	if ( !tm_contrast )
-		tm_contrast = ri.Cvar_Get( "tm_contrast", "1", CVAR_ARCHIVE_ND );
+	// tm_contrast: contrast around the middle gray, in SDR and HDR. 1 for no change.
 
 	float push_constants_tm2_apply[5] = {
 		knee_w, // knee_w in piecewise knee adjustment

@@ -1290,7 +1290,7 @@ static void RB_SurfaceElectricity()
 	// see if we should grow from start to end
 	if ( e->renderfx & RF_GROW )
 	{
-		perc = 1.0f - ( e->endTime - tr.refdef.time ) / e->angles[1]/*duration*/;
+		perc = 1.0f - ( e->endTime - backEnd.refdef.time ) / e->angles[1]/*duration*/;
 
 		if ( perc > 1.0f )
 		{

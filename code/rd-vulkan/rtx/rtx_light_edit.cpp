@@ -1614,11 +1614,6 @@ static int LE_Generation( void )
 // Class scale of copy_light, read live, times pt_lightgen_scale for an lgt light.
 static float LE_IntensityScale( int id )
 {
-	static cvar_t *scaleEdit;
-
-	if ( !scaleEdit )
-		scaleEdit = ri.Cvar_Get( "pt_light_scale_edit", "0.1", CVAR_ARCHIVE_ND );
-
 	int	entClass = LIGHT_ENT_EDIT;
 	int	source = RTX_LSRC_ADDED;
 
@@ -1637,7 +1632,7 @@ static float LE_IntensityScale( int id )
 		source = rec->source;
 	}
 
-	const float scale = entClass == LIGHT_ENT_EDIT ? MAX( 0.0f, scaleEdit->value ) : 1.0f;
+	const float scale = entClass == LIGHT_ENT_EDIT ? MAX( 0.0f, pt_light_scale_edit->value ) : 1.0f;
 
 	return scale * ( source == RTX_LSRC_LGT ? pt_lightgen_scale->value : 1.0f );
 }

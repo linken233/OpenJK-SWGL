@@ -1269,10 +1269,7 @@ static vec3_t sprite_view_origin;
 
 static qboolean vk_rtx_is_weapon_fx( const shader_t *shader )
 {
-	static cvar_t *prefixes;
-
-	if ( !prefixes )
-		prefixes = ri.Cvar_Get( "pt_weapon_fx_shaders", "gfx/effects/sabers/ gfx/effects/blaster_blob gfx/effects/whiteGlow gfx/effects/blasterFrontFlash gfx/effects/blasterSideFlash", CVAR_ARCHIVE_ND );
+	cvar_t *prefixes = pt_weapon_fx_shaders;
 
 	if ( !shader )
 		return qfalse;
@@ -1417,9 +1414,6 @@ void vk_rtx_build_saber_lights( light_poly_t *light_list, int *num_lights,
 		return;
 
 	// copy_light multiplies a light without material by 10. The scale below replaces that factor.
-	static cvar_t *pt_light_scale_saber;
-	if ( !pt_light_scale_saber )
-		pt_light_scale_saber = ri.Cvar_Get( "pt_light_scale_saber", "10", CVAR_ARCHIVE_ND );
 	const float saber_scale = MAX( 0.f, pt_light_scale_saber->value ) / 10.f;
 
 	for ( i = 0; i < num_sabers; i++ )

@@ -114,7 +114,10 @@ void R_IssueRenderCommands( qboolean runPerformanceCounters ) {
 	// actually start the commands going
 	if ( !r_skipBackEnd->integer ) {
 		// let it start on the new batch
+		RB_PrintBackendBegin();
 		RB_ExecuteRenderCommands( cmdList->cmds );
+		RB_PrintBackendEnd();
+		RB_PrintDrain();
 	}
 
 	// at this point, the back end thread is idle, so it is ok
@@ -184,6 +187,8 @@ void	R_AddDrawSurfCmd( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 
 	cmd->refdef = tr.refdef;
 	cmd->viewParms = tr.viewParms;
+
+	R_G2_NoteDrawSurfsCmd( cmd );
 
 	tr.numDrawSurfCmds++;
 	if (tr.drawSurfCmd == NULL) {
@@ -434,6 +439,10 @@ void RE_BeginFrame( stereoFrame_t stereoFrame ) {
 	
 	glState.finishCalled = qfalse;
 
+	// An error that left the backend leaves the flag set.
+	RB_PrintBackendEnd();
+	RB_PrintDrain();
+
 	ResetGhoul2RenderableSurfaceHeap();
 
 	backEnd.doneBloom = qfalse;
@@ -530,6 +539,8 @@ void RE_EndFrame( int *frontEndMsec, int *backEndMsec ) {
 	cmd->commandId = RC_SWAP_BUFFERS;
 
 	R_IssueRenderCommands( qtrue );
+
+	tr.needScreenMap = 0;
 
 	// use the other buffers next frame, because another CPU
 	// may still be rendering into the current ones

@@ -665,51 +665,6 @@ static int dlight_cluster( world_t *worldData, vec3_t origin, float probe )
 	return cluster;
 }
 
-// An impact effect places its dlight exactly on the surface it hit. The raster lights that
-// surface from any distance, but the tracer needs dot(n, L) > 0: a light in the plane of a
-// wall lights nothing of it, and the few samples that pass come back noisy. Find the nearest
-// surface within probe units and move the light off it along the surface normal.
-static void dlight_lift_off_surface( vec3_t origin, float lift, float probe )
-{
-	static const vec3_t axes[6] = {
-		{  1,  0,  0 }, { -1,  0,  0 }, {  0,  1,  0 }, {  0, -1,  0 }, {  0,  0,  1 }, {  0,  0, -1 }
-	};
-
-	trace_t best;
-	float best_fraction = 2.0f;
-
-	for ( int i = 0; i < 6; i++ )
-	{
-		vec3_t end;
-		trace_t tr;
-
-		VectorMA( origin, probe, axes[i], end );
-		ri.SV_Trace( &tr, origin, vec3_origin, vec3_origin, end, ENTITYNUM_NONE, CONTENTS_SOLID, G2_NOCOLLIDE, 0 );
-
-		if ( tr.startsolid || tr.allsolid || tr.fraction >= 1.0f )
-			continue;
-
-		if ( tr.fraction < best_fraction )
-		{
-			best_fraction = tr.fraction;
-			best = tr;
-		}
-	}
-
-	if ( best_fraction > 1.0f )
-		return;
-
-	// Do not push the light through the surface on the far side of a thin room.
-	vec3_t target, lifted;
-	trace_t tr;
-
-	VectorMA( best.endpos, lift, best.plane.normal, target );
-	ri.SV_Trace( &tr, best.endpos, vec3_origin, vec3_origin, target, ENTITYNUM_NONE, CONTENTS_SOLID, G2_NOCOLLIDE, 0 );
-	VectorMA( best.endpos, tr.fraction * lift * 0.9f, best.plane.normal, lifted );
-
-	VectorCopy( lifted, origin );
-}
-
 // ReSTIR matches a light to its previous-frame self by this id (see
 // update_mlight_prev_to_current and reproject_light_index), so it has to identify the
 // light, not its slot or its position: refdef->dlights is rebuilt every frame in any
@@ -802,10 +757,6 @@ add_dlights(const dlight_t* dlights, int num_dlights, light_poly_t* light_list, 
 	dlight_track_ids( dlights, num_dlights, ids );
 
 	// Intensity of the dynamic lights (blaster bolts, explosions, muzzle flashes), 1 for no change.
-	static cvar_t *pt_light_scale_dlight;
-	if ( !pt_light_scale_dlight )
-		pt_light_scale_dlight = ri.Cvar_Get( "pt_light_scale_dlight", "0.02", CVAR_ARCHIVE_ND );
-
 	const float dlight_scale = MAX( 0.f, pt_light_scale_dlight->value );
 
 	for (int i = 0; i < num_dlights; i++)
@@ -816,8 +767,9 @@ add_dlights(const dlight_t* dlights, int num_dlights, light_poly_t* light_list, 
 		const dlight_t* dlight = dlights + i;
 		light_poly_t* light = light_list + *num_lights;
 
+		// The frontend moved the light off the surface it hit, see R_LiftDlightsForRtx.
 		vec3_t origin;
-		VectorCopy( dlight->origin, origin );
+		VectorCopy( dlight->rtxOrigin, origin );
 
 		const qboolean is_spot = (qboolean)(dlight->light_type == DLIGHT_SPOT);
 		const float falloff_radius = dlight->radius;
@@ -825,9 +777,6 @@ add_dlights(const dlight_t* dlights, int num_dlights, light_poly_t* light_list, 
 
 		if ( emitter_radius <= 0.0f || emitter_radius > falloff_radius )
 			emitter_radius = falloff_radius;
-
-		if ( !is_spot && pt_dlight_lift->value > 0.0f )
-			dlight_lift_off_surface( origin, pt_dlight_lift->value, 4.0f );
 
 		light->cluster = dlight_cluster( worldData, origin, 8.0f );
 
@@ -1921,13 +1870,6 @@ static void vk_rtx_prepare_ubo( trRefdef_t *refdef, world_t *world, mnode_t *vie
 	// The tone mapping as tone_mapping_apply does it: the tracer inverts it for the colours in
 	// screen units (screen_to_hdr_color).
 	{
-		static cvar_t *tm_per_channel, *tm_contrast;
-		if ( !tm_per_channel )
-		{
-			tm_per_channel = ri.Cvar_Get( "tm_per_channel", "1", CVAR_ARCHIVE_ND );
-			tm_contrast = ri.Cvar_Get( "tm_contrast", "1", CVAR_ARCHIVE_ND );
-		}
-
 		ubo->tonemap_hdr = vk.rtx_surf_is_hdr ? 1 : 0;
 		ubo->tonemap_per_channel = Com_Clamp( 0.f, 1.f, tm_per_channel->value );
 		ubo->tonemap_contrast = Com_Clamp( 0.5f, 2.f, tm_contrast->value );

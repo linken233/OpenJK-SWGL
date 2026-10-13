@@ -27,11 +27,6 @@ static float CurrentScale( int style )
 
 float RTX_LightStyle_Scale( int style, qboolean prev )
 {
-	static cvar_t *pt_light_styles;
-
-	if ( !pt_light_styles )
-		pt_light_styles = ri.Cvar_Get( "pt_light_styles", "1", CVAR_ARCHIVE_ND );
-
 	if ( style <= 0 || style >= MAX_LIGHT_STYLES || !pt_light_styles->integer )
 		return 1.0f;
 

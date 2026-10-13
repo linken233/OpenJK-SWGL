@@ -141,7 +141,7 @@ void vk_create_swapchain( VkPhysicalDevice physical_device, VkDevice device,
 
     free( present_modes );
 
-    if ( ( v = ri.Cvar_VariableIntegerValue( "r_swapInterval" ) ) != 0 ) {
+    if ( ( v = r_swapInterval->integer ) != 0 ) {
         if ( v == 3 && mailbox_supported )
             present_mode = VK_PRESENT_MODE_MAILBOX_KHR;
         else if ( v == 2 && fifo_relaxed_supported )

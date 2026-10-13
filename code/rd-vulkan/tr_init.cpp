@@ -213,6 +213,8 @@ cvar_t	*r_patchStitching;
 // Vulkan
 cvar_t	*r_defaultImage;
 cvar_t	*r_device;
+cvar_t	*r_swapInterval;
+cvar_t	*r_timescale;
 cvar_t	*r_stencilbits;
 cvar_t	*r_ext_multisample;
 cvar_t	*r_ext_supersample;
@@ -259,6 +261,18 @@ cvar_t	*pt_dlight_radius;
 cvar_t	*pt_dlight_min_dist;
 cvar_t	*pt_dlight_lift;
 cvar_t	*pt_lightgen_scale;
+// Read by the backend: registered here so the backend never calls Cvar_Get.
+cvar_t	*pt_light_scale_edit;
+cvar_t	*pt_light_scale_dlight;
+cvar_t	*pt_light_scale_saber;
+cvar_t	*pt_glow_scale;
+cvar_t	*pt_light_styles;
+cvar_t	*pt_weapon_fx_shaders;
+cvar_t	*pt_sky_per_map;
+cvar_t	*pt_sky_q3map_sun;
+cvar_t	*pt_ambient_floor_scale;
+cvar_t	*tm_per_channel;
+cvar_t	*tm_contrast;
 
 #define UBO_CVAR_DO( _handle, _value ) cvar_t *sun_##_handle;
 	UBO_CVAR_LIST
@@ -1092,6 +1106,10 @@ void R_Register( void )
 	r_maxpolys							= Cvar_Get( "r_maxpolys",						XSTRING( DEFAULT_MAX_POLYS ),		CVAR_NONE, "" );
 	r_maxpolyverts						= Cvar_Get( "r_maxpolyverts",					XSTRING( DEFAULT_MAX_POLYVERTS ),	CVAR_NONE, "" );
 
+	// Read by the backend: registered here so the backend never looks a cvar up by name.
+	r_swapInterval						= ri.Cvar_Get("r_swapInterval",					"0",						CVAR_NONE);
+	r_timescale							= ri.Cvar_Get("timescale",						"1",						CVAR_NONE);
+
 	// Vulkan
 	r_defaultImage						= Cvar_Get("r_defaultImage",						"",							CVAR_ARCHIVE_ND | CVAR_LATCH, "");
 	r_device							= Cvar_Get("r_device",							"-1",						CVAR_ARCHIVE_ND | CVAR_LATCH, "Select physical device to render:\n" \
@@ -1184,6 +1202,18 @@ void R_Register( void )
 	/* Converts the .lgt intensity to the tracer radiance. The file stores a lightmap
 	 * luminance times a distance squared, which has no absolute unit. */
 	pt_lightgen_scale					= ri.Cvar_Get("pt_lightgen_scale",				"0.005",	CVAR_ARCHIVE);
+
+	pt_light_scale_edit					= ri.Cvar_Get("pt_light_scale_edit",			"0.1",		CVAR_ARCHIVE_ND);
+	pt_light_scale_dlight				= ri.Cvar_Get("pt_light_scale_dlight",			"0.02",		CVAR_ARCHIVE_ND);	// intensity of blaster bolts, explosions and muzzle flashes, 1 for no change
+	pt_light_scale_saber				= ri.Cvar_Get("pt_light_scale_saber",			"10",		CVAR_ARCHIVE_ND);
+	pt_glow_scale						= ri.Cvar_Get("pt_glow_scale",					"1.0",		CVAR_ARCHIVE_ND);
+	pt_light_styles						= ri.Cvar_Get("pt_light_styles",				"1",		CVAR_ARCHIVE_ND);
+	pt_weapon_fx_shaders				= ri.Cvar_Get("pt_weapon_fx_shaders",			"gfx/effects/sabers/ gfx/effects/blaster_blob gfx/effects/whiteGlow gfx/effects/blasterFrontFlash gfx/effects/blasterSideFlash", CVAR_ARCHIVE_ND);
+	pt_sky_per_map						= ri.Cvar_Get("pt_sky_per_map",					"1",		CVAR_ARCHIVE_ND);
+	pt_sky_q3map_sun					= ri.Cvar_Get("pt_sky_q3map_sun",				"0",		CVAR_ARCHIVE_ND);
+	pt_ambient_floor_scale				= ri.Cvar_Get("pt_ambient_floor_scale",			"1",		CVAR_ARCHIVE_ND);
+	tm_per_channel						= ri.Cvar_Get("tm_per_channel",					"1",		CVAR_ARCHIVE_ND);	// 0 keeps the hue of bright colors, 1 maps each channel
+	tm_contrast							= ri.Cvar_Get("tm_contrast",					"1",		CVAR_ARCHIVE_ND);	// around the middle gray, 1 for no change
 
 #define UBO_CVAR_DO( _handle, _value ) sun_##_handle = ri.Cvar_Get( #_handle,	#_value, CVAR_NONE);
 	UBO_CVAR_LIST
@@ -1399,10 +1429,20 @@ void R_Init( void ) {
 	max_polys = Q_min( r_maxpolys->integer, DEFAULT_MAX_POLYS );
 	max_polyverts = Q_min( r_maxpolyverts->integer, DEFAULT_MAX_POLYVERTS );
 
-	ptr = (byte *)Hunk_Alloc( sizeof( *backEndData ) + sizeof(srfPoly_t) * max_polys + sizeof(polyVert_t) * max_polyverts, h_low);
+	const size_t g2PoolBytes = sizeof(mat3x4_t) * G2_SNAP_MAX_BONES;
+
+	ptr = (byte *)Hunk_Alloc( sizeof( *backEndData ) + sizeof(srfPoly_t) * max_polys + sizeof(polyVert_t) * max_polyverts + g2PoolBytes * 3, h_low);
 	backEndData = (backEndData_t *) ptr;
 	backEndData->polys = (srfPoly_t *) ((char *) ptr + sizeof( *backEndData ));
 	backEndData->polyVerts = (polyVert_t *) ((char *) ptr + sizeof( *backEndData ) + sizeof(srfPoly_t) * max_polys);
+
+	// Bone pools of the Ghoul2 snapshot.
+	{
+		byte *pool = (byte *)( backEndData->polyVerts + max_polyverts );
+		backEndData->g2.bones = (mat3x4_t *)pool;
+		backEndData->g2.prevBones = (mat3x4_t *)( pool + g2PoolBytes );
+		backEndData->g2.rtxBones = (mat3x4_t *)( pool + g2PoolBytes * 2 );
+	}
 
 	R_InitNextFrame();
 
@@ -1762,6 +1802,7 @@ Q_EXPORT refexport_t* QDECL GetRefAPI( int apiVersion, refimport_t *rimp ) {
 
 	assert( rimp );
 	ri = *rimp;
+	RB_PrintInstall();
 
 	memset( &re, 0, sizeof( re ) );
 

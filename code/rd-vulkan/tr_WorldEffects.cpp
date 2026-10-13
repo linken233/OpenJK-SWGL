@@ -1628,7 +1628,7 @@ void R_ShutdownWorldEffects(void)
 void RB_RenderWorldEffects(void)
 {
 	if (!tr.world ||
-		(tr.refdef.rdflags & RDF_NOWORLDMODEL) ||
+		(backEnd.refdef.rdflags & RDF_NOWORLDMODEL) ||
 		(backEnd.refdef.rdflags & RDF_SKYBOXPORTAL) ||
 		!mParticleClouds.size() ||
 		ri.CL_IsRunningInGameCinematic())

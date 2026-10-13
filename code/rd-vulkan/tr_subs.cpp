@@ -24,6 +24,125 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 // tr_subs.cpp - common function replacements for modular renderer
 #include "tr_local.h"
 
+#include <mutex>
+
+/*
+==============
+Backend print queue
+
+The engine print function is not safe to call from the thread that runs the backend.
+RB_PrintInstall replaces ri.Printf with a function that queues the message when the
+calling thread is inside RB_PrintBackendBegin / RB_PrintBackendEnd, and prints at once
+otherwise. The main thread prints the queue in RB_PrintDrain. Messages beyond the size
+of the queue are dropped and counted.
+==============
+*/
+#define RB_PRINT_QUEUE_LINES	256
+#define RB_PRINT_LINE_LENGTH	1024
+
+typedef struct rbPrintLine_s {
+	int		level;
+	char	text[RB_PRINT_LINE_LENGTH];
+} rbPrintLine_t;
+
+static rbPrintLine_t	rbPrintQueue[RB_PRINT_QUEUE_LINES];
+static int				rbPrintHead;		// next line to print
+static int				rbPrintCount;
+static int				rbPrintDropped;
+static std::mutex		rbPrintMutex;
+static thread_local bool	rbOnBackendThread = false;
+static void				( QDECL *rbRealPrintf )( int printLevel, const char *fmt, ... );
+
+static void QDECL RB_PrintfInterposer( int level, const char *fmt, ... )
+{
+	char		text[8192];		// as long as the engine print buffer
+	va_list		argptr;
+
+	va_start( argptr, fmt );
+	Q_vsnprintf( text, sizeof( text ), fmt, argptr );
+	va_end( argptr );
+
+	if ( !rbOnBackendThread )
+	{
+		rbRealPrintf( level, "%s", text );
+		return;
+	}
+
+	std::lock_guard<std::mutex> lock( rbPrintMutex );
+
+	if ( rbPrintCount >= RB_PRINT_QUEUE_LINES )
+	{
+		rbPrintDropped++;
+		return;
+	}
+
+	rbPrintLine_t &line = rbPrintQueue[( rbPrintHead + rbPrintCount ) % RB_PRINT_QUEUE_LINES];
+	line.level = level;
+	Q_strncpyz( line.text, text, sizeof( line.text ) );
+	rbPrintCount++;
+}
+
+void RB_PrintInstall( void )
+{
+	if ( ri.Printf == RB_PrintfInterposer )
+		return;
+
+	rbRealPrintf = ri.Printf;
+	ri.Printf = RB_PrintfInterposer;
+}
+
+void RB_PrintBackendBegin( void )
+{
+	rbOnBackendThread = true;
+}
+
+void RB_PrintBackendEnd( void )
+{
+	rbOnBackendThread = false;
+}
+
+// Main thread only.
+void RB_PrintDrain( void )
+{
+	if ( !rbRealPrintf )
+		return;
+
+	for ( ;; )
+	{
+		rbPrintLine_t	line;
+		bool			haveLine = false;
+		int				dropped = 0;
+
+		{
+			std::lock_guard<std::mutex> lock( rbPrintMutex );
+
+			if ( rbPrintCount )
+			{
+				line = rbPrintQueue[rbPrintHead];
+				rbPrintHead = ( rbPrintHead + 1 ) % RB_PRINT_QUEUE_LINES;
+				rbPrintCount--;
+				haveLine = true;
+			}
+			else
+			{
+				dropped = rbPrintDropped;
+				rbPrintDropped = 0;
+			}
+		}
+
+		if ( haveLine )
+		{
+			rbRealPrintf( line.level, "%s", line.text );
+			continue;
+		}
+
+		if ( dropped )
+			rbRealPrintf( PRINT_WARNING, "%d backend messages dropped\n", dropped );
+
+		return;
+	}
+}
+
 void QDECL Com_Printf( const char *msg, ... )
 {
 	va_list         argptr;

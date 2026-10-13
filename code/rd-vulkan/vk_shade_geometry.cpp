@@ -112,7 +112,7 @@ void vk_set_2d( void )
 
 	// set 2D virtual screen size
 	// set time for 2D shaders
-	backEnd.refdef.time = ri.Milliseconds() * ri.Cvar_VariableValue("timescale");
+	backEnd.refdef.time = ri.Milliseconds() * r_timescale->value;
 	backEnd.refdef.floatTime = (double)backEnd.refdef.time * 0.001; // -EC-: cast to double
 
 	return;
@@ -2343,7 +2343,7 @@ void RB_SurfaceSpritesVBO( srfSprites_t *surf )
 			else 
 			{
 				orientationr_t ori;
-				trRefEntity_t *ent = &tr.refdef.entities[entity_num];
+				trRefEntity_t *ent = &backEnd.refdef.entities[entity_num];
 	
 				R_RotateForEntity( ent, &backEnd.viewParms, &ori );
 

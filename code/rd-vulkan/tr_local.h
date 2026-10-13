@@ -262,6 +262,7 @@ typedef struct dlight_s {
 #ifdef USE_RTX
     // VKPT light types support
     dlight_type light_type;
+	vec3_t		rtxOrigin;		// origin the tracer emits from: origin, moved off the surface it hit. Set by R_LiftDlightsForRtx.
 	//float		intensity;		// use radius
     // Spotlight options
     struct {
@@ -333,6 +334,9 @@ typedef struct trRefEntity_s {
 #ifdef VK_CUBEMAP
 	int			cubemapIndex;	// 1 + index of the nearest cubemap, 0 for none
 #endif
+	// Ghoul2 model records of the path tracer in backEndData->g2, set by R_G2_SnapshotScene.
+	int			g2RtxFirst;
+	int			g2RtxCount;
 } trRefEntity_t;
 
 #ifdef VK_CUBEMAP
@@ -976,6 +980,9 @@ typedef struct trRefdef_s {
 #ifdef USE_RTX
 	ref_feedback_t		feedback;
 #endif
+
+	int					g2SnapFirst;				// Ghoul2 snapshot models of this scene: backEndData->g2.models[first, first + count)
+	int					g2SnapCount;
 } trRefdef_t;
 
 
@@ -2211,6 +2218,7 @@ extern	cvar_t	*r_colorMipLevels;		// development aid to see texture mip usage
 extern	cvar_t	*r_picmip;				// controls picmip values
 extern	cvar_t	*r_finish;
 extern	cvar_t	*r_swapInterval;
+extern	cvar_t	*r_timescale;			// the timescale cvar of the engine
 extern	cvar_t	*r_markcount;
 extern	cvar_t	*r_textureMode;
 extern	cvar_t	*r_offsetFactor;
@@ -2731,7 +2739,7 @@ public:
 #else
 	const int		ident;				// ident of this surface - required so the materials renderer knows what sort of surface this refers to
 #endif
-	CBoneCache 		*boneCache;
+	int				g2Snap;				// index into backEndData->g2.models, -1 for none. The backend never reads the bone cache.
 #ifdef USE_VBO_GHOUL2
 	mdxmVBOMesh_t	*vboMesh;
 #endif
@@ -2750,7 +2758,7 @@ public:
 	CRenderableSurface& operator= ( const CRenderableSurface& src )
 	{
 		ident			= src.ident;
-		boneCache		= src.boneCache;
+		g2Snap			= src.g2Snap;
 		surfaceData		= src.surfaceData;
 #ifdef _G2_GORE
 		alternateTex	= src.alternateTex;
@@ -2766,7 +2774,7 @@ public:
 
 CRenderableSurface():
 	ident( SF_MDX ),
-	boneCache( nullptr ),
+	g2Snap( -1 ),
 #ifdef USE_VBO_GHOUL2
 	vboMesh( nullptr ),
 #endif
@@ -2784,7 +2792,7 @@ CRenderableSurface():
 	void Init()
 	{
 		ident			= SF_MDX;
-		boneCache		= nullptr;
+		g2Snap			= -1;
 		surfaceData		= nullptr;
 #ifdef _G2_GORE
 		alternateTex	= nullptr;
@@ -2954,9 +2962,78 @@ typedef enum {
 	RC_CONVOLVECUBEMAP
 } renderCommand_t;
 
+/*
+Ghoul2 snapshot
+
+The frontend copies the final bone matrices of every Ghoul2 model it draws into a per-frame
+pool. The backend reads only this pool, never the bone cache of the game. Pool sizes:
+G2_SNAP_MAX_BONES matrices of 48 bytes in each of three arrays (current, previous, tracer),
+about 9 MB, enough for 900 characters of 72 bones. When a pool is full the frontend counts
+the overflow, prints a warning and the model draws without skinning data.
+*/
+#define G2_SNAP_MAX_MODELS		8192
+#define G2_SNAP_MAX_BONES		65536
+#define G2_SNAP_MAX_RTX_MODELS	8192
+#define G2_SNAP_MAX_RTX_MESHES	32768
+
+typedef struct g2SnapModel_s {
+	int			firstBone;			// first matrix of this model in the bone pools
+	int			numBones;
+	int			uboOffset;			// bone UBO offset, written by the backend, -1 until uploaded
+	mat4_t		prevModelMatrix;	// model to world matrix of the previous frame, for the velocity buffer
+} g2SnapModel_t;
+
+#ifdef USE_RTX
+typedef struct g2SnapRtxMesh_s {
+	maliasmesh_t		*mesh;		// NULL when the VBO of the model is off
+	shader_t			*shader;
+	const mdxmSurface_t	*surface;	// for the bounds of the skinned vertices
+} g2SnapRtxMesh_t;
+
+typedef struct g2SnapRtxModel_s {
+	int			snapModel;			// index in g2Snapshot_t::models, -1 when the pool was full
+	int			firstMesh;
+	int			numMeshes;
+} g2SnapRtxModel_t;
+#endif
+
+typedef struct g2Snapshot_s {
+	int				numModels;
+	int				numBones;
+	int				overflowModels;		// models dropped this frame
+	int				overflowBones;
+	mat3x4_t		*bones;				// current pose
+	mat3x4_t		*prevBones;			// previous pose, filled when the velocity buffer is on
+	mat3x4_t		*rtxBones;			// pose for the path tracer
+	g2SnapModel_t	models[G2_SNAP_MAX_MODELS];
+#ifdef USE_RTX
+	int				numRtxModels;
+	int				numRtxMeshes;
+	int				overflowRtx;
+	g2SnapRtxModel_t rtxModels[G2_SNAP_MAX_RTX_MODELS];
+	g2SnapRtxMesh_t	rtxMeshes[G2_SNAP_MAX_RTX_MESHES];
+#endif
+} g2Snapshot_t;
+
+#ifdef _G2_GORE
+// Gore uploads wait for the next frame command buffer (vk_flush_gore_uploads).
+// The regions are byte ranges of the staging buffer, copied at the same offset.
+#define MAX_GORE_UPLOADS	256
+
+typedef struct goreUploads_s {
+	VkBufferCopy	regions[MAX_GORE_UPLOADS];
+	uint32_t		count;
+} goreUploads_t;
+#endif
+
 // all of the information needed by the back end must be
 // contained in a backEndData_t.
 typedef struct backEndData_s {
+	g2Snapshot_t		g2;
+#ifdef _G2_GORE
+	goreUploads_t		goreVBOUploads;		// filled by R_UpdateGoreVBO in the frontend, consumed by vk_flush_gore_uploads
+	goreUploads_t		goreIBOUploads;
+#endif
 	drawSurf_t			drawSurfs[MAX_DRAWSURFS];
 #ifdef USE_PMLIGHT
 	litSurf_t			litSurfs[MAX_LITSURFS];
@@ -3066,9 +3143,18 @@ void		vk_generate_image_upload_data( image_t *image, byte *data, Image_Upload_Da
 void		vk_create_image( image_t *image, int width, int height, int mip_levels );
 void		vk_clean_staging_buffer( void );
 
+// print queue (tr_subs.cpp): messages printed while the calling thread runs the backend wait in a queue
+void		RB_PrintInstall( void );
+void		RB_PrintBackendBegin( void );
+void		RB_PrintBackendEnd( void );
+void		RB_PrintDrain( void );
+
 // ghoul2
-void		RB_TransformBones( const trRefEntity_t *ent, const trRefdef_t *refdef );
-int			RB_GetBoneUboOffset( CRenderableSurface *surf );
+void		R_G2_SnapReset( void );
+void		R_G2_SnapshotScene( void );
+void		R_G2_NoteDrawSurfsCmd( drawSurfsCommand_t *cmd );
+void		RB_G2_UploadBones( const trRefdef_t *refdef );
+int			RB_GetBoneUboOffset( const CRenderableSurface *surf );
 
 // surface sprites
 #ifdef USE_VBO_SS
@@ -3144,6 +3230,17 @@ extern  cvar_t  *pt_dlight_radius;
 extern  cvar_t  *pt_dlight_min_dist;
 extern  cvar_t  *pt_dlight_lift;
 extern  cvar_t  *pt_lightgen_scale;
+extern  cvar_t  *pt_light_scale_edit;
+extern  cvar_t  *pt_light_scale_dlight;
+extern  cvar_t  *pt_light_scale_saber;
+extern  cvar_t  *pt_glow_scale;
+extern  cvar_t  *pt_light_styles;
+extern  cvar_t  *pt_weapon_fx_shaders;
+extern  cvar_t  *pt_sky_per_map;
+extern  cvar_t  *pt_sky_q3map_sun;
+extern  cvar_t  *pt_ambient_floor_scale;
+extern  cvar_t  *tm_per_channel;
+extern  cvar_t  *tm_contrast;
 
 #define UBO_CVAR_DO( _handle, _value ) \
 	extern cvar_t *sun_##_handle;

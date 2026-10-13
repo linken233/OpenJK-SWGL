@@ -70,6 +70,8 @@ void R_InitNextFrame( void ) {
 
 	r_numpolyverts = 0;
 
+	R_G2_SnapReset();
+
 	//r_frameCount++;
 }
 
@@ -253,6 +255,8 @@ void RE_AddRefEntityToScene( const refEntity_t *ent ) {
 
 	backEndData->entities[r_numentities].e = *ent;
 	backEndData->entities[r_numentities].lightingCalculated = qfalse;
+	backEndData->entities[r_numentities].g2RtxFirst = 0;
+	backEndData->entities[r_numentities].g2RtxCount = 0;
 
 	r_numentities++;
 }
@@ -481,6 +485,8 @@ void R_RenderCubemaps( void )
 	tr.refdef.dlights = &backEndData->dlights[r_firstSceneDlight];
 	tr.refdef.numPolys = 0;
 	tr.refdef.polys = &backEndData->polys[r_firstScenePoly];
+	tr.refdef.g2SnapFirst = 0;
+	tr.refdef.g2SnapCount = 0;
 
 	tr.frameSceneNum++;
 	tr.sceneCount++;
@@ -520,6 +526,8 @@ void R_RenderCubemaps( void )
 		R_AddConvolveCubemapCmd( i );
 	}
 
+	R_G2_SnapshotScene();	// no entities; forgets the commands of the views
+
 	tr.numCubemapsCaptured = last;
 
 	// the scene of the frame goes after the captures
@@ -527,6 +535,81 @@ void R_RenderCubemaps( void )
 #ifdef USE_PMLIGHT
 	r_firstSceneLitSurf = tr.refdef.numLitSurfs;
 #endif
+}
+#endif
+
+#ifdef USE_RTX
+// An impact effect places its dlight exactly on the surface it hit. The raster lights that
+// surface from any distance, but the tracer needs dot(n, L) > 0: a light in the plane of a
+// wall lights nothing of it, and the few samples that pass come back noisy. Find the nearest
+// surface within probe units and move the light off it along the surface normal.
+static void R_DlightLiftOffSurface( vec3_t origin, float lift, float probe )
+{
+	static const vec3_t axes[6] = {
+		{  1,  0,  0 }, { -1,  0,  0 }, {  0,  1,  0 }, {  0, -1,  0 }, {  0,  0,  1 }, {  0,  0, -1 }
+	};
+
+	trace_t best;
+	float best_fraction = 2.0f;
+
+	for ( int i = 0; i < 6; i++ )
+	{
+		vec3_t end;
+		trace_t tr;
+
+		VectorMA( origin, probe, axes[i], end );
+		ri.SV_Trace( &tr, origin, vec3_origin, vec3_origin, end, ENTITYNUM_NONE, CONTENTS_SOLID, G2_NOCOLLIDE, 0 );
+
+		if ( tr.startsolid || tr.allsolid || tr.fraction >= 1.0f )
+			continue;
+
+		if ( tr.fraction < best_fraction )
+		{
+			best_fraction = tr.fraction;
+			best = tr;
+		}
+	}
+
+	if ( best_fraction > 1.0f )
+		return;
+
+	// Do not push the light through the surface on the far side of a thin room.
+	vec3_t target, lifted;
+	trace_t tr;
+
+	VectorMA( best.endpos, lift, best.plane.normal, target );
+	ri.SV_Trace( &tr, best.endpos, vec3_origin, vec3_origin, target, ENTITYNUM_NONE, CONTENTS_SOLID, G2_NOCOLLIDE, 0 );
+	VectorMA( best.endpos, tr.fraction * lift * 0.9f, best.plane.normal, lifted );
+
+	VectorCopy( lifted, origin );
+}
+
+/*
+=====================
+R_LiftDlightsForRtx
+
+Sets rtxOrigin of the dlights of a scene that the tracer draws. The tracer tracks the lights
+by origin, so it keeps origin as it is. The lift calls the collision code of the game,
+which the backend must not do.
+=====================
+*/
+static void R_LiftDlightsForRtx( const trRefdef_t *refdef )
+{
+	if ( !vk.rtxActive || ( refdef->rdflags & ( RDF_NOWORLDMODEL | RDF_SKYBOXPORTAL ) ) )
+		return;
+
+	// the tracer reads the first 128 lights of the scene (DLIGHT_TRACK_MAX)
+	const int count = MIN( refdef->num_dlights, 128 );
+
+	for ( int i = 0; i < count; i++ )
+	{
+		dlight_t *dlight = refdef->dlights + i;
+
+		VectorCopy( dlight->origin, dlight->rtxOrigin );
+
+		if ( dlight->light_type != DLIGHT_SPOT && pt_dlight_lift->value > 0.0f )
+			R_DlightLiftOffSurface( dlight->rtxOrigin, pt_dlight_lift->value, 4.0f );
+	}
 }
 #endif
 
@@ -658,6 +741,10 @@ void RE_RenderScene( const refdef_t *fd ) {
 		tr.refdef.num_dlights = 0;
 	}
 
+#ifdef USE_RTX
+	R_LiftDlightsForRtx(&tr.refdef);
+#endif
+
 	// a single frame may have multiple scenes draw inside it --
 	// a 3D game view, 3D status bar renderings, 3D menus, etc.
 	// They need to be distinguished by the light flare code, because
@@ -706,7 +793,25 @@ void RE_RenderScene( const refdef_t *fd ) {
 	tr.drawSurfCmd = NULL;
 	tr.numDrawSurfCmds = 0;
 
+	tr.refdef.g2SnapFirst = 0;
+	tr.refdef.g2SnapCount = 0;
+
 	R_RenderView(&parms);
+
+	// All views of the scene are built: copy the poses of its Ghoul2 models for the backend.
+	R_G2_SnapshotScene();
+
+	// The entity UBO of the backend holds the lighting of every model.
+	if (vk.vboGhoul2Active)
+	{
+		for (int i = 0; i < tr.refdef.num_entities; i++)
+		{
+			trRefEntity_t *ent = &tr.refdef.entities[i];
+
+			if (ent->e.reType == RT_MODEL)
+				R_SetupEntityLighting(&tr.refdef, ent);
+		}
+	}
 
 	vk_perf_count( VKP_ENTITIES, tr.refdef.num_entities );
 	vk_perf_count( VKP_DLIGHTS, tr.refdef.num_dlights );
