@@ -1576,6 +1576,10 @@ void R_UpdateGoreVBO( srfG2GoreSurface_t *goreSurface )
 	if ( tr.goreIBOCurrentIndex + num_indexes >= MAX_GORE_INDIDCES )
 		tr.goreIBOCurrentIndex = 0;
 
+	// Add the VBO base after the wrap. Else the indexes point past the end of the VBO.
+	for ( int i = 0; i < num_indexes; i++ )
+		goreSurface->indexes[i] += tr.goreVBOCurrentIndex;
+
 	const int vbo_offset = tr.goreVBOCurrentIndex * sizeof(g2GoreVert_t);
 	const int ibo_offset = tr.goreIBOCurrentIndex * sizeof(glIndex_t);
 

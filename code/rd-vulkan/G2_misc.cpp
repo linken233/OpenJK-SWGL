@@ -1135,7 +1135,7 @@ static void G2_GorePolys( const mdxmSurface_t *surface, CTraceSurface &TS, const
 			goreSurface->indexes = (glIndex_t *)Z_Malloc(sizeof(glIndex_t)*newNumTris*3, TAG_GHOUL2_GORE, qtrue);
 			for (j = 0; j < newNumTris * 3; j++)
 			{
-				goreSurface->indexes[j] = GoreIndecies[j] + tr.goreVBOCurrentIndex;
+				goreSurface->indexes[j] = GoreIndecies[j];	// R_UpdateGoreVBO adds the VBO base
 			}
 			goreSurface->numIndexes = newNumTris * 3;
 

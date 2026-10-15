@@ -61,6 +61,7 @@ static void FX_FreeTransient( void )
 
 SEffectList		effectList[MAX_EFFECTS];
 static int		fxAllocCursor = 0;	// next slot FX_GetValidEffect tries
+static SEffectList	*fxUpdating = NULL;	// slot that FX_Add updates or frees now
 SFxHelper		theFxHelper;
 
 int				activeFx = 0;
@@ -212,11 +213,22 @@ static SEffectList *FX_GetValidEffect()
 #endif
 
 	// Evict the effect at the cursor. Its Die() can spawn death effects, which evict further on.
+	// Do not evict the effect that FX_Add updates: its code continues on the freed object.
 	SEffectList *victim = &effectList[fxAllocCursor];
 
 	if ( ++fxAllocCursor == MAX_EFFECTS )
 	{
 		fxAllocCursor = 0;
+	}
+
+	if ( victim == fxUpdating )
+	{
+		victim = &effectList[fxAllocCursor];
+
+		if ( ++fxAllocCursor == MAX_EFFECTS )
+		{
+			fxAllocCursor = 0;
+		}
 	}
 
 	FXS_COUNT( evicted );
@@ -274,6 +286,7 @@ void FX_Add( bool portal )
 				continue;	//this one does not render in this scene
 			}
 			// Effect is active
+			fxUpdating = ef;
 			if ( theFxHelper.mTime > ef->mKillTime )
 			{
 				// Clean up old effects, calling any death effects as needed
@@ -287,9 +300,9 @@ void FX_Add( bool portal )
 				{
 					// We've been marked for death
 					FX_FreeMember( ef );
-					continue;
 				}
 			}
+			fxUpdating = NULL;
 		}
 	}
 
