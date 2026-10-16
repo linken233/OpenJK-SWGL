@@ -177,7 +177,8 @@ void SV_Startup( void ) {
 	}
 
 	svs.clients = (struct client_s *) Z_Malloc ( sizeof(client_t) * 1, TAG_CLIENTS, qtrue );
-	svs.numSnapshotEntities = 2 * 4 * 64;
+	// Room for the delta source of a client some snapshots behind, at 1000 entities per snapshot.
+	svs.numSnapshotEntities = 8192;
 	svs.initialized = qtrue;
 
 	Cvar_Set( "sv_running", "1" );
