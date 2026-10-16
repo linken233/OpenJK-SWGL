@@ -33,6 +33,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 // Includes
 ////////////////////////////////////////////////////////////////////////////////////////
 
+#include <mutex>
 #include "tr_local.h"
 #include "tr_WorldEffects.h"
 
@@ -370,6 +371,7 @@ A function that reads the weather state flushes the queue first. Main thread onl
 static char		weQueue[WE_QUEUE_SIZE][WE_COMMAND_SIZE];
 static int		weQueueCount = 0;
 static bool		weFlushing = false;
+static std::mutex	weWindMutex;	// the backend updates the wind, the game reads it
 
 static void WE_ExecuteCommand(const char *command);
 
@@ -409,6 +411,7 @@ static void WE_SyncQueued(void)
 bool R_GetWindVector(vec3_t windVector, vec3_t atpoint)
 {
 	WE_SyncQueued();
+	std::lock_guard<std::mutex> lock(weWindMutex);
 
 	VectorCopy(mGlobalWindDirection.v, windVector);
 	if (atpoint && mLocalWindZones.size())
@@ -428,6 +431,7 @@ bool R_GetWindVector(vec3_t windVector, vec3_t atpoint)
 bool R_GetWindSpeed(float &windSpeed, vec3_t atpoint)
 {
 	WE_SyncQueued();
+	std::lock_guard<std::mutex> lock(weWindMutex);
 	windSpeed = mGlobalWindSpeed;
 	if (atpoint && mLocalWindZones.size())
 	{
@@ -1735,6 +1739,7 @@ void RB_RenderWorldEffects(void)
 		//-----------------------
 		if (!mFrozen)
 		{
+			std::lock_guard<std::mutex> windLock(weWindMutex);
 			mGlobalWindVelocity.Clear();
 			for (int wz=0; wz<mWindZones.size(); wz++)
 			{
