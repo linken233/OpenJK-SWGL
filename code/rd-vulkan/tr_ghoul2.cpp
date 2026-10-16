@@ -3131,15 +3131,14 @@ next serial.
 static int					g2SnapSerial = 0;
 static int					g2SnapSceneFirst = 0;				// first slot of the scene being built
 static byte					g2SnapBoneUsed[G2_SNAP_MAX_BONES];	// per pool bone: a drawn surface skins with it
-static drawSurfsCommand_t	*g2SnapCmds[256];					// draw commands of the scene being built
-static int					g2SnapNumCmds = 0;
+static std::vector<drawSurfsCommand_t *>	g2SnapCmds;		// draw commands of the scene being built
 
 void R_G2_SnapReset( void )
 {
 	g2Snapshot_t &snap = backEndData->g2;
 
 	g2SnapSceneFirst = 0;
-	g2SnapNumCmds = 0;
+	g2SnapCmds.clear();
 
 	if ( snap.overflowModels || snap.overflowBones
 #ifdef USE_RTX
@@ -3545,8 +3544,7 @@ static std::vector<g2SnapJob_t>	g2SnapJobs;
 
 void R_G2_NoteDrawSurfsCmd( drawSurfsCommand_t *cmd )
 {
-	if ( g2SnapNumCmds < (int)ARRAY_LEN( g2SnapCmds ) )
-		g2SnapCmds[g2SnapNumCmds++] = cmd;
+	g2SnapCmds.push_back( cmd );
 }
 
 // Evaluates the bones of a cache and stores the matrices in dst. A NULL dst only evaluates.
@@ -3958,13 +3956,13 @@ void R_G2_SnapshotScene( void )
 	tr.refdef.g2SnapFirst = firstSlot;
 	tr.refdef.g2SnapCount = snap.numModels - firstSlot;
 
-	for ( int i = 0; i < g2SnapNumCmds; i++ )
+	for ( drawSurfsCommand_t *cmd : g2SnapCmds )
 	{
-		g2SnapCmds[i]->refdef.g2SnapFirst = tr.refdef.g2SnapFirst;
-		g2SnapCmds[i]->refdef.g2SnapCount = tr.refdef.g2SnapCount;
+		cmd->refdef.g2SnapFirst = tr.refdef.g2SnapFirst;
+		cmd->refdef.g2SnapCount = tr.refdef.g2SnapCount;
 	}
 
-	g2SnapNumCmds = 0;
+	g2SnapCmds.clear();
 	g2SnapSceneFirst = snap.numModels;
 	g2SnapSerial++;
 }
