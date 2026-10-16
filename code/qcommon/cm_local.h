@@ -177,7 +177,7 @@ extern	cvar_t		*cm_playerCurveClip;
 
 // cm_fastTrace: bit flags for trace shortcuts that give the same results as the original code.
 // cm_verifyTrace 1 runs every box trace with and without them and reports differences.
-#define	CM_FAST_OFFSET		1	// tree walk of a box trace uses the real size of the box at slanted planes, not 2048
+#define	CM_FAST_OFFSET		1	// tree walk of a box trace uses the real size of the box at slanted planes, not 2048 (off by default: not exact without full bevels)
 #define	CM_FAST_PATCHBOUNDS	2	// a point trace skips a patch when its bounds do not touch the bounds of the patch
 #define	CM_FAST_PATCHLIST	4	// a leaf visits its list of patches, not all its surfaces
 #define	CM_FAST_LEAFBRUSH	8	// a leaf tests contents and bounds on its own brush list before it reads a brush

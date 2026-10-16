@@ -736,7 +736,7 @@ static void CM_LoadMap_Actual( const char *name, qboolean clientload, int *check
 	cm_noAreas = Cvar_Get ("cm_noAreas", "0", CVAR_CHEAT);
 	cm_noCurves = Cvar_Get ("cm_noCurves", "0", CVAR_CHEAT);
 	cm_playerCurveClip = Cvar_Get ("cm_playerCurveClip", "1", CVAR_ARCHIVE_ND|CVAR_CHEAT );
-	cm_fastTrace = Cvar_Get ("cm_fastTrace", "15", 0 );
+	cm_fastTrace = Cvar_Get ("cm_fastTrace", "14", 0 );	// 14 = CM_FAST_ALL without CM_FAST_OFFSET
 	cm_verifyTrace = Cvar_Get ("cm_verifyTrace", "0", 0 );
 #endif
 	Com_DPrintf( "CM_LoadMap( %s, %i )\n", name, clientload );

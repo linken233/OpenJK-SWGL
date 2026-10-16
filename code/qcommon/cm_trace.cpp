@@ -937,14 +937,14 @@ static void CM_BoxTraceImpl( trace_t *results, const vec3_t start, const vec3_t 
 
 
 // Runs the trace with the shortcuts in flags. The plane and surface flags of a sweep that starts inside a brush
-// depend on which leaves the walk reached, and the shortcuts walk fewer: such a trace (rare) runs again without them.
+// (startsolid or allsolid) depend on which leaves the walk reached: such a trace (rare) runs again without them.
 static void CM_BoxTraceFast( trace_t *results, const vec3_t start, const vec3_t end,
 						  const vec3_t mins, const vec3_t maxs,
 						  clipHandle_t model, int brushmask, int flags ) {
 	cm_fastFlags = flags;
 	CM_BoxTraceImpl( results, start, end, mins, maxs, model, brushmask );
 
-	if ( results->allsolid && flags
+	if ( ( results->allsolid || results->startsolid ) && flags
 		&& ( start[0] != end[0] || start[1] != end[1] || start[2] != end[2] ) ) {
 		cm_fastFlags = 0;
 		CM_BoxTraceImpl( results, start, end, mins, maxs, model, brushmask );
