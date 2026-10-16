@@ -1401,8 +1401,10 @@ void R_AddDrawSurf( surfaceType_t *surface, shader_t *shader,
 	}
 #endif
 
-	// instead of checking for overflow, we just mask the index
-	// so it wraps around
+	// A full list drops the surface: a wrap would overwrite the surfaces that queued commands (cubemap views) still read.
+	if ( tr.refdef.numDrawSurfs >= MAX_DRAWSURFS ) {
+		return;
+	}
 	index = tr.refdef.numDrawSurfs & DRAWSURF_MASK;
 	// the sort data is packed into a single 64 bit value so it can be
 	// compared quickly during the sorting process

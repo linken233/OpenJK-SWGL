@@ -460,8 +460,11 @@ void R_RenderCubemaps( void )
 		{ {  0,  0,  1 }, { -1,  0,  0 }, {  0, -1,  0 } },
 		{ {  0,  0, -1 }, {  1,  0,  0 }, {  0, -1,  0 } },
 	};
+	// Draw surfs of the largest face so far, of the scene after the captures, and where the last captures ended.
+	static int s_cubeMaxFace, s_cubeScenePeak, s_cubeLastEnd;
 	viewParms_t parms;
 	int i, face, rendered;
+	const int entryDrawSurfs = tr.refdef.numDrawSurfs;
 
 	if ( !vk.cubemapActive || !tr.world || tr.numCubemapsCaptured >= tr.numCubemaps )
 		return;
@@ -498,12 +501,23 @@ void R_RenderCubemaps( void )
 	i = tr.numCubemapsCaptured;
 	face = tr.numCubemapFacesCaptured;
 
+	// The scene size of the last frame: draw surfs after the captures, with a slow decay.
+	if ( s_cubeLastEnd > 0 && entryDrawSurfs >= s_cubeLastEnd )
+		s_cubeScenePeak = Q_max( entryDrawSurfs - s_cubeLastEnd, s_cubeScenePeak - s_cubeScenePeak / 16 );
+	else
+		s_cubeScenePeak -= s_cubeScenePeak / 16;
+
 	for ( rendered = 0; i < tr.numCubemaps && rendered < CUBEMAPS_PER_FRAME * 6; rendered++ )
 	{
-		// The commands of the views read the draw surfs in the backend. Stop before the
-		// views and the scene of the frame could wrap the ring and overwrite them.
-		if ( tr.refdef.numDrawSurfs > CUBEMAP_DRAWSURF_LIMIT )
+		int faceStart;
+
+		// The commands of the views read the draw surfs in the backend. Stop before the next face, one
+		// more face and the scene of the frame could fill the list. The list also refuses to wrap.
+		if ( tr.refdef.numDrawSurfs > CUBEMAP_DRAWSURF_LIMIT
+			|| tr.refdef.numDrawSurfs + 2 * s_cubeMaxFace + s_cubeScenePeak > MAX_DRAWSURFS )
 			break;
+
+		faceStart = tr.refdef.numDrawSurfs;
 
 		{
 			VectorCopy( tr.cubemaps[i].origin, tr.refdef.vieworg );
@@ -534,6 +548,8 @@ void R_RenderCubemaps( void )
 			R_RenderView( &parms );
 		}
 
+		s_cubeMaxFace = Q_max( s_cubeMaxFace, tr.refdef.numDrawSurfs - faceStart );
+
 		if ( ++face == 6 )
 		{
 			R_AddConvolveCubemapCmd( i );
@@ -549,6 +565,7 @@ void R_RenderCubemaps( void )
 
 	// the scene of the frame goes after the captures
 	r_firstSceneDrawSurf = tr.refdef.numDrawSurfs;
+	s_cubeLastEnd = r_firstSceneDrawSurf;
 #ifdef USE_PMLIGHT
 	r_firstSceneLitSurf = tr.refdef.numLitSurfs;
 #endif
