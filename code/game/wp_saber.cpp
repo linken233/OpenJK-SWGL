@@ -4942,9 +4942,7 @@ void WP_SaberDamageTrace(gentity_t* ent, int saberNum, int bladeNum)
 						vec3_t hitDir;
 						VectorSubtract(trace.endpos, ent->currentOrigin, hitDir);
 						float totalDist = Distance(mp1, ent->currentOrigin);
-						const float hitDist = VectorNormalize(hitDir);
-						// A zero or non-finite totalDist gives 0/0 or inf/inf: NaN velocity on the victim.
-						float knockback = (totalDist > 0.0f && totalDist < 65536.0f) ? (totalDist - hitDist) / totalDist * 200.0f : 0.0f;
+						float knockback = (totalDist - VectorNormalize(hitDir)) / totalDist * 200.0f;
 						hitDir[2] = 0;
 						//FIXME: do we need to call G_Throw?  Seems unfair to put actual knockback on them, stops the attack
 						//G_Throw( traceEnt, hitDir, knockback );
@@ -8168,8 +8166,6 @@ void WP_SaberUpdate(gentity_t* self, usercmd_t* ucmd)
 			|| self->client->ps.saberBlocking == BLK_WIDE)
 		{//FIXME: keep bbox in front of player, even when wide?
 			vec3_t	saberOrg;
-			// No lit blade sets it below: stay on the owner, as the other cases do.
-			VectorCopy(self->currentOrigin, saberOrg);
 			if (!forceBlock
 				&& ((self->s.number && !Jedi_SaberBusy(self) && !g_saberRealisticCombat->integer) || (self->s.number == 0 && self->client->ps.saberBlocking == BLK_WIDE && (g_saberAutoBlocking->integer || self->client->ps.saberBlockingTime > level.time)))
 				&& self->client->ps.weaponTime <= 0
