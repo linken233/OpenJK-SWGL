@@ -642,6 +642,7 @@ extern	cvar_t	*sv_paused;
 void	PerfLog_Init( void );
 double	PerfLog_Now( void );
 void	PerfLog_AddGame( double ms );
+void	PerfLog_AddPhase( int phase, double ms );
 void	PerfLog_NoteTrace( const vec3_t start, const vec3_t end, const vec3_t mins, const vec3_t maxs, int contentmask );
 void	PerfLog_EndFrame( double workStart, double svEnd, double clEnd );
 

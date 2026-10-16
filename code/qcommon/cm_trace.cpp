@@ -277,8 +277,12 @@ void CM_TestInLeaf( traceWork_t *tw, cLeaf_t *leaf, clipMap_t *local ) {
 #else
 	if ( !cm_noCurves->integer ) {
 #endif //BSPC
-		for ( k = 0 ; k < leaf->numLeafSurfaces ; k++ ) {
-			patch = local->surfaces[ local->leafsurfaces[ leaf->firstLeafSurface + k ] ];
+		const bool usePatchList = leaf->patches && ( cm_fastFlags & CM_FAST_PATCHLIST );
+		const int numPatchSlots = usePatchList ? leaf->numPatches : leaf->numLeafSurfaces;
+
+		for ( k = 0 ; k < numPatchSlots ; k++ ) {
+			patch = usePatchList ? leaf->patches[k]
+				: local->surfaces[ local->leafsurfaces[ leaf->firstLeafSurface + k ] ];
 
 			if ( !patch ) {
 				continue;
@@ -526,6 +530,8 @@ bool CM_GenericBoxCollide(const vec3pair_t abounds, const vec3pair_t bbounds)
 	return(true);
 }
 
+static int	cm_statNodes, cm_statLeaves;	// tree nodes and leaves a trace walks, for cm_verifyTrace
+
 /*
 ================
 CM_TraceToLeaf
@@ -537,6 +543,39 @@ void CM_TraceToLeaf( traceWork_t *tw, cLeaf_t *leaf, clipMap_t *local ) {
 	cbrush_t	*b;
 	cPatch_t	*patch;
 
+	cm_statLeaves++;
+
+	// Same brushes as the loop below: a brush that the contents or the bounds reject is never traced there either.
+	if ( leaf->leafBrushes && ( cm_fastFlags & CM_FAST_LEAFBRUSH ) ) {
+		const cLeafBrush_t	*e = leaf->leafBrushes;
+		const int			num = leaf->numLeafBrushData;
+
+		for ( k = 0 ; k < num ; k++, e++ ) {
+			if ( !(e->contents & tw->contents) ) {
+				continue;
+			}
+			if ( tw->bounds[0][0] > e->bounds[1][0]
+				|| tw->bounds[0][1] > e->bounds[1][1]
+				|| tw->bounds[0][2] > e->bounds[1][2]
+				|| tw->bounds[1][0] < e->bounds[0][0]
+				|| tw->bounds[1][1] < e->bounds[0][1]
+				|| tw->bounds[1][2] < e->bounds[0][2]
+				) {
+				continue;
+			}
+
+			b = &local->brushes[e->brush];
+			if ( b->checkcount == local->checkcount ) {
+				continue;	// already checked this brush in another leaf
+			}
+			b->checkcount = local->checkcount;
+
+			CM_TraceThroughBrush( tw, b );
+			if ( !tw->trace.fraction ) {
+				return;
+			}
+		}
+	} else
 	// trace line against all brushes in the leaf
 	for ( k = 0 ; k < leaf->numLeafBrushes ; k++ ) {
 		brushnum = local->leafbrushes[leaf->firstLeafBrush+k];
@@ -565,8 +604,13 @@ void CM_TraceToLeaf( traceWork_t *tw, cLeaf_t *leaf, clipMap_t *local ) {
 #else
 	if ( !cm_noCurves->integer ) {
 #endif
-		for ( k = 0 ; k < leaf->numLeafSurfaces ; k++ ) {
-			patch = local->surfaces[ local->leafsurfaces[ leaf->firstLeafSurface + k ] ];
+		// leaf->patches is the list of the leaf surfaces that are patches, in the same order
+		const bool usePatchList = leaf->patches && ( cm_fastFlags & CM_FAST_PATCHLIST );
+		const int numPatchSlots = usePatchList ? leaf->numPatches : leaf->numLeafSurfaces;
+
+		for ( k = 0 ; k < numPatchSlots ; k++ ) {
+			patch = usePatchList ? leaf->patches[k]
+				: local->surfaces[ local->leafsurfaces[ leaf->firstLeafSurface + k ] ];
 			if ( !patch ) {
 				continue;
 			}
@@ -659,8 +703,15 @@ return;
 #endif
 			offset = tw->maxOffset;
 			offset = 2048;
+			if ( cm_fastFlags & CM_FAST_OFFSET ) {
+				// the box size projected on the plane normal, doubled for safety
+				offset = 2.0f * ( fabsf(tw->extents[0]*plane->normal[0]) +
+					fabsf(tw->extents[1]*plane->normal[1]) +
+					fabsf(tw->extents[2]*plane->normal[2]) );
+			}
 		}
 	}
+	cm_statNodes++;
 
 	// see which sides we need to consider
 	if ( t1 >= offset + 1 && t2 >= offset + 1 ) {
@@ -744,12 +795,7 @@ void CM_CalcExtents(const vec3_t start, const vec3_t end, const traceWork_t *tw,
 
 //======================================================================
 
-/*
-==================
-CM_BoxTrace
-==================
-*/
-void CM_BoxTrace( trace_t *results, const vec3_t start, const vec3_t end,
+static void CM_BoxTraceImpl( trace_t *results, const vec3_t start, const vec3_t end,
 						  const vec3_t mins, const vec3_t maxs,
 						  clipHandle_t model, int brushmask) {
 	int			i;
@@ -889,6 +935,78 @@ void CM_BoxTrace( trace_t *results, const vec3_t start, const vec3_t end,
 	*results = tw.trace;
 }
 
+
+// Runs the trace with the shortcuts in flags. The plane and surface flags of a sweep that starts inside a brush
+// depend on which leaves the walk reached, and the shortcuts walk fewer: such a trace (rare) runs again without them.
+static void CM_BoxTraceFast( trace_t *results, const vec3_t start, const vec3_t end,
+						  const vec3_t mins, const vec3_t maxs,
+						  clipHandle_t model, int brushmask, int flags ) {
+	cm_fastFlags = flags;
+	CM_BoxTraceImpl( results, start, end, mins, maxs, model, brushmask );
+
+	if ( results->allsolid && flags
+		&& ( start[0] != end[0] || start[1] != end[1] || start[2] != end[2] ) ) {
+		cm_fastFlags = 0;
+		CM_BoxTraceImpl( results, start, end, mins, maxs, model, brushmask );
+	}
+}
+
+/*
+==================
+CM_BoxTrace
+
+cm_verifyTrace 1: runs the trace without the shortcuts of cm_fastTrace (that result is returned), then with them,
+and reports every difference and the walk sizes.
+==================
+*/
+void CM_BoxTrace( trace_t *results, const vec3_t start, const vec3_t end,
+						  const vec3_t mins, const vec3_t maxs,
+						  clipHandle_t model, int brushmask) {
+	if ( !cm_verifyTrace || !cm_verifyTrace->integer ) {
+		CM_BoxTraceFast( results, start, end, mins, maxs, model, brushmask, cm_fastTrace ? cm_fastTrace->integer : 0 );
+		return;
+	}
+
+	static int	numTraces, numBox, numDiff, nodes[2], leaves[2];
+	trace_t		ref, fast;
+
+	cm_fastFlags = 0;
+	cm_statNodes = cm_statLeaves = 0;
+	CM_BoxTraceImpl( &ref, start, end, mins, maxs, model, brushmask );
+	nodes[0] += cm_statNodes;
+	leaves[0] += cm_statLeaves;
+
+	cm_statNodes = cm_statLeaves = 0;
+	CM_BoxTraceFast( &fast, start, end, mins, maxs, model, brushmask, CM_FAST_ALL );
+	nodes[1] += cm_statNodes;
+	leaves[1] += cm_statLeaves;
+
+	numTraces++;
+	if ( mins && maxs && ( mins[0] != 0 || mins[1] != 0 || mins[2] != 0 ) ) {
+		numBox++;
+	}
+	if ( ref.allsolid != fast.allsolid || ref.startsolid != fast.startsolid || ref.fraction != fast.fraction
+		|| ref.surfaceFlags != fast.surfaceFlags || ref.contents != fast.contents
+		|| ref.plane.dist != fast.plane.dist || !VectorCompare( ref.plane.normal, fast.plane.normal )
+		|| !VectorCompare( ref.endpos, fast.endpos ) ) {
+		if ( ++numDiff <= 20 ) {
+			Com_Printf( "cm_verify: DIFFERENT start %g %g %g end %g %g %g mins %g %g %g maxs %g %g %g mask %x model %i\n"
+				"  ref  frac %g solid %i %i flags %x contents %x plane %g %g %g %g\n"
+				"  fast frac %g solid %i %i flags %x contents %x plane %g %g %g %g\n",
+				start[0], start[1], start[2], end[0], end[1], end[2],
+				mins ? mins[0] : 0, mins ? mins[1] : 0, mins ? mins[2] : 0, maxs ? maxs[0] : 0, maxs ? maxs[1] : 0, maxs ? maxs[2] : 0,
+				brushmask, (int)model,
+				ref.fraction, ref.allsolid, ref.startsolid, ref.surfaceFlags, ref.contents, ref.plane.normal[0], ref.plane.normal[1], ref.plane.normal[2], ref.plane.dist,
+				fast.fraction, fast.allsolid, fast.startsolid, fast.surfaceFlags, fast.contents, fast.plane.normal[0], fast.plane.normal[1], fast.plane.normal[2], fast.plane.dist );
+		}
+	}
+	if ( numTraces % 2000 == 0 ) {
+		Com_Printf( "cm_verify: traces %i, with a box %i, different %i, tree nodes %i -> %i, leaves %i -> %i\n",
+			numTraces, numBox, numDiff, nodes[0], nodes[1], leaves[0], leaves[1] );
+	}
+
+	*results = ref;
+}
 
 /*
 ==================

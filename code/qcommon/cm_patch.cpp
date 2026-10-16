@@ -1417,6 +1417,16 @@ void CM_TracePointThroughPatchCollide( traceWork_t *tw, const struct patchCollid
 	{	//not gonna do anything anyhow?
 		return;
 	}
+
+	// A point trace can only hit a facet where the line crosses the patch, and that is inside the patch bounds.
+	if ( ( cm_fastFlags & CM_FAST_PATCHBOUNDS ) && tw->isPoint ) {
+		for ( i = 0 ; i < 3 ; i++ ) {
+			if ( tw->bounds[0][i] > pc->bounds[1][i] || tw->bounds[1][i] < pc->bounds[0][i] ) {
+				return;
+			}
+		}
+	}
+
 	// determine the trace's relationship to all planes
 	planes = pc->planes;
 	for ( i = 0 ; i < pc->numPlanes ; i++, planes++ ) {

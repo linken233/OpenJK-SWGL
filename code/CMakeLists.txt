@@ -46,7 +46,7 @@ if(BuildSPEngine)
 		set(SPEngineLibraries "winmm")
 	endif(WIN32)
 	# Defines
-	set(SPEngineDefines ${SharedDefines} "_JK2EXE") # it's called JK2EXE but it really just means Singleplayer Exe
+	set(SPEngineDefines ${SharedDefines} "Q_MATH_INLINE" "_JK2EXE") # it's called JK2EXE but it really just means Singleplayer Exe
 
 	set(SPEngineIncludeDirectories
 		${SPEngineIncludeDirectories}

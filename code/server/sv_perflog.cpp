@@ -14,6 +14,7 @@ extern int		com_frameNumber;
 
 cvar_t	*com_perflog;			// 0 = off, 1 = console, 2 = console and perflog.csv
 static cvar_t	*com_perflogFrames;	// frames per summary
+static cvar_t	*com_perflogSpike;	// ms: a frame slower than this prints one line (0 = off)
 
 #define PERF_MAX_WINDOW		1024
 
@@ -25,6 +26,10 @@ static int			perf_wasOn;
 static double		perf_frameGame;		// game time of the frame in progress
 static double		perf_sumWork, perf_sumSv, perf_sumCl, perf_sumGame;
 static double		perf_maxGame;
+static double		perf_frameScr, perf_frameAudio;	// client phases of the frame in progress
+static int			perf_frameSlices;				// calls into the game in the frame in progress
+static double		perf_frameMaxCall;				// longest call into the game in the frame in progress
+static int			perf_spikeTraces;				// world traces at the end of the previous frame
 static int			perf_gameFrames;	// frames that ran game code
 
 static fileHandle_t	perf_csv;
@@ -42,11 +47,20 @@ typedef struct {
 
 static perfTraceSlot_t	perf_traceSlots[PERF_TRACE_SLOTS];
 static int				perf_traces, perf_sameFrame, perf_samePrev;
+static int				perf_repeatsOn;				// 1 when the repeat statistics ran in this window
+static cvar_t			*com_perflogRepeats;		// 1 = count the traces that repeat an earlier trace
 
 void PerfLog_NoteTrace( const vec3_t start, const vec3_t end, const vec3_t mins, const vec3_t maxs, int contentmask )
 {
 	unsigned long long	h = 1469598103934665603ULL;	// FNV-1a over the bits of the arguments
 	unsigned int		bits[13];
+
+	perf_traces++;
+
+	// The repeat statistics cost a hash and a table probe for every trace: only with com_perflogRepeats 1.
+	if ( !com_perflogRepeats || !com_perflogRepeats->integer ) {
+		return;
+	}
 
 	for ( int i = 0; i < 3; i++ ) {
 		memcpy( &bits[i], &start[i], 4 );
@@ -63,7 +77,7 @@ void PerfLog_NoteTrace( const vec3_t start, const vec3_t end, const vec3_t mins,
 		h = 1;
 	}
 
-	perf_traces++;
+	perf_repeatsOn = 1;
 
 	for ( int probe = 0; probe < PERF_TRACE_PROBES; probe++ ) {
 		perfTraceSlot_t &slot = perf_traceSlots[( h + probe ) & ( PERF_TRACE_SLOTS - 1 )];
@@ -89,6 +103,8 @@ void PerfLog_Init( void )
 {
 	com_perflog = Cvar_Get( "com_perflog", "0", 0 );
 	com_perflogFrames = Cvar_Get( "com_perflogFrames", "30", 0 );
+	com_perflogSpike = Cvar_Get( "com_perflogSpike", "0", 0 );
+	com_perflogRepeats = Cvar_Get( "com_perflogRepeats", "0", 0 );
 }
 
 static const char *PerfLog_ClientStateName( int state )
@@ -148,6 +164,14 @@ void PerfLog_ConnectionTrace( void )
 void PerfLog_AddGame( double ms )
 {
 	perf_frameGame += ms;
+	perf_frameSlices++;
+	perf_frameMaxCall = std::max( perf_frameMaxCall, ms );
+}
+
+// Client phases of CL_Frame: 0 = screen update, 1 = audio update.
+void PerfLog_AddPhase( int phase, double ms )
+{
+	( phase ? perf_frameAudio : perf_frameScr ) += ms;
 }
 
 double PerfLog_Now( void )
@@ -163,6 +187,8 @@ static void PerfLog_Reset( void )
 	perf_gameFrames = 0;
 	perf_frameGame = 0.0;
 	perf_traces = perf_sameFrame = perf_samePrev = 0;
+	perf_repeatsOn = 0;
+	perf_spikeTraces = 0;
 }
 
 static void PerfLog_CountEntities( int *npcs, int *used )
@@ -263,8 +289,12 @@ static void PerfLog_Report( void )
 	}
 
 	if ( perf_traces > 0 ) {
-		Com_Printf( "     world traces/frame %i: same args as earlier this frame %i%%, as the previous frame %i%%\n",
-			perf_traces / n, perf_sameFrame * 100 / perf_traces, perf_samePrev * 100 / perf_traces );
+		if ( perf_repeatsOn ) {
+			Com_Printf( "     world traces/frame %i: same args as earlier this frame %i%%, as the previous frame %i%%\n",
+				perf_traces / n, perf_sameFrame * 100 / perf_traces, perf_samePrev * 100 / perf_traces );
+		} else {
+			Com_Printf( "     world traces/frame %i\n", perf_traces / n );
+		}
 	}
 
 	if ( numRd > 0 ) {
@@ -320,6 +350,8 @@ void PerfLog_EndFrame( double workStart, double svEnd, double clEnd )
 
 	if ( !com_perflog->integer ) {
 		perf_frameGame = 0.0;
+		perf_frameScr = perf_frameAudio = perf_frameMaxCall = 0.0;
+		perf_frameSlices = 0;
 		if ( perf_wasOn ) {
 			perf_wasOn = 0;
 			PerfLog_Reset();
@@ -345,7 +377,16 @@ void PerfLog_EndFrame( double workStart, double svEnd, double clEnd )
 	const double cl = clEnd - svEnd;
 	const double game = perf_frameGame;
 
-	perf_interval[perf_count++] = (float)( clEnd - perf_lastEnd );
+	const double interval = clEnd - perf_lastEnd;
+
+	if ( com_perflogSpike->value > 0.0f && interval > com_perflogSpike->value ) {
+		Com_Printf( "spike %i: %.1f ms | server %.1f (game %.1f in %i calls, longest %.1f) | client %.1f (screen %.1f, audio %.1f) | traces %i\n",
+			com_frameNumber, interval, svMs, game, perf_frameSlices, perf_frameMaxCall, cl, perf_frameScr, perf_frameAudio,
+			perf_traces - perf_spikeTraces );
+	}
+	perf_spikeTraces = perf_traces;
+
+	perf_interval[perf_count++] = (float)interval;
 	perf_lastEnd = clEnd;
 
 	perf_sumWork += work;
@@ -357,6 +398,8 @@ void PerfLog_EndFrame( double workStart, double svEnd, double clEnd )
 		perf_gameFrames++;
 	}
 	perf_frameGame = 0.0;
+	perf_frameScr = perf_frameAudio = perf_frameMaxCall = 0.0;
+	perf_frameSlices = 0;
 
 	if ( perf_count >= window ) {
 		PerfLog_Report();

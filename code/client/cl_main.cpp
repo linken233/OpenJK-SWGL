@@ -878,10 +878,14 @@ void CL_Frame ( int msec,float fractionMsec ) {
 		}
 	} else {
 		// update the screen
+		const double perfScr = PerfLog_Now();
 		SCR_UpdateScreen();
+		PerfLog_AddPhase( 0, PerfLog_Now() - perfScr );
 	}
 	// update audio
+	const double perfAudio = PerfLog_Now();
 	S_Update();
+	PerfLog_AddPhase( 1, PerfLog_Now() - perfAudio );
 
 	// advance local effects for next frame
 	SCR_RunCinematic();

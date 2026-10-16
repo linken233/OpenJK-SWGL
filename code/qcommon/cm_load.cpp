@@ -63,6 +63,9 @@ byte		*cmod_base;
 cvar_t		*cm_noAreas;
 cvar_t		*cm_noCurves;
 cvar_t		*cm_playerCurveClip;
+cvar_t		*cm_fastTrace;
+cvar_t		*cm_verifyTrace;
+int			cm_fastFlags;
 #endif
 
 cmodel_t	box_model;
@@ -316,6 +319,10 @@ void CMod_LoadLeafs (lump_t *l, clipMap_t &cm)
 		out->numLeafBrushes = LittleLong (in->numLeafBrushes);
 		out->firstLeafSurface = LittleLong (in->firstLeafSurface);
 		out->numLeafSurfaces = LittleLong (in->numLeafSurfaces);
+		out->patches = NULL;
+		out->numPatches = 0;
+		out->leafBrushes = NULL;
+		out->numLeafBrushData = 0;
 
 		if (out->cluster >= cm.numClusters)
 			cm.numClusters = out->cluster + 1;
@@ -582,6 +589,81 @@ void CMod_LoadPatches( lump_t *surfs, lump_t *verts, clipMap_t &cm ) {
 	}
 }
 
+/*
+=================
+CM_BuildLeafPatchList
+
+Keeps only the patches of the leaf surfaces, in the same order. Most leaf surfaces are
+planar faces with no collision data, and a leaf can have thousands of them.
+=================
+*/
+static void CM_BuildLeafPatchList( cLeaf_t *leaf, const clipMap_t &cm ) {
+	static cPatch_t	*noPatches[1];
+	static cLeafBrush_t	noBrushes[1];
+	int				k, num = 0;
+
+	// the brushes with sides, with their contents and bounds next to the index
+	for ( k = 0 ; k < leaf->numLeafBrushes ; k++ ) {
+		if ( cm.brushes[ cm.leafbrushes[ leaf->firstLeafBrush + k ] ].numsides ) {
+			num++;
+		}
+	}
+	leaf->numLeafBrushData = num;
+	if ( !num ) {
+		leaf->leafBrushes = noBrushes;
+	} else {
+		leaf->leafBrushes = (cLeafBrush_t *) Z_Malloc( num * sizeof( cLeafBrush_t ), TAG_BSP, qfalse );
+		num = 0;
+		for ( k = 0 ; k < leaf->numLeafBrushes ; k++ ) {
+			const int			brushnum = cm.leafbrushes[ leaf->firstLeafBrush + k ];
+			const cbrush_t		&b = cm.brushes[brushnum];
+
+			if ( b.numsides ) {
+				cLeafBrush_t	&e = leaf->leafBrushes[num++];
+
+				e.brush = brushnum;
+				e.contents = b.contents;
+				VectorCopy( b.bounds[0], e.bounds[0] );
+				VectorCopy( b.bounds[1], e.bounds[1] );
+			}
+		}
+	}
+	num = 0;
+
+	for ( k = 0 ; k < leaf->numLeafSurfaces ; k++ ) {
+		if ( cm.surfaces[ cm.leafsurfaces[ leaf->firstLeafSurface + k ] ] ) {
+			num++;
+		}
+	}
+	leaf->numPatches = num;
+	if ( !num ) {
+		leaf->patches = noPatches;
+		return;
+	}
+	leaf->patches = (cPatch_t **) Z_Malloc( num * sizeof( cPatch_t * ), TAG_BSP, qfalse );
+	num = 0;
+	for ( k = 0 ; k < leaf->numLeafSurfaces ; k++ ) {
+		cPatch_t *patch = cm.surfaces[ cm.leafsurfaces[ leaf->firstLeafSurface + k ] ];
+		if ( patch ) {
+			leaf->patches[num++] = patch;
+		}
+	}
+}
+
+void CM_BuildLeafPatchLists( clipMap_t &cm ) {
+	int		i;
+
+	for ( i = 0 ; i < cm.numLeafs ; i++ ) {
+		CM_BuildLeafPatchList( &cm.leafs[i], cm );
+	}
+	for ( i = 0 ; i < cm.numSubModels ; i++ ) {
+		if ( i == 0 && &cm == &cmg ) {
+			continue;	// the world model has no leaf data
+		}
+		CM_BuildLeafPatchList( &cm.cmodels[i].leaf, cm );
+	}
+}
+
 //==================================================================
 
 #ifdef BSPC
@@ -654,6 +736,8 @@ static void CM_LoadMap_Actual( const char *name, qboolean clientload, int *check
 	cm_noAreas = Cvar_Get ("cm_noAreas", "0", CVAR_CHEAT);
 	cm_noCurves = Cvar_Get ("cm_noCurves", "0", CVAR_CHEAT);
 	cm_playerCurveClip = Cvar_Get ("cm_playerCurveClip", "1", CVAR_ARCHIVE_ND|CVAR_CHEAT );
+	cm_fastTrace = Cvar_Get ("cm_fastTrace", "15", 0 );
+	cm_verifyTrace = Cvar_Get ("cm_verifyTrace", "0", 0 );
 #endif
 	Com_DPrintf( "CM_LoadMap( %s, %i )\n", name, clientload );
 
@@ -785,6 +869,7 @@ static void CM_LoadMap_Actual( const char *name, qboolean clientload, int *check
 		CMod_LoadEntityString (&header.lumps[LUMP_ENTITIES], cm, name );
 		CMod_LoadVisibility( &header.lumps[LUMP_VISIBILITY], cm );
 		CMod_LoadPatches( &header.lumps[LUMP_SURFACES], &header.lumps[LUMP_DRAWVERTS], cm );
+		CM_BuildLeafPatchLists( cm );
 
 		TotalSubModels += cm.numSubModels;
 

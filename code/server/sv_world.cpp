@@ -25,6 +25,9 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 #include "../server/exe_headers.h"
 #include "../qcommon/cm_local.h"
+#if defined( _M_X64 ) || defined( __SSE2__ )
+	#include <emmintrin.h>
+#endif
 
  /*
 Ghoul2 Insert Start
@@ -85,11 +88,16 @@ them, which prevents having to deal with multiple fragments of a single entity.
 ===============================================================================
 */
 
+// The linked entities of a sector, in link order: the last one linked is the first one a query meets.
+// The box of each entity is copied when it is linked. box holds six arrays of maxEnts floats
+// (absmin x, y, z, absmax x, y, z), so that the area query tests four boxes at a time.
 typedef struct worldSector_s {
 	int		axis;		// -1 = leaf node
 	float	dist;
 	struct worldSector_s	*children[2];
-	svEntity_t	*entities;
+	float		*box;
+	gentity_t	**gents;
+	int		numEnts, maxEnts;
 } worldSector_t;
 
 #define	AREA_DEPTH	8
@@ -150,6 +158,10 @@ void SV_ClearWorld( void ) {
 	clipHandle_t	h;
 	vec3_t			mins, maxs;
 
+	for ( int i = 0 ; i < sv_numworldSectors ; i++ ) {
+		free( sv_worldSectors[i].box );
+		free( sv_worldSectors[i].gents );
+	}
 	memset( sv_worldSectors, 0, sizeof(sv_worldSectors) );
 	sv_numworldSectors = 0;
 
@@ -168,7 +180,6 @@ SV_UnlinkEntity
 */
 void SV_UnlinkEntity( gentity_t *gEnt ) {
 	svEntity_t		*ent;
-	svEntity_t		*scan;
 	worldSector_t	*ws;
 
 	// this should never be called with a freed entity
@@ -186,14 +197,18 @@ void SV_UnlinkEntity( gentity_t *gEnt ) {
 	}
 	ent->worldSector = NULL;
 
-	if ( ws->entities == ent ) {
-		ws->entities = ent->nextEntityInWorldSector;
-		return;
-	}
+	// the entity is usually one of the last linked: scan from the end and keep the order
+	for ( int i = ws->numEnts - 1 ; i >= 0 ; i-- ) {
+		if ( ws->gents[i] == gEnt ) {
+			const int tail = ws->numEnts - i - 1;
 
-	for ( scan = ws->entities ; scan ; scan = scan->nextEntityInWorldSector ) {
-		if ( scan->nextEntityInWorldSector == ent ) {
-			scan->nextEntityInWorldSector = ent->nextEntityInWorldSector;
+			memmove( &ws->gents[i], &ws->gents[i + 1], tail * sizeof( ws->gents[0] ) );
+			for ( int a = 0 ; a < 6 ; a++ ) {
+				float *arr = ws->box + a * ws->maxEnts;
+
+				memmove( &arr[i], &arr[i + 1], tail * sizeof( float ) );
+			}
+			ws->numEnts--;
 			return;
 		}
 	}
@@ -359,8 +374,29 @@ void SV_LinkEntity( gentity_t *gEnt ) {
 
 	// link it in
 	ent->worldSector = node;
-	ent->nextEntityInWorldSector = node->entities;
-	node->entities = ent;
+	if ( node->numEnts == node->maxEnts ) {
+		const int newMax = node->maxEnts ? node->maxEnts * 2 : 8;	// a multiple of four
+		float *newBox = (float *)malloc( 6 * newMax * sizeof( float ) );
+
+		for ( int a = 0 ; a < 6 ; a++ ) {
+			if ( node->numEnts ) {
+				memcpy( newBox + a * newMax, node->box + a * node->maxEnts, node->numEnts * sizeof( float ) );
+			}
+		}
+		free( node->box );
+		node->box = newBox;
+		node->gents = (gentity_t **)realloc( node->gents, newMax * sizeof( gentity_t * ) );
+		node->maxEnts = newMax;
+	}
+	{
+		const int n = node->numEnts++;
+
+		for ( int a = 0 ; a < 3 ; a++ ) {
+			node->box[a * node->maxEnts + n] = gEnt->absmin[a];
+			node->box[( 3 + a ) * node->maxEnts + n] = gEnt->absmax[a];
+		}
+		node->gents[n] = gEnt;
+	}
 
 	gEnt->linked = qtrue;
 }
@@ -390,30 +426,63 @@ SV_AreaEntities_r
 ====================
 */
 void SV_AreaEntities_r( worldSector_t *node, areaParms_t *ap ) {
-	svEntity_t	*check, *next;
-	gentity_t	*gcheck;
+	// the last linked entity comes first, as in a linked list that inserts at its head
+	const int numEnts = node->numEnts;
 
-	for ( check = node->entities  ; check ; check = next ) {
-		next = check->nextEntityInWorldSector;
+	if ( numEnts ) {
+		const int	stride = node->maxEnts;
+		const float	*box = node->box;
+#if defined( _M_X64 ) || defined( __SSE2__ )
+		// four boxes per step: the same compares as the scalar test below (false for NaN)
+		const __m128 maxs0 = _mm_set1_ps( ap->maxs[0] ), maxs1 = _mm_set1_ps( ap->maxs[1] ), maxs2 = _mm_set1_ps( ap->maxs[2] );
+		const __m128 mins0 = _mm_set1_ps( ap->mins[0] ), mins1 = _mm_set1_ps( ap->mins[1] ), mins2 = _mm_set1_ps( ap->mins[2] );
 
-		gcheck = SV_GEntityForSvEntity( check );
+		for ( int base = ( numEnts - 1 ) & ~3 ; base >= 0 ; base -= 4 ) {
+			__m128 reject = _mm_cmpgt_ps( _mm_loadu_ps( box + base ), maxs0 );
 
-		if ( gcheck->absmin[0] > ap->maxs[0]
-		|| gcheck->absmin[1] > ap->maxs[1]
-		|| gcheck->absmin[2] > ap->maxs[2]
-		|| gcheck->absmax[0] < ap->mins[0]
-		|| gcheck->absmax[1] < ap->mins[1]
-		|| gcheck->absmax[2] < ap->mins[2]) {
-			continue;
+			reject = _mm_or_ps( reject, _mm_cmpgt_ps( _mm_loadu_ps( box + stride + base ), maxs1 ) );
+			reject = _mm_or_ps( reject, _mm_cmpgt_ps( _mm_loadu_ps( box + 2 * stride + base ), maxs2 ) );
+			reject = _mm_or_ps( reject, _mm_cmplt_ps( _mm_loadu_ps( box + 3 * stride + base ), mins0 ) );
+			reject = _mm_or_ps( reject, _mm_cmplt_ps( _mm_loadu_ps( box + 4 * stride + base ), mins1 ) );
+			reject = _mm_or_ps( reject, _mm_cmplt_ps( _mm_loadu_ps( box + 5 * stride + base ), mins2 ) );
+
+			int hit = ~_mm_movemask_ps( reject ) & 15;
+			if ( base + 4 > numEnts ) {
+				hit &= ( 1 << ( numEnts - base ) ) - 1;	// lanes past the last entity
+			}
+
+			for ( int lane = 3 ; lane >= 0 ; lane-- ) {
+				if ( !( hit & ( 1 << lane ) ) ) {
+					continue;
+				}
+				if ( ap->count == ap->maxcount ) {
+					Com_DPrintf ("SV_AreaEntities: reached maxcount (%d)\n",ap->maxcount);
+					return;
+				}
+				ap->list[ap->count] = node->gents[base + lane];
+				ap->count++;
+			}
 		}
+#else
+		for ( int i = numEnts - 1 ; i >= 0 ; i-- ) {
+			if ( box[i] > ap->maxs[0]
+			|| box[stride + i] > ap->maxs[1]
+			|| box[2 * stride + i] > ap->maxs[2]
+			|| box[3 * stride + i] < ap->mins[0]
+			|| box[4 * stride + i] < ap->mins[1]
+			|| box[5 * stride + i] < ap->mins[2]) {
+				continue;
+			}
 
-		if ( ap->count == ap->maxcount ) {
-			Com_DPrintf ("SV_AreaEntities: reached maxcount (%d)\n",ap->maxcount);
-			return;
+			if ( ap->count == ap->maxcount ) {
+				Com_DPrintf ("SV_AreaEntities: reached maxcount (%d)\n",ap->maxcount);
+				return;
+			}
+
+			ap->list[ap->count] = node->gents[i];
+			ap->count++;
 		}
-
-		ap->list[ap->count] = gcheck;
-		ap->count++;
+#endif
 	}
 
 	if (node->axis == -1) {
@@ -426,6 +495,55 @@ void SV_AreaEntities_r( worldSector_t *node, areaParms_t *ap ) {
 	}
 	if ( ap->mins[node->axis] < node->dist ) {
 		SV_AreaEntities_r ( node->children[1], ap );
+	}
+}
+
+/*
+====================
+SV_AreaEntitiesVerify
+
+cm_verifyTrace 1: runs the query again on the live entity boxes, one entity at a time, and
+reports a different list.
+====================
+*/
+static void SV_AreaEntitiesRef( const worldSector_t *node, const vec3_t mins, const vec3_t maxs, gentity_t **list, int *count, int maxcount ) {
+	for ( int i = node->numEnts - 1 ; i >= 0 ; i-- ) {
+		const gentity_t *g = node->gents[i];
+
+		if ( g->absmin[0] > maxs[0] || g->absmin[1] > maxs[1] || g->absmin[2] > maxs[2]
+		|| g->absmax[0] < mins[0] || g->absmax[1] < mins[1] || g->absmax[2] < mins[2] ) {
+			continue;
+		}
+		if ( *count == maxcount ) {
+			return;
+		}
+		list[( *count )++] = node->gents[i];
+	}
+	if ( node->axis == -1 ) {
+		return;
+	}
+	if ( maxs[node->axis] > node->dist ) {
+		SV_AreaEntitiesRef( node->children[0], mins, maxs, list, count, maxcount );
+	}
+	if ( mins[node->axis] < node->dist ) {
+		SV_AreaEntitiesRef( node->children[1], mins, maxs, list, count, maxcount );
+	}
+}
+
+static void SV_AreaEntitiesVerify( const vec3_t mins, const vec3_t maxs, gentity_t **elist, int count, int maxcount ) {
+	static gentity_t	*ref[MAX_GENTITIES];
+	static int			numQueries, numDiff;
+	int					refCount = 0;
+
+	SV_AreaEntitiesRef( sv_worldSectors, mins, maxs, ref, &refCount, maxcount < MAX_GENTITIES ? maxcount : MAX_GENTITIES );
+	numQueries++;
+	if ( refCount != count || memcmp( ref, elist, count * sizeof( ref[0] ) ) ) {
+		if ( ++numDiff <= 20 ) {
+			Com_Printf( "cm_verify: AreaEntities DIFFERENT %i entities, reference %i\n", count, refCount );
+		}
+	}
+	if ( numQueries % 20000 == 0 ) {
+		Com_Printf( "cm_verify: area queries %i, different %i\n", numQueries, numDiff );
 	}
 }
 
@@ -445,6 +563,10 @@ int SV_AreaEntities( const vec3_t mins, const vec3_t maxs, gentity_t **elist, in
 
 	SV_AreaEntities_r( sv_worldSectors, &ap );
 
+	if ( cm_verifyTrace && cm_verifyTrace->integer ) {
+		SV_AreaEntitiesVerify( mins, maxs, elist, ap.count, maxcount );
+	}
+
 	return ap.count;
 }
 
@@ -458,15 +580,11 @@ SV_SectorList_f
 void SV_SectorList_f( void ) {
 	int				i, c;
 	worldSector_t	*sec;
-	svEntity_t		*ent;
 
 	for ( i = 0 ; i < AREA_NODES ; i++ ) {
 		sec = &sv_worldSectors[i];
 
-		c = 0;
-		for ( ent = sec->entities ; ent ; ent = ent->nextEntityInWorldSector ) {
-			c++;
-		}
+		c = sec->numEnts;
 		Com_Printf( "sector %i: %i entities\n", i, c );
 	}
 }
@@ -689,7 +807,11 @@ void SV_ClipMoveToEntities( moveclip_t *clip ) {
 		//ALSO: 2 players can be standing next to each other and this function will
 		//think they're in each other!!!
 		}
-		oldTrace = clip->trace;
+		// oldTrace is only read by the ghoul2 collision below, and a trace_t is over 1 KB
+		const bool g2Collide = clip->eG2TraceType != G2_NOCOLLIDE && touch->ghoul2.size() && !(touch->contents & CONTENTS_LIGHTSABER);
+		if ( g2Collide ) {
+			oldTrace = clip->trace;
+		}
 
 		if ( trace.allsolid )
 		{

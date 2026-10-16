@@ -21,7 +21,7 @@ if(NOT InOpenJK)
 	message(FATAL_ERROR "Use the top-level cmake script!")
 endif(NOT InOpenJK)
 
-set(SPGameDefines ${SharedDefines} "SP_GAME")
+set(SPGameDefines ${SharedDefines} "Q_MATH_INLINE" "SP_GAME")
 set(SPGameIncludeDirectories
 	${SharedDir}
 	${SPDir}

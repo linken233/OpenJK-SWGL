@@ -278,14 +278,18 @@ static gtimer_t *TIMER_GetNew(int num, const char *identifier)
 	gtimer_t *p = g_timers[num];
 
 	// Search for an existing timer with this name
-	while (p)
+	if (p)
 	{
-		if (p->id == identifier)
-		{ // Found it
-			return p;
-		}
+		const hstring id(identifier);	// one string lookup, not one for each timer of the list
+		while (p)
+		{
+			if (p->id == id)
+			{ // Found it
+				return p;
+			}
 
-		p = p->next;
+			p = p->next;
+		}
 	}
 
 	// No existing timer with this name was found, so grab one from the free list
@@ -307,14 +311,18 @@ gtimer_t *TIMER_GetExisting(int num, const char *identifier)
 {
 	gtimer_t *p = g_timers[num];
 
-	while (p)
+	if (p)
 	{
-		if (p->id == identifier)
-		{ // Found it
-			return p;
-		}
+		const hstring id(identifier);	// one string lookup, not one for each timer of the list
+		while (p)
+		{
+			if (p->id == id)
+			{ // Found it
+				return p;
+			}
 
-		p = p->next;
+			p = p->next;
+		}
 	}
 
 	return NULL;
