@@ -371,7 +371,13 @@ A function that reads the weather state flushes the queue first. Main thread onl
 static char		weQueue[WE_QUEUE_SIZE][WE_COMMAND_SIZE];
 static int		weQueueCount = 0;
 static bool		weFlushing = false;
+static vec3_t	weViewOrigin = { 0.0f, 0.0f, 0.0f };
 static std::mutex	weWindMutex;	// the backend updates the wind, the game reads it
+
+void R_WorldEffectsSetViewOrigin(const vec3_t origin)
+{
+	VectorCopy(origin, weViewOrigin);
+}
 
 static void WE_ExecuteCommand(const char *command);
 
@@ -950,7 +956,7 @@ bool R_IsShaking(vec3_t pos)
 	WE_SyncQueued();
 	if (!pos)
 	{
-		pos = tr.refdef.vieworg;	// frontend value, the backend may run on its own thread
+		pos = weViewOrigin;	// origin of the last 3D view, set by the frontend
 	}
 	return (mOutside.mOutsideShake && mOutside.PointOutside(pos));
 }

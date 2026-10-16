@@ -3114,6 +3114,7 @@ void	R_BackendCvarDrain( void );
 extern int	r_numVideoMaps;
 qboolean RB_WorldEffectsNeedSync( void );
 void	R_WorldEffectsFlushQueue( void );
+void	R_WorldEffectsSetViewOrigin( const vec3_t origin );
 qboolean R_RenderThreadBusy( void );
 qboolean vkpt_physical_sky_load_pending( void );
 void	R_G2_SwapRenderSurfHeap( void );

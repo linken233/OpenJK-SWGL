@@ -1775,6 +1775,7 @@ void R_RenderView( const viewParms_t *parms ) {
 	if ( tr.world && !( tr.refdef.rdflags & RDF_NOWORLDMODEL ) )
 	{
 		R_SetViewFogIndex();
+		R_WorldEffectsSetViewOrigin( tr.viewParms.ori.origin );
 	}
 
 	R_GenerateDrawSurfs();
