@@ -115,6 +115,21 @@ zone_t	TheZone = {};
 
 
 
+// The renderer turns this on while its render thread runs. The zone then takes a lock.
+static bool					gbZoneThreadSafe = false;
+static std::recursive_mutex	gZoneMutex;
+static std::thread::id		gZoneMainThread;
+
+class ZoneLock
+{
+	bool mLocked;
+public:
+	ZoneLock() : mLocked(gbZoneThreadSafe) { if (mLocked) gZoneMutex.lock(); }
+	~ZoneLock() { Unlock(); }
+	void Unlock() { if (mLocked) { gZoneMutex.unlock(); mLocked = false; } }
+	void Relock() { if (gbZoneThreadSafe && !mLocked) { gZoneMutex.lock(); mLocked = true; } }
+};
+
 // Scans through the linked list of mallocs and makes sure no data has been overwritten
 
 int Z_Validate(void)
@@ -124,6 +139,8 @@ int Z_Validate(void)
 	{
 		return ret;
 	}
+
+	ZoneLock zoneLock;
 
 	zoneHeader_t *pMemory = TheZone.Header.pNext;
 	while (pMemory)
@@ -249,27 +266,12 @@ char *_D_Z_Filename_WithoutPath(const char *psFilename)
 #include "../rd-common/tr_public.h"	// sorta hack sorta not
 extern refexport_t re;
 
-// The renderer turns this on while its render thread runs. The zone then takes a lock.
-static bool					gbZoneThreadSafe = false;
-static std::recursive_mutex	gZoneMutex;
-static std::thread::id		gZoneMainThread;
-
 // Call on the main thread. The thread that calls this is the main thread.
 void Z_SetThreadSafe(qboolean bOn)
 {
 	gZoneMainThread = std::this_thread::get_id();
 	gbZoneThreadSafe = (bOn != qfalse);
 }
-
-class ZoneLock
-{
-	bool mLocked;
-public:
-	ZoneLock() : mLocked(gbZoneThreadSafe) { if (mLocked) gZoneMutex.lock(); }
-	~ZoneLock() { Unlock(); }
-	void Unlock() { if (mLocked) { gZoneMutex.unlock(); mLocked = false; } }
-	void Relock() { if (gbZoneThreadSafe && !mLocked) { gZoneMutex.lock(); mLocked = true; } }
-};
 
 #ifdef DEBUG_ZONE_ALLOCS
 void *_D_Z_Malloc ( int iSize, memtag_t eTag, qboolean bZeroit, const char *psFile, int iLine)
@@ -469,6 +471,7 @@ int openjk_minizip_free(void *to_free)
 //
 void Z_MorphMallocTag( void *pvAddress, memtag_t eDesiredTag )
 {
+	ZoneLock zoneLock;
 	zoneHeader_t *pMemory = ((zoneHeader_t *)pvAddress) - 1;
 
 	if (pMemory->iMagic != ZONE_MAGIC)
@@ -545,6 +548,7 @@ static int Zone_FreeBlock(zoneHeader_t *pMemory)
 // returns block size if so
 qboolean Z_IsFromZone(const void *pvAddress, memtag_t eTag)
 {
+	ZoneLock zoneLock;
 	const zoneHeader_t *pMemory = ((const zoneHeader_t *)pvAddress) - 1;
 #if 1	//debugging double free
 	if (pMemory->iMagic == INT_ID('F','R','E','E'))
@@ -572,6 +576,7 @@ qboolean Z_IsFromZone(const void *pvAddress, memtag_t eTag)
 //
 int Z_Size(void *pvAddress)
 {
+	ZoneLock zoneLock;
 	zoneHeader_t *pMemory = ((zoneHeader_t *)pvAddress) - 1;
 
 	if (pMemory->eTag == TAG_STATIC)
@@ -592,6 +597,7 @@ int Z_Size(void *pvAddress)
 #ifdef DEBUG_ZONE_ALLOCS
 void Z_Label(const void *pvAddress, const char *psLabel)
 {
+	ZoneLock zoneLock;
 	zoneHeader_t *pMemory = ((zoneHeader_t *)pvAddress) - 1;
 
 	if (pMemory->eTag == TAG_STATIC)
@@ -667,6 +673,7 @@ int Z_Free(void *pvAddress)
 
 int Z_MemSize(memtag_t eTag)
 {
+	ZoneLock zoneLock;
 	return TheZone.Stats.iSizesPerTag[eTag];
 }
 
