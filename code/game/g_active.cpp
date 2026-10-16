@@ -1441,8 +1441,13 @@ void	G_TouchTriggersLerped( gentity_t *ent ) {
 	assert( (dist<1024) && "insane distance in G_TouchTriggersLerped!" );
 #endif// _DEBUG
 
-	if ( dist > 1024 )
+	// A NaN dist fails every compare, so the step loop below never ends.
+	if ( !( dist <= 1024 ) )
 	{
+		if ( dist != dist )
+		{
+			gi.Printf( S_COLOR_RED "G_TouchTriggersLerped: NaN origin on entity %d (%s %s)\n", ent->s.number, ent->classname, ent->NPC_type ? ent->NPC_type : "" );
+		}
 		return;
 	}
 	memset (touched, qfalse, sizeof(touched) );
