@@ -1269,7 +1269,9 @@ void R_ModelInit( void )
 	tr.numModels = 0;
 
 	// every ghoul2 instance's resolved model pointers now dangle - see G2_SetupModelPointers
-	tr.modelEpoch++;
+	// The counter survives R_Init, which clears tr: static caches keyed on the epoch never see an old value again.
+	static int s_modelEpoch;
+	tr.modelEpoch = ++s_modelEpoch;
 
 	CModelCache->DeleteAll();
 

@@ -1318,6 +1318,15 @@ static void R_SortLitsurfs( dlight_t *dl )
 	dl->head = tape[base].first;
 }
 
+static void R_SortLitsurfsRange( int begin, int end, void *ctx )
+{
+	dlight_t **lights = (dlight_t **)ctx;
+
+	for (int i = begin; i < end; i++) {
+		R_SortLitsurfs(lights[i]);
+	}
+}
+
 /*
 =================
 R_AddLitSurf
@@ -1483,15 +1492,21 @@ void R_SortDrawSurfs( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 
 #ifdef USE_PMLIGHT
 	{
-		dlight_t *dl;
+		static dlight_t	*sortLights[MAX_REAL_DLIGHTS];
+		int				numSortLights = 0;
 
 		// all the lit surfaces are in a single queue
 		// but each light's surfaces are sorted within its subsection
+		// (the lists of two lights share no node: one job per light)
 		for (i = 0; i < tr.refdef.num_dlights; ++i) {
-			dl = &tr.refdef.dlights[i];
-			if (dl->head) {
-				R_SortLitsurfs(dl);
+			if (tr.refdef.dlights[i].head) {
+				sortLights[numSortLights++] = &tr.refdef.dlights[i];
 			}
+		}
+		if (numSortLights > 1 && ri.Jobs_ParallelFor) {
+			ri.Jobs_ParallelFor(numSortLights, 1, R_SortLitsurfsRange, sortLights);
+		} else {
+			R_SortLitsurfsRange(0, numSortLights, sortLights);
 		}
 	}
 #endif // USE_PMLIGHT

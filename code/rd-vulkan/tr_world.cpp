@@ -453,44 +453,47 @@ static void R_AddLitSurface( msurface_t *surf, const dlight_t *light )
 }
 
 
-static void R_RecursiveLightNode( const mnode_t *node )
-{
-	qboolean	children[2];
-	msurface_t	**mark;
-	msurface_t	*surf;
-	float d;
-	int c;
+// World lit surfaces of one dlight. A job finds them without changing shared state.
+// R_AddWorldSurfaces adds them to the lit list in dlight order, so the list is the same as a serial pass.
+typedef struct {
+	dlight_t					*light;
+	std::vector<msurface_t *>	surfs;
+	std::vector<uint32_t>		seen;	// one bit per world surface; a job owns it, no thread local storage
+	int							culls, leafs;
+} litJob_t;
 
+static litJob_t	s_litJobs[MAX_REAL_DLIGHTS];	// a view has at most as many dlights as backEndData->dlights
+
+static void R_LitJobNode( const mnode_t *node, const dlight_t *light, litJob_t *job, uint32_t *seen )
+{
 	do {
-		// if the node wasn't marked as potentially visible, exit
 		if (node->visframe != tr.visCount)
 			return;
 
 		if (node->contents != CONTENTS_NODE)
 			break;
 
-		children[0] = children[1] = qfalse;
-
-		d = DotProduct(tr.light->origin, node->plane->normal) - node->plane->dist;
-		if (d > -tr.light->radius) {
+		qboolean children[2] = { qfalse, qfalse };
+		float d = DotProduct(light->origin, node->plane->normal) - node->plane->dist;
+		if (d > -light->radius) {
 			children[0] = qtrue;
 		}
-		if (d < tr.light->radius) {
+		if (d < light->radius) {
 			children[1] = qtrue;
 		}
 
-		if (tr.light->linear) {
-			d = DotProduct(tr.light->origin2, node->plane->normal) - node->plane->dist;
-			if (d > -tr.light->radius) {
+		if (light->linear) {
+			d = DotProduct(light->origin2, node->plane->normal) - node->plane->dist;
+			if (d > -light->radius) {
 				children[0] = qtrue;
 			}
-			if (d < tr.light->radius) {
+			if (d < light->radius) {
 				children[1] = qtrue;
 			}
 		}
 
 		if (children[0] && children[1]) {
-			R_RecursiveLightNode(node->children[0]);
+			R_LitJobNode(node->children[0], light, job, seen);
 			node = node->children[1];
 		}
 		else if (children[0]) {
@@ -502,19 +505,43 @@ static void R_RecursiveLightNode( const mnode_t *node )
 		else {
 			return;
 		}
-
 	} while (1);
 
-	tr.pc.c_lit_leafs++;
+	job->leafs++;
 
-	// add the individual surfaces
-	c = node->nummarksurfaces;
-	mark = node->firstmarksurface;
-	while (c--) {
-		// the surface may have already been added if it spans multiple leafs
-		surf = *mark;
-		R_AddLitSurface(surf, tr.light);
-		mark++;
+	msurface_t **mark = node->firstmarksurface;
+	for (int c = node->nummarksurfaces; c--; mark++) {
+		msurface_t *surf = *mark;
+
+		if (surf->vcVisible != tr.viewCount || surf->shader->lightingStage < 0)
+			continue;
+
+		// a surface of several leafs is lit once per dlight
+		const size_t idx = surf - tr.world->surfaces;
+		if (seen[idx >> 5] & (1u << (idx & 31)))
+			continue;
+		seen[idx >> 5] |= 1u << (idx & 31);
+
+		if (R_LightCullSurface(surf->data, light)) {
+			job->culls++;
+			continue;
+		}
+
+		job->surfs.push_back(surf);
+	}
+}
+
+static void R_LitJobRange( int begin, int end, void *ctx )
+{
+	const size_t words = ((size_t)tr.world->numsurfaces >> 5) + 1;
+
+	for (int i = begin; i < end; i++) {
+		litJob_t *job = &s_litJobs[i];
+
+		job->seen.assign(words, 0);
+		job->surfs.clear();
+		job->culls = job->leafs = 0;
+		R_LitJobNode(tr.world->nodes, job->light, job, job->seen.data());
 	}
 }
 #endif // USE_PMLIGHT
@@ -1472,6 +1499,7 @@ void R_AddWorldSurfaces ( void ) {
 	// instead of having copypasted versions for both world and local cases
 
 	R_TransformDlights(tr.viewParms.num_dlights, tr.viewParms.dlights, &tr.viewParms.world);
+	int numLitJobs = 0;
 	for (i = 0; i < tr.viewParms.num_dlights; i++)
 	{
 		dl = &tr.viewParms.dlights[i];
@@ -1481,9 +1509,26 @@ void R_AddWorldSurfaces ( void ) {
 			continue;
 		}
 		tr.pc.c_light_cull_in++;
+		s_litJobs[numLitJobs++].light = dl;
+	}
+
+	if (numLitJobs > 1 && ri.Jobs_ParallelFor) {
+		ri.Jobs_ParallelFor(numLitJobs, 1, R_LitJobRange, NULL);
+	} else {
+		R_LitJobRange(0, numLitJobs, NULL);
+	}
+
+	for (i = 0; i < numLitJobs; i++)
+	{
+		const litJob_t *job = &s_litJobs[i];
+
 		tr.lightCount++;
-		tr.light = dl;
-		R_RecursiveLightNode(tr.world->nodes);
+		tr.light = job->light;
+		tr.pc.c_lit_leafs += job->leafs;
+		tr.pc.c_lit_culls += job->culls;
+		for (size_t s = 0; s < job->surfs.size(); s++) {
+			R_AddLitSurf(job->surfs[s]->data, job->surfs[s]->shader, job->surfs[s]->fogIndex);
+		}
 	}
 #endif // USE_PMLIGHT
 }

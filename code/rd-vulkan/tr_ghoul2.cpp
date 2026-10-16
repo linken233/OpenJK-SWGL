@@ -2294,6 +2294,50 @@ void G2API_SetSurfaceOnOffFromSkin (CGhoul2Info *ghlInfo, qhandle_t renderSkin)
 }
 
 
+/*
+=================
+R_SkinSurfaceShader
+
+The shader a skin gives to the surface called name, or the default shader. Looking for
+the name in the skin costs a string compare per skin surface, for every surface of every
+character in every frame, so the index that matched is remembered.
+=================
+*/
+shader_t *R_SkinSurfaceShader( const skin_t *skin, const char *name )
+{
+	struct skinLookup_t {
+		const skin_t	*skin;
+		const char		*name;
+		int				epoch, numSurfaces, index;
+	};
+	static skinLookup_t	cache[4096];
+
+	const size_t h = ( ( (size_t)skin >> 4 ) * 31 + ( (size_t)name >> 3 ) ) & ( ARRAY_LEN( cache ) - 1 );
+	skinLookup_t *c = &cache[h];
+
+	if ( c->skin != skin || c->name != name || c->epoch != tr.modelEpoch || c->numSurfaces != skin->numSurfaces ) {
+		c->skin = skin;
+		c->name = name;
+		c->epoch = tr.modelEpoch;
+		c->numSurfaces = skin->numSurfaces;
+		c->index = -1;
+		for ( int j = 0 ; j < skin->numSurfaces ; j++ ) {
+			// the names have both been lowercased
+			if ( !strcmp( skin->surfaces[j]->name, name ) ) {
+				c->index = j;
+				break;
+			}
+		}
+	}
+	else if ( c->index >= 0 && strcmp( skin->surfaces[c->index]->name, name ) ) {
+		// the strings behind the pointers changed: look again
+		c->skin = NULL;
+		return R_SkinSurfaceShader( skin, name );
+	}
+
+	return c->index >= 0 ? (shader_t *)skin->surfaces[c->index]->shader : tr.defaultShader;
+}
+
 void RenderSurfaces(CRenderSurface &RS) //also ended up just ripping right from SP.
 {
 #ifdef G2_PERFORMANCE_ANALYSIS
@@ -2334,19 +2378,8 @@ void RenderSurfaces(CRenderSurface &RS) //also ended up just ripping right from 
 		}
 		else if ( RS.skin )
 		{
-			int		j;
-
 			// match the surface name to something in the skin file
-			shader = tr.defaultShader;
-			for ( j = 0 ; j < RS.skin->numSurfaces ; j++ )
-			{
-				// the names have both been lowercased
-				if ( !strcmp( RS.skin->surfaces[j]->name, surfInfo->name ) )
-				{
-					shader = (shader_t*)RS.skin->surfaces[j]->shader;
-					break;
-				}
-			}
+			shader = R_SkinSurfaceShader( RS.skin, surfInfo->name );
 		}
 		else
 		{

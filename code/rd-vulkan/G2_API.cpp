@@ -2045,9 +2045,35 @@ void G2API_CollisionDetect(CCollisionRecord *collRecMap, CGhoul2Info_v &ghoul2, 
 #endif
 
 		ri.GetG2VertSpaceServer()->ResetHeap();
-		// now sort the resulting array of collision records so they are distance ordered
-		qsort( collRecMap, MAX_G2_COLLISIONS,
-			sizeof( CCollisionRecord ), QsortDistance );
+		// Now sort the resulting array of collision records so they are distance ordered. The records in use come first,
+		// so the sort changes nothing when they already rise in distance and stay below the distance of the unused ones.
+		{
+			int		numUsed = 0;
+			float	minUnused = FLT_MAX;
+			bool	sorted = true;
+
+			for ( int z = 0; z < MAX_G2_COLLISIONS; z++ )
+			{
+				if ( collRecMap[z].mEntityNum != -1 )
+				{
+					if ( numUsed != z || ( z > 0 && !( collRecMap[z - 1].mDistance < collRecMap[z].mDistance ) ) )
+					{
+						sorted = false;
+						break;
+					}
+					numUsed++;
+				}
+				else if ( collRecMap[z].mDistance < minUnused )
+				{
+					minUnused = collRecMap[z].mDistance;
+				}
+			}
+			if ( sorted && numUsed > 0 && numUsed < MAX_G2_COLLISIONS && !( collRecMap[numUsed - 1].mDistance < minUnused ) )
+				sorted = false;
+
+			if ( !sorted )
+				qsort( collRecMap, MAX_G2_COLLISIONS, sizeof( CCollisionRecord ), QsortDistance );
+		}
 		G2ANIM(ghoul2,"G2API_CollisionDetect");
 	}
 }

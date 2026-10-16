@@ -123,6 +123,14 @@ struct g2CollisionVerts_t
 	std::vector<float>		verts;			// 5 floats per vertex: xyz, st
 	std::vector<intptr_t>	surfVerts;		// per surface index: pointer into verts, or 0
 	std::vector<float>		surfBounds;		// per surface index: mins xyz, maxs xyz
+
+	// A surface is skinned when a trace first reaches its conservative box (G2_TraceSurfaces).
+	int						epoch = -1;		// tr.modelEpoch when built
+	class CBoneCache		*boneCache = nullptr;
+	std::vector<uint8_t>	surfState;		// per surface index: 0 not reached, 1 conservative box ready, 2 skinned
+	std::vector<const mdxmSurface_t *>	surfDef;	// per surface index: the surface
+	std::vector<float *>	surfOut;		// per surface index: where its skinned vertices go
+	std::vector<float>		surfCons;		// per surface index: conservative mins xyz, maxs xyz
 };
 g2CollisionVerts_t *G2_GetCollisionVerts( CBoneCache *boneCache );
 int G2_GetBoneCacheTouch( const CBoneCache *boneCache );
