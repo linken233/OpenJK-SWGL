@@ -27,4 +27,18 @@ bool	Jobs_IsWorkerThread( void );
 // called from a worker, or when both job slots are taken.
 void	Jobs_ParallelFor( int count, int grain, jobRangeFn_t fn, void *ctx );
 
+// Errors and prints of a worker. Com_Error and Com_Printf call these on a worker thread.
+// Jobs_WorkerError records the error (first one wins), stops the job and does not return. Jobs_ParallelFor raises it
+// on the thread that called it, after all workers left the job: through the hook of that thread, else Com_Error.
+// Jobs_QueuePrint keeps a message; the main thread prints the queue in Jobs_DrainPrints.
+typedef void ( *jobErrorHook_t )( int level, const char *text );
+void	Jobs_SetThreadErrorHook( jobErrorHook_t hook );
+#if defined( _MSC_VER )
+__declspec( noreturn ) void Jobs_WorkerError( int level, const char *text );
+#else
+void	Jobs_WorkerError( int level, const char *text ) __attribute__( ( noreturn ) );
+#endif
+void	Jobs_QueuePrint( const char *text );
+void	Jobs_DrainPrints( void );
+
 #endif

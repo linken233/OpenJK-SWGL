@@ -158,6 +158,8 @@ typedef struct {
 	void				(*Jobs_ParallelFor)					( int count, int grain, void (*fn)( int begin, int end, void *ctx ), void *ctx );
 	int					(*Jobs_NumThreads)					( void );
 	qboolean			(*Jobs_IsWorkerThread)				( void );
+	// The calling thread raises the error of a job worker through fn (it must not return) instead of Com_Error.
+	void				(*Jobs_SetThreadErrorHook)			( void (*fn)( int level, const char *text ) );
 
 	// A renderer with its own thread turns the lock of the zone allocator on while that thread runs.
 	void				(*Z_SetThreadSafe)					( qboolean bOn );

@@ -149,6 +149,11 @@ void QDECL Com_Printf( const char *fmt, ... ) {
 	Q_vsnprintf (msg, sizeof(msg), fmt, argptr);
 	va_end (argptr);
 
+	if ( Jobs_IsWorkerThread() ) {
+		Jobs_QueuePrint( msg );
+		return;
+	}
+
 	if ( rd_buffer ) {
 		if ((strlen (msg) + strlen(rd_buffer)) > (unsigned)(rd_buffersize - 1)) {
 			rd_flush(rd_buffer);
@@ -329,6 +334,16 @@ void NORETURN QDECL Com_Error( int code, const char *fmt, ... ) {
 	static int	lastErrorTime;
 	static int	errorCount;
 	int			currentTime;
+
+	if ( Jobs_IsWorkerThread() ) {
+		// The error must not unwind or shut down on a worker. The thread that owns the job raises it.
+		char	text[MAXPRINTMSG];
+
+		va_start( argptr, fmt );
+		Q_vsnprintf( text, sizeof( text ), fmt, argptr );
+		va_end( argptr );
+		Jobs_WorkerError( code, text );
+	}
 
 	if ( com_errorEntered ) {
 		Sys_Error( "recursive error after: %s", com_errorMessage );
@@ -1446,6 +1461,8 @@ void Com_Frame( void ) {
 		int		msec, minMsec;
 		int		timeVal;
 		static int	lastTime = 0, bias = 0;
+
+		Jobs_DrainPrints();
 
 		// write config file if anything changed
 		Com_WriteConfiguration();

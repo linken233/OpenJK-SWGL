@@ -37,7 +37,16 @@ struct jobSlot_t {
 	int					count;
 	int					chunk;
 	std::atomic<int>	next;
+	std::atomic<bool>	abort;			// a worker raised an error: skip the chunks that are left
+	bool				failed;			// guarded by s_mutex
+	int					failLevel;
+	char				failText[1024];
 };
+
+struct jobAbort_s {};					// thrown on a worker by Jobs_WorkerError, caught in the worker
+
+#define JOBS_PRINT_LINES	64
+#define JOBS_PRINT_LENGTH	1024
 
 // Never freed: a joinable thread at CRT exit would call std::terminate on a fatal-error exit.
 static std::vector<std::thread>	&s_threads = *new std::vector<std::thread>;
@@ -48,9 +57,83 @@ static bool						s_quit;
 static jobSlot_t				s_slots[JOBS_MAX_SLOTS];
 
 static thread_local bool		t_isWorker;
+static thread_local jobSlot_t	*t_workerSlot;		// the job that a worker runs now
+static thread_local jobErrorHook_t	t_errorHook;
+
+// Prints of workers wait here. The main thread prints them in Jobs_DrainPrints.
+static char						s_printQueue[JOBS_PRINT_LINES][JOBS_PRINT_LENGTH];
+static int						s_printHead, s_printCount, s_printDropped;
+static std::mutex				s_printMutex;
+
+void Jobs_SetThreadErrorHook( jobErrorHook_t hook ) {
+	t_errorHook = hook;
+}
+
+void Jobs_QueuePrint( const char *text ) {
+	std::lock_guard<std::mutex> g( s_printMutex );
+
+	if ( s_printCount >= JOBS_PRINT_LINES ) {
+		s_printDropped++;
+		return;
+	}
+	Q_strncpyz( s_printQueue[( s_printHead + s_printCount ) % JOBS_PRINT_LINES], text, JOBS_PRINT_LENGTH );
+	s_printCount++;
+}
+
+void Jobs_DrainPrints( void ) {
+	for ( ;; ) {
+		char	line[JOBS_PRINT_LENGTH];
+		int		dropped = 0;
+		bool	haveLine = false;
+
+		{
+			std::lock_guard<std::mutex> g( s_printMutex );
+
+			if ( s_printCount ) {
+				Q_strncpyz( line, s_printQueue[s_printHead], sizeof( line ) );
+				s_printHead = ( s_printHead + 1 ) % JOBS_PRINT_LINES;
+				s_printCount--;
+				haveLine = true;
+			} else {
+				dropped = s_printDropped;
+				s_printDropped = 0;
+			}
+		}
+		if ( haveLine ) {
+			Com_Printf( "%s", line );
+			continue;
+		}
+		if ( dropped ) {
+			Com_Printf( "%d job messages dropped\n", dropped );
+		}
+		return;
+	}
+}
+
+// Records the first error of the job and stops the job. The caller of Jobs_ParallelFor raises it after the join.
+static void Jobs_RecordError( jobSlot_t *slot, int level, const char *text ) {
+	{
+		std::lock_guard<std::mutex> g( s_mutex );
+
+		if ( !slot->failed ) {
+			slot->failed = true;
+			slot->failLevel = level;
+			Q_strncpyz( slot->failText, text, sizeof( slot->failText ) );
+		}
+	}
+	slot->abort.store( true );
+}
+
+void Jobs_WorkerError( int level, const char *text ) {
+	Jobs_RecordError( t_workerSlot, level, text );
+	throw jobAbort_s();
+}
 
 static void Jobs_RunChunks( jobSlot_t *slot ) {
 	for ( ;; ) {
+		if ( slot->abort.load( std::memory_order_relaxed ) ) {
+			break;
+		}
 		const int begin = slot->next.fetch_add( slot->chunk );
 		if ( begin >= slot->count ) {
 			break;
@@ -84,7 +167,14 @@ static void Jobs_WorkerMain( void ) {
 		slot->activeWorkers++;
 		lock.unlock();
 
-		Jobs_RunChunks( slot );
+		t_workerSlot = slot;
+		try {
+			Jobs_RunChunks( slot );
+		} catch ( const jobAbort_s & ) {
+		} catch ( ... ) {
+			Jobs_RecordError( slot, ERR_DROP, "Exception in a job function" );
+		}
+		t_workerSlot = NULL;
 
 		lock.lock();
 		if ( --slot->activeWorkers == 0 ) {
@@ -180,6 +270,8 @@ void Jobs_Init( void ) {
 		s_slots[i].activeWorkers = 0;
 		s_slots[i].count = 0;
 		s_slots[i].next.store( 0 );
+		s_slots[i].abort.store( false );
+		s_slots[i].failed = false;
 	}
 	for ( int i = 0; i < want; i++ ) {
 		try {
@@ -251,6 +343,8 @@ void Jobs_ParallelFor( int count, int grain, jobRangeFn_t fn, void *ctx ) {
 			slot->count = count;
 			slot->chunk = chunk;
 			slot->next.store( 0 );
+			slot->abort.store( false );
+			slot->failed = false;
 			slot->open = true;
 		}
 	}
@@ -260,11 +354,44 @@ void Jobs_ParallelFor( int count, int grain, jobRangeFn_t fn, void *ctx ) {
 	}
 	s_wake.notify_all();
 
-	Jobs_RunChunks( slot );
+	// Closes the job so late workers skip it, waits for workers still inside fn, then frees the slot.
+	// The destructor does the same when a chunk of this thread throws: no worker runs with a dead ctx.
+	struct slotGuard_t {
+		jobSlot_t	*slot;
+		bool		released;
+		bool		failed;
+		int			failLevel;
+		char		failText[1024];
 
-	// Close the job so late workers skip it, wait for workers still inside fn, then free the slot.
-	std::unique_lock<std::mutex> lock( s_mutex );
-	slot->open = false;
-	s_done.wait( lock, [slot] { return slot->activeWorkers == 0; } );
-	slot->inUse = false;
+		explicit slotGuard_t( jobSlot_t *s ) : slot( s ), released( false ), failed( false ), failLevel( 0 ) {}
+		~slotGuard_t() {
+			if ( !released ) {
+				slot->abort.store( true );
+				Release();
+			}
+		}
+		void Release() {
+			std::unique_lock<std::mutex> lock( s_mutex );
+			slot->open = false;
+			s_done.wait( lock, [this] { return slot->activeWorkers == 0; } );
+			failed = slot->failed;
+			failLevel = slot->failLevel;
+			if ( failed ) {
+				Q_strncpyz( failText, slot->failText, sizeof( failText ) );
+			}
+			slot->inUse = false;
+			released = true;
+		}
+	} guard( slot );
+
+	Jobs_RunChunks( slot );
+	guard.Release();
+
+	// A worker raised an error: raise it here, on the thread that owns the job.
+	if ( guard.failed ) {
+		if ( t_errorHook ) {
+			t_errorHook( guard.failLevel, guard.failText );
+		}
+		Com_Error( guard.failLevel, "%s", guard.failText );
+	}
 }

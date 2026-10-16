@@ -1221,6 +1221,7 @@ void CL_InitRef( void ) {
 	rit.Jobs_ParallelFor = Jobs_ParallelFor;
 	rit.Jobs_NumThreads = Jobs_NumThreads;
 	rit.Jobs_IsWorkerThread = CL_RefIsWorkerThread;
+	rit.Jobs_SetThreadErrorHook = Jobs_SetThreadErrorHook;
 	rit.Z_SetThreadSafe = Z_SetThreadSafe;
 
 	ret = GetRefAPI( REF_API_VERSION, &rit );

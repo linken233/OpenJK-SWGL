@@ -176,6 +176,10 @@ static void R_RenderThreadMain( void )
 {
 	rtIsThread = true;
 
+	// An error of a job worker is raised here as a throw, like every error of this thread.
+	if ( ri.Jobs_SetThreadErrorHook )
+		ri.Jobs_SetThreadErrorHook( R_RenderThreadAbort );
+
 	for ( ;; )
 	{
 		const void *cmds;
