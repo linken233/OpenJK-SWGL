@@ -3061,6 +3061,8 @@ typedef struct backEndData_s {
 	qboolean			distortionNegate;
 	int					skyboxPortal;					// skyboxportal and drawskyboxportal at the time of the swap
 	int					drawSkyboxPortal;
+	char				weaponFxShaders[256];			// pt_weapon_fx_shaders and pt_debug_image at the time of the swap
+	char				debugImage[MAX_QPATH];
 #ifdef _G2_GORE
 	goreUploads_t		goreVBOUploads;		// filled by R_UpdateGoreVBO in the frontend, consumed by vk_flush_gore_uploads
 	goreUploads_t		goreIBOUploads;

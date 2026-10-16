@@ -726,6 +726,8 @@ static void R_RenderThreadSwapBuffers( void )
 	backEndData->distortionNegate = tr_distortionNegate;
 	backEndData->skyboxPortal = skyboxportal;
 	backEndData->drawSkyboxPortal = drawskyboxportal;
+	Q_strncpyz( backEndData->weaponFxShaders, pt_weapon_fx_shaders ? pt_weapon_fx_shaders->string : "", sizeof( backEndData->weaponFxShaders ) );
+	Q_strncpyz( backEndData->debugImage, pt_debug_image ? pt_debug_image->string : "", sizeof( backEndData->debugImage ) );
 
 	if ( backEndDataBuf[1] )
 	{

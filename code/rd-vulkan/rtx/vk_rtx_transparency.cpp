@@ -1271,12 +1271,12 @@ static vec3_t sprite_view_origin;
 
 static qboolean vk_rtx_is_weapon_fx( const shader_t *shader )
 {
-	cvar_t *prefixes = pt_weapon_fx_shaders;
+	const char *prefixes = backEndDataBE->weaponFxShaders;	// copy made at the swap
 
 	if ( !shader )
 		return qfalse;
 
-	for ( const char *p = prefixes->string; *p; )
+	for ( const char *p = prefixes; *p; )
 	{
 		while ( *p == ' ' )
 			p++;

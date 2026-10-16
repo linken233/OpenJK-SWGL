@@ -2510,13 +2510,12 @@ uint32_t vk_rtx_debug_image_index( void )
 	static char resolved_from[MAX_QPATH] = { 0 };
 	static uint32_t resolved = RTX_IMG_TAA_OUTPUT;
 
-	if ( !pt_debug_image )
-		return RTX_IMG_TAA_OUTPUT;
+	const char *debugImage = backEndDataBE->debugImage;	// copy made at the swap
 
 	// Only re-resolve when the string changes; this runs every frame.
-	if ( strcmp( resolved_from, pt_debug_image->string ) )
+	if ( strcmp( resolved_from, debugImage ) )
 	{
-		Q_strncpyz( resolved_from, pt_debug_image->string, sizeof( resolved_from ) );
+		Q_strncpyz( resolved_from, debugImage, sizeof( resolved_from ) );
 
 		if ( !resolved_from[0] || !strcmp( resolved_from, "0" ) )
 			resolved = RTX_IMG_TAA_OUTPUT;
