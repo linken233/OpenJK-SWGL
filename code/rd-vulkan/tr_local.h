@@ -1686,6 +1686,8 @@ void		R_Modellist_f ( void );
 
 #define	MAX_DRAWSURFS			0x10000
 #define	DRAWSURF_MASK			( MAX_DRAWSURFS - 1 )
+// A cubemap face is added only below this count, so that one face (up to about 20000) and the scene still fit in the ring.
+#define	CUBEMAP_DRAWSURF_LIMIT	( MAX_DRAWSURFS - 40960 )
 
 /*
 
@@ -1936,6 +1938,7 @@ typedef struct trGlobals_s {
 	int						numCubemaps;
 	cubemap_t				*cubemaps;
 	int						numCubemapsCaptured;
+	int						numCubemapFacesCaptured;	// faces done of the probe numCubemapsCaptured
 #endif
 	image_t					*blackImage;			
 	image_t					*identityLightImage;// full of tr.identityLightByte

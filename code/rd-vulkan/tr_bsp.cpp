@@ -2742,6 +2742,7 @@ static void R_LoadCubemapEntities( const world_t *worldData )
 	tr.cubemaps = (cubemap_t *)Hunk_Alloc( tr.numCubemaps * sizeof( *tr.cubemaps ), h_low );
 	Com_Memcpy( tr.cubemaps, probes, tr.numCubemaps * sizeof( *tr.cubemaps ) );
 	tr.numCubemapsCaptured = 0;
+	tr.numCubemapFacesCaptured = 0;
 
 	ri.Printf( PRINT_ALL, "...%i cubemaps (%s)\n", tr.numCubemaps, cubemapClasses[c] );
 }

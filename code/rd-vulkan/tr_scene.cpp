@@ -444,8 +444,9 @@ void RE_RenderAutoMap( void );
 =====================
 R_RenderCubemaps
 
-The six faces of up to CUBEMAPS_PER_FRAME probes, before the first world scene of the
-frame. The views hold the world only: no entity, dlight or poly of the scene.
+Up to CUBEMAPS_PER_FRAME * 6 faces, before the first world scene of the frame. The faces
+of a probe can go to different frames. The views hold the world only: no entity, dlight or
+poly of the scene.
 The axes make the capture agree with the direction ( x, -y, z ) that pbr.glsl samples.
 =====================
 */
@@ -460,12 +461,10 @@ void R_RenderCubemaps( void )
 		{ {  0,  0, -1 }, {  1,  0,  0 }, {  0, -1,  0 } },
 	};
 	viewParms_t parms;
-	int i, face, last;
+	int i, face, rendered;
 
 	if ( !vk.cubemapActive || !tr.world || tr.numCubemapsCaptured >= tr.numCubemaps )
 		return;
-
-	last = MIN( tr.numCubemaps, tr.numCubemapsCaptured + CUBEMAPS_PER_FRAME );
 
 	tr.refdef.x = tr.refdef.y = 0;
 	tr.refdef.width = tr.refdef.height = REF_CUBEMAP_SIZE;
@@ -496,9 +495,16 @@ void R_RenderCubemaps( void )
 	tr.frameSceneNum++;
 	tr.sceneCount++;
 
-	for ( i = tr.numCubemapsCaptured; i < last; i++ )
+	i = tr.numCubemapsCaptured;
+	face = tr.numCubemapFacesCaptured;
+
+	for ( rendered = 0; i < tr.numCubemaps && rendered < CUBEMAPS_PER_FRAME * 6; rendered++ )
 	{
-		for ( face = 0; face < 6; face++ )
+		// The commands of the views read the draw surfs in the backend. Stop before the
+		// views and the scene of the frame could wrap the ring and overwrite them.
+		if ( tr.refdef.numDrawSurfs > CUBEMAP_DRAWSURF_LIMIT )
+			break;
+
 		{
 			VectorCopy( tr.cubemaps[i].origin, tr.refdef.vieworg );
 			VectorCopy( faceAxis[face][0], tr.refdef.viewaxis[0] );
@@ -528,12 +534,18 @@ void R_RenderCubemaps( void )
 			R_RenderView( &parms );
 		}
 
-		R_AddConvolveCubemapCmd( i );
+		if ( ++face == 6 )
+		{
+			R_AddConvolveCubemapCmd( i );
+			i++;
+			face = 0;
+		}
 	}
 
 	R_G2_SnapshotScene();	// no entities; forgets the commands of the views
 
-	tr.numCubemapsCaptured = last;
+	tr.numCubemapsCaptured = i;
+	tr.numCubemapFacesCaptured = face;
 
 	// the scene of the frame goes after the captures
 	r_firstSceneDrawSurf = tr.refdef.numDrawSurfs;
