@@ -606,6 +606,8 @@ void R_RenderThreadInit( void )
 
 void R_RenderThreadShutdown( void )
 {
+	rt.syncFrames = 0;	// an aborted load leaves C_LevelLoadBegin's value behind
+
 	if ( !rt.running )
 		return;
 

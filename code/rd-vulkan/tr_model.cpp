@@ -1290,6 +1290,7 @@ void RE_HunkClearCrap( void )
 	memset( tr.shaders, 0, sizeof( tr.shaders ) );
 	memset( tr.sortedShaders, 0, sizeof( tr.sortedShaders ) );
 	tr.numShaders = 0;
+	r_numVideoMaps = 0;	// the videoMap shaders are gone
 	memset( tr.skins, 0, sizeof( tr.skins ) );
 	tr.numSkins = 0;
 

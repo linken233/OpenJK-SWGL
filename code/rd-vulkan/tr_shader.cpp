@@ -5291,6 +5291,7 @@ static void CreateInternalShaders( void )
 	vk_debug("CreateInternalShaders\n");
 
 	tr.numShaders = 0;
+	r_numVideoMaps = 0;	// the shader list restarts
 
 	// init the default shader
 	InitShader("<default>", lightmapsNone, stylesDefault);
