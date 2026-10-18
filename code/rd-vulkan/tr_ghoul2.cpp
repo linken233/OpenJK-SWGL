@@ -3053,7 +3053,22 @@ static inline bool bInShadowRange(vec3_t location)
 	const float dist = DotProduct( tr.viewParms.ori.axis[0], location ) - c;
 
 //	return (dist < tr.distanceCull/1.5f);
-	return (dist < r_shadowRange->value);
+	if (dist >= r_shadowRange->value)
+	{
+		return false;
+	}
+
+	// Past the global fog's opaque depth the scene is a flat fog colour, and a shadow
+	// volume there would darken it as a visible patch.
+	if (tr.world && tr.world->globalFog > 0 && r_drawfog->integer)
+	{
+		const fog_t *fog = &tr.world->fogs[tr.world->globalFog];
+		if (fog->parms.depthForOpaque > 0.0f && dist >= fog->parms.depthForOpaque)
+		{
+			return false;
+		}
+	}
+	return true;
 }
 
 /*
