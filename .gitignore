@@ -213,3 +213,4 @@ codemp/rd-vulkan/shaders/tools/compile_threaded.exe
 codemp/rd-vulkan/shaders/tools/*.obj
 code/rd-vulkan/shaders/tools/compile_threaded.exe
 code/rd-vulkan/shaders/tools/*.obj
+/sandbox/
