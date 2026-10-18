@@ -542,7 +542,13 @@ qboolean vk_select_surface_format( VkPhysicalDevice physical_device, VkSurfaceKH
 
     candidates = (VkSurfaceFormatKHR*)malloc(format_count * sizeof(VkSurfaceFormatKHR));
 
-    VK_CHECK(qvkGetPhysicalDeviceSurfaceFormatsKHR(physical_device, surface, &format_count, candidates));
+    // an error is handled by the caller like the first query, the device is rejected
+    result = qvkGetPhysicalDeviceSurfaceFormatsKHR(physical_device, surface, &format_count, candidates);
+    if (result < 0) {
+        ri.Printf(PRINT_ERROR, "vkGetPhysicalDeviceSurfaceFormatsKHR returned error %s\n", vk_result_string(result));
+        free(candidates);
+        return qfalse;
+    }
 
 	get_present_format(24, &base_bgr, &base_rgb);
 
@@ -652,8 +658,11 @@ static qboolean vk_create_device( VkPhysicalDevice physical_device, int device_i
 		// select queue family with presentation and graphics support
 		vk.queue_family_index = ~0U;
 		for (i = 0; i < queue_family_count; i++) {
-			VkBool32 presentation_supported;
-			VK_CHECK(qvkGetPhysicalDeviceSurfaceSupportKHR(physical_device, i, vk.surface, &presentation_supported));
+			VkBool32 presentation_supported = VK_FALSE;
+			// a failed query only rejects this queue family
+			if (qvkGetPhysicalDeviceSurfaceSupportKHR(physical_device, i, vk.surface, &presentation_supported) < 0) {
+				presentation_supported = VK_FALSE;
+			}
 
 			if (presentation_supported && (queue_families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) != 0) {
 				vk.queue_family_index = i;

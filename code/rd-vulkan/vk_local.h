@@ -1905,11 +1905,15 @@ void		GfxInfo_f( void );
 void		vk_set_object_name( uint64_t obj, const char *objName, VkDebugReportObjectTypeEXT objType );
 #define		VK_SET_OBJECT_NAME( obj, objName, objType) vk_set_object_name( (uint64_t)( obj ), ( objName ), ( objType ) );
 
-#define VK_CHECK( function_call ) { \
-	VkResult result = function_call; \
-	if ( result < 0 ) \
-		vk_debug( "Vulkan: error %s returned by %s \n", vk_result_string( result ), #function_call ); \
-}
+// A negative VkResult is an error: log it (Debug builds) and stop with ERR_FATAL.
+// A call whose error is an expected, handled case must not go through VK_CHECK.
+#define VK_CHECK( function_call ) do { \
+	const VkResult vk_check_result = ( function_call ); \
+	if ( vk_check_result < 0 ) { \
+		vk_debug( "Vulkan: error %s returned by %s \n", vk_result_string( vk_check_result ), #function_call ); \
+		ri.Error( ERR_FATAL, "Vulkan: %s returned by %s", vk_result_string( vk_check_result ), #function_call ); \
+	} \
+} while ( 0 )
 
 void		vk_debug( const char *msg, ... );
 void		R_DebugGraphics( void );
