@@ -13,7 +13,7 @@ Les corrections déjà notées en mémoire (ghoul2[0], reType, data.glm, GetAnim
 
 Branche `feature/vulkan-raster`. Les points marqués ✅ sont traités et validés en jeu (`rdsp-vulkan`, `r_rtx 0`, Release).
 
-Exception : 3.2, 3.7 et les normales faces arrière du G-buffer sont validés par compilation (Debug et Release) et par comparaison avec rd-vanilla, pas testés en jeu.
+3.2, 3.7 et les normales faces arrière du G-buffer sont testés en sandbox sur yavin_swamp, avec le renderer de HEAD comme référence. Le zoom passe par les jumelles, pas par la lunette du disruptor. Aucune map n'a la clé `linFogStart`.
 
 Légende : ✅ fait, ❌ sans objet ou non prévu, ⏳ plus tard.
 
@@ -34,10 +34,10 @@ Légende : ✅ fait, ❌ sans objet ou non prévu, ⏳ plus tard.
 | 2.8 ✅ | `RB_SurfaceBeam` choisit rouge, vert ou bleu selon `skinNum`. | `9a562e50e` |
 | 2.11 ✅ | `RE_StretchPic`, `RE_RotatePic` et `RE_RotatePic2` testent `tr.registered`. | `d489de349` |
 | 3.1 ✅ | `R_FogNumForSphere` choisit le volume de brouillard des sprites, de ghoul2 et des MD3 comme vanilla. | `1db6c6b7a` |
-| 3.2 ✅ | Brouillard linéaire : `linFogStart` lu dans `R_LoadEntities`, `SetRangedFog` restaure l'ancienne valeur, `vk_update_fog_constants` envoie `linearStart`/`linearEnd` au global et au goggles, et `CalcFog` des shaders de brouillard fait le linéaire quand `linearEnd > 0`. Compilé et comparé à vanilla, non testé en jeu. | non commité |
+| 3.2 ✅ | Brouillard linéaire : `linFogStart` lu dans `R_LoadEntities`, `SetRangedFog` restaure l'ancienne valeur, `vk_update_fog_constants` envoie `linearStart`/`linearEnd` au global et au goggles, et `CalcFog` des shaders de brouillard fait le linéaire quand `linearEnd > 0`. En jeu : le brouillard s'allège avec les jumelles et revient au dézoom. | `ca113d91f` |
 | 3.3 ✅ | `distanceCull` par défaut à 12000. | `f7ff752d4` |
 | 3.4 ✅, 3.5 ✅, 3.6 ✅ | Météo : lot vidé à `SHADER_MAX_VERTEXES`, orientation par vitesse, filtre NEAREST, coupure pendant les cinématiques, 50 zones météo, 12 zones de vent, cellule de 32 (magic du cache `WVK2`). | `9fd167c0e` |
-| 3.7 ✅ | UBO de brouillard porté à 64 volumes (`VK_MAX_FOGS`, 3088 octets) ; le GLSL borne l'index avec `fogs.length()` et le C++ borne `num_fogs`. Compilé, non testé en jeu. | non commité |
+| 3.7 ✅ | UBO de brouillard porté à 64 volumes (`VK_MAX_FOGS`, 3088 octets) ; le GLSL borne l'index avec `fogs.length()` et le C++ borne `num_fogs`. En jeu : le brouillard global de yavin_swamp (volume 20) s'affiche ; HEAD ne l'affiche pas. | `ca113d91f` |
 | 3.8 ✅ | Plan lointain du frustum à `distanceCull*1.02`. | `f3b7191a6` |
 | 4.1 ✅ | `R_SetupEntityLighting` ajoute +96 d'ambiant avec `RF_MORELIGHT` (sinon +32) ; bloc `RF_MINLIGHT` mort retiré. | `76705f647` |
 | 4.2 ✅ | `r_dlightScale` par défaut à 1.0. | `140bca05d` |
@@ -55,7 +55,7 @@ Légende : ✅ fait, ❌ sans objet ou non prévu, ⏳ plus tard.
 | Revue m1 ✅ | `RE_RenderWorldEffects` et `RE_RenderAutoMap` testent `tr.registered`, comme vanilla. | `21c2438b4` |
 | Revue m2 ✅ | Le quad orienté RTX dérive ses axes de la normale (`axis[0]`), comme le raster. | `03a6cea81` |
 | Feuilles noires yavin_swamp (G-buffer) ✅ | `RB_RenderGBufferSurfList` saute les stages surface sprite et s'arrête sur un stage opaque qui écrit la profondeur ; `FindLightingStage` saute aussi les stages `ss`. | `c7e279598`, `d495b7f4e` |
-| Normales faces arrière G-buffer ✅ | Les cinq `gbuffer*.frag` qui écrivent la normale l'inversent quand `!gl_FrontFacing` (le SSAO lit donc une normale tournée vers la caméra sur les surfaces à double face). Compilé, non testé en jeu. | non commité |
+| Normales faces arrière G-buffer ✅ | Les cinq `gbuffer*.frag` qui écrivent la normale l'inversent quand `!gl_FrontFacing` (le SSAO lit donc une normale tournée vers la caméra sur les surfaces à double face). En jeu : les rectangles noirs du SSAO sur les palmiers vus de dos disparaissent. | `ca113d91f` |
 
 Les points 2.2 à 2.11 de cette liste sont validés à la compilation (Debug et Release) et par lecture comparée avec `rd-vanilla`. Ils n’ont pas été testés en jeu.
 
