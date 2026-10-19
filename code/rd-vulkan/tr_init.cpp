@@ -1555,7 +1555,18 @@ void RE_SetLightStyle( int style, int color )
 	}
 }
 
-static void SetRangedFog( float range ) { tr.rangedFog = range; }
+// A non-positive rangedFog (linFogStart override or none) is the value that SetRangedFog(0) restores.
+float g_oldRangedFog = 0.0f;
+static void SetRangedFog( float range )
+{
+	if ( tr.rangedFog <= 0.0f )
+		g_oldRangedFog = tr.rangedFog;
+
+	tr.rangedFog = range;
+
+	if ( tr.rangedFog == 0.0f && g_oldRangedFog )
+		tr.rangedFog = g_oldRangedFog;
+}
 
 extern qboolean gG2_GBMNoReconstruct;
 extern qboolean gG2_GBMUseSPMethod;

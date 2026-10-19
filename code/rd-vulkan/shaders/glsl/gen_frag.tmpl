@@ -41,11 +41,13 @@
 		vec4	color;
 		float	depthToOpaque;
 		int		hasPlane;
+		float	linearStart;
+		float	linearEnd;	// > 0: linear fog between linearStart and linearEnd
 	};
 
 	struct vkUniformFog_t {
 		int					num_fogs;
-		vkUniformFogEntry_t	fogs[16];
+		vkUniformFogEntry_t	fogs[64];
 	};
 
 	layout(set = 0, binding = 1) uniform Camera {
@@ -266,6 +268,12 @@ float CorrectAlpha(float threshold, float alpha, vec2 tc)
 		//             dot(o, n) + t*dot(n, v) = -d
 		//             t = -(d + dot(o, n)) / dot(n, v)
 		vec3 V = position - viewOrigin;
+
+		if (fog.linearEnd > 0.0)
+		{
+			float linearFactor = clamp((fog.linearEnd - length(V)) / max(fog.linearEnd - fog.linearStart, 1.0), 0.0, 1.0);
+			return vec4(fog.color.rgb * fogDistanceVector[2], 1.0 - linearFactor);
+		}
 
 		// fogPlane is inverted in tr_bsp for some reason.
 		float t = -(fog.plane.w + dot(viewOrigin, -fog.plane.xyz)) / dot(V, -fog.plane.xyz);
@@ -707,7 +715,7 @@ void main() {
 #ifdef USE_FOG
 	if ( hw_fog == 1 ) {
 		int u_fogIndex = int(fogDistanceVector[1]);
-		vec4 fog_color = CalcFog( u_ViewOrigin.rgb, fog_tex_coord, u_fogs.fogs[u_fogIndex] );
+		vec4 fog_color = CalcFog( u_ViewOrigin.rgb, fog_tex_coord, u_fogs.fogs[clamp(u_fogIndex, 0, u_fogs.fogs.length() - 1)] );
 		ApplyACFF( base, fog_color, fog_color.a );
 	} 
 	else {

@@ -1648,6 +1648,34 @@ static void vk_update_ghoul2_constants( const trRefdef_t *refdef ) {
 
 }
 
+// Linear fog range for the scope and the linFogStart worldspawn key (same rules as rd-vanilla).
+static void vk_get_linear_fog_range( const fog_t *fog, float *start, float *end )
+{
+	float fStart = fog->parms.depthForOpaque;
+	float fEnd = tr.distanceCull;
+
+	if ( tr.rangedFog < 0.0f )
+	{
+		// Level designer override.
+		fStart = -tr.rangedFog;
+		fEnd = fog->parms.depthForOpaque;
+
+		if ( fStart >= fEnd )
+			fStart = fEnd - 1.0f;
+	}
+	else if ( ( tr.distanceCull - fStart ) < tr.rangedFog )
+	{
+		// Keep a minimum range between the fog start and the cull distance.
+		fStart = tr.distanceCull - tr.rangedFog;
+
+		if ( fStart < 16.0f )
+			fStart = 16.0f;
+	}
+
+	*start = fStart;
+	*end = fEnd;
+}
+
 static void vk_update_fog_constants(const trRefdef_t* refdef)
 {
 	uint32_t i;
@@ -1662,7 +1690,9 @@ static void vk_update_fog_constants(const trRefdef_t* refdef)
 
 	size = sizeof(vec4_t);
 
-	for ( i = 0; i < MIN(uniform.num_fogs, 16); ++i )
+	uniform.num_fogs = MIN( uniform.num_fogs, VK_MAX_FOGS );
+
+	for ( i = 0; i < (uint32_t)uniform.num_fogs; ++i )
 	{
 		const fog_t *fog = tr.world->fogs + i + 1;
 		vkUniformFogEntry_t *fogData = uniform.fogs + i;
@@ -1671,6 +1701,10 @@ static void vk_update_fog_constants(const trRefdef_t* refdef)
 		VectorCopy4( fog->color, fogData->color );
 		fogData->depthToOpaque = sqrtf(-logf(1.0f / 255.0f)) / fog->parms.depthForOpaque;
 		fogData->hasPlane = fog->hasSurface;
+
+		// Like rd-vanilla, only the global fog and the LA goggles fog (slot numfogs) are linear.
+		if ( tr.rangedFog && ( (int)i + 1 == tr.world->globalFog || (int)i + 1 == tr.world->numfogs ) )
+			vk_get_linear_fog_range( fog, &fogData->linearStart, &fogData->linearEnd );
 	}
 
 	size += (i * sizeof(vkUniformFogEntry_t));

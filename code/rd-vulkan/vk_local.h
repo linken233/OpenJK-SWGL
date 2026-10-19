@@ -730,19 +730,27 @@ typedef struct vkUniformBones_s {
 } vkUniformBones_t;
 #endif
 
+// Fog volumes in the fog UBO. Must match fogs[] in the fragment shaders.
+// The sort key has 5 bits of fog index (FOGNUM_BITS), so 64 is a safe margin.
+#define VK_MAX_FOGS 64
+
 typedef struct vkUniformFogEntry_s {
 	vec4_t	plane;
 	vec4_t	color;
 	float	depthToOpaque;
 	int		hasPlane;
-	vec2_t	pad0;
+	float	linearStart;	// linear fog range, used when linearEnd > 0
+	float	linearEnd;
 } vkUniformFogEntry_t;
 
 typedef struct vkUniformFog_s {
 	int			num_fogs;
 	vec3_t		pad0;
-	vkUniformFogEntry_t fogs[16];
+	vkUniformFogEntry_t fogs[VK_MAX_FOGS];
 } vkUniformFog_t;
+
+// 16 + 64 * 48 = 3088 bytes. The Vulkan minimum for maxUniformBufferRange is 16384.
+static_assert( sizeof(vkUniformFog_t) <= 16384, "fog UBO is larger than the minimum maxUniformBufferRange" );
 
 typedef struct {
 	VkSamplerAddressMode address_mode; // clamp/repeat texture addressing mode

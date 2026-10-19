@@ -2517,6 +2517,7 @@ static void R_LoadEntities( const lump_t *l, world_t &worldData ) {
 
 	VectorSet(tr.sunAmbient, 1, 1, 1);
 	tr.distanceCull = 12000;//DEFAULT_DISTANCE_CULL;
+	tr.rangedFog = 0.0f;	// a new map must not keep the linear fog of the previous one
 
 	p = (char *)(fileBase + l->fileofs);
 
@@ -2587,6 +2588,12 @@ static void R_LoadEntities( const lump_t *l, world_t &worldData ) {
 			sscanf(value, "%f", &tr.distanceCull );
 			if (r_distanceCull && r_distanceCull->value)
 				tr.distanceCull = r_distanceCull->value;
+			continue;
+		}
+		// linear fog start of the level designer: stored negative, see vk_get_linear_fog_range
+		if (!Q_stricmp(keyname, "linFogStart")) {
+			sscanf(value, "%f", &tr.rangedFog );
+			tr.rangedFog = -tr.rangedFog;
 			continue;
 		}
 		// check for a different grid size

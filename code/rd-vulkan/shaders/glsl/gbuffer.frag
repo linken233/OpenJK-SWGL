@@ -17,6 +17,10 @@ layout(location = 0) out vec4 out_normal;
 
 void main() {
 	vec3 n = normalize(var_ViewNormal);
+	// The back face of a two-sided surface shows its reverse side. Turn the normal toward the viewer.
+	if (!gl_FrontFacing) {
+		n = -n;
+	}
 	// Alpha carries the stencil-shadow-caster flag; nothing else uses this channel.
 	out_normal = vec4(n * 0.5 + 0.5, var_ShadowCaster);
 }
