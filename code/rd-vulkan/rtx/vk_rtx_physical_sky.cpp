@@ -495,6 +495,17 @@ qboolean vkpt_physical_sky_needs_update( void ) {
 	return (qboolean)skyNeedsUpdate;
 }
 
+// True when the next frame loads the scatter tables of another sky preset from files.
+qboolean vkpt_physical_sky_load_pending( void )
+{
+	const int skyIndex = RTX_LightSky_PhysicalSky();
+
+	if ( ( GetSkyPreset( skyIndex )->flags & PHYSICAL_SKY_FLAG_USE_SKYBOX ) != 0 )
+		return qfalse;
+
+	return skyIndex != current_preset ? qtrue : qfalse;
+}
+
 // Skybox and hybrid modes: no cubemap accumulates the sun. The CPU writes the whole buffer:
 // no sun for the skybox, the analytic sun for the hybrid mode. The sky colour stays zero.
 static void write_sun_color_buffer( VkCommandBuffer cmd_buf )
@@ -928,11 +939,18 @@ void UpdatePhysicalSkyCVars( void )
 {
     PhysicalSkyDesc_t const * sky = GetSkyPreset( physical_sky->integer );
 
-	ri.Cvar_Set( "sun_color_r", va( "%f", sky->sunColor[0] ) );
-	ri.Cvar_Set( "sun_color_g", va( "%f", sky->sunColor[1] ) );
-	ri.Cvar_Set( "sun_color_b", va( "%f", sky->sunColor[2] ) );
+	// The backend calls this: the changes wait for the main thread (and va is not thread safe).
+	char text[64];
 
-	ri.Cvar_Set( "sun_angle", va( "%f", sky->sunAngularDiameter ) );
+	Com_sprintf( text, sizeof( text ), "%f", sky->sunColor[0] );
+	R_BackendCvarSet( "sun_color_r", text );
+	Com_sprintf( text, sizeof( text ), "%f", sky->sunColor[1] );
+	R_BackendCvarSet( "sun_color_g", text );
+	Com_sprintf( text, sizeof( text ), "%f", sky->sunColor[2] );
+	R_BackendCvarSet( "sun_color_b", text );
+
+	Com_sprintf( text, sizeof( text ), "%f", sky->sunAngularDiameter );
+	R_BackendCvarSet( "sun_angle", text );
 
     skyNeedsUpdate = VK_TRUE;
 

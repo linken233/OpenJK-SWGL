@@ -76,11 +76,14 @@ void vk_create_command_buffer( void )
 #endif
 }
 
-VkCommandBuffer vk_begin_command_buffer( void )
+VkCommandBuffer vk_begin_command_buffer_at( const char *file, int line, const char *func )
 {
     VkCommandBufferBeginInfo begin_info;
     VkCommandBufferAllocateInfo alloc_info;
     VkCommandBuffer command_buffer;
+
+    // One-time command buffers share the command pool and the queue with the render thread.
+    R_SyncRenderThreadAt( file, line, func );
 
     alloc_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
     alloc_info.pNext = NULL;

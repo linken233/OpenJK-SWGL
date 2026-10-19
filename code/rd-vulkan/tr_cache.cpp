@@ -217,7 +217,10 @@ void CModelCacheManager::DumpNonPure( void )
 			ri.Printf( PRINT_DEVELOPER, "Dumping none pure model \"%s\"", it->path );
 
 			if( it->pDiskImage )
+			{
 				Z_Free( it->pDiskImage );
+				tr.modelEpoch++;	// see LevelLoadEnd
+			}
 
 			it = files.erase(it);
 		}
@@ -322,6 +325,10 @@ qboolean CModelCacheManager::LevelLoadEnd( qboolean deleteUnusedByLevel )
 		}
 	}
 
+	// A freed buffer can come back at the same address: the surface-pointer caches must restart.
+	if ( bAtLeastOneModelFreed )
+		tr.modelEpoch++;
+
 	ri.Printf( PRINT_DEVELOPER, S_COLOR_GREEN "CModelCacheManager::LevelLoadEnd(): Ok\n");
 
 	return bAtLeastOneModelFreed;
@@ -333,6 +340,8 @@ qboolean CModelCacheManager::LevelLoadEnd( qboolean deleteUnusedByLevel )
 
 qboolean C_Models_LevelLoadEnd( qboolean deleteUnusedByLevel )
 {
+	// This frees models that the backend may draw.
+	R_SyncRenderThread();
 	return CModelCache->LevelLoadEnd(deleteUnusedByLevel);
 }
 

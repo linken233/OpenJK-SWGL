@@ -1614,11 +1614,6 @@ static int LE_Generation( void )
 // Class scale of copy_light, read live, times pt_lightgen_scale for an lgt light.
 static float LE_IntensityScale( int id )
 {
-	static cvar_t *scaleEdit;
-
-	if ( !scaleEdit )
-		scaleEdit = ri.Cvar_Get( "pt_light_scale_edit", "0.1", CVAR_ARCHIVE_ND );
-
 	int	entClass = LIGHT_ENT_EDIT;
 	int	source = RTX_LSRC_ADDED;
 
@@ -1637,7 +1632,7 @@ static float LE_IntensityScale( int id )
 		source = rec->source;
 	}
 
-	const float scale = entClass == LIGHT_ENT_EDIT ? MAX( 0.0f, scaleEdit->value ) : 1.0f;
+	const float scale = entClass == LIGHT_ENT_EDIT ? MAX( 0.0f, pt_light_scale_edit->value ) : 1.0f;
 
 	return scale * ( source == RTX_LSRC_LGT ? pt_lightgen_scale->value : 1.0f );
 }
@@ -1814,48 +1809,86 @@ static void LE_ResetSky( void )
 	RTX_LightSky_Reset();
 }
 
-static rtxLightEditAPI_t g_api = {
+/*
+=================
+The table that the game gets
+
+The backend reads the light list and the sky settings. Each call of the tool that reads or
+changes them first waits for the render thread. The calls that read a flag, a count or a cvar
+go straight to the LE_ functions.
+=================
+*/
+static qboolean	LS_Begin( void )								{ R_SyncRenderThread(); return LE_Begin(); }
+static void		LS_End( void )									{ R_SyncRenderThread(); LE_End(); }
+static int		LS_Count( void )								{ R_SyncRenderThread(); return LE_Count(); }
+static qboolean	LS_Get( int id, rtxLightDesc_t *out )			{ R_SyncRenderThread(); return LE_Get( id, out ); }
+static qboolean	LS_GetOriginal( int id, rtxLightDesc_t *out )	{ R_SyncRenderThread(); return LE_GetOriginal( id, out ); }
+static int		LS_Add( const rtxLightDesc_t *desc )			{ R_SyncRenderThread(); return LE_Add( desc ); }
+static qboolean	LS_Set( int id, const rtxLightDesc_t *desc )	{ R_SyncRenderThread(); return LE_Set( id, desc ); }
+static qboolean	LS_Remove( int id )								{ R_SyncRenderThread(); return LE_Remove( id ); }
+static qboolean	LS_Restore( int id )							{ R_SyncRenderThread(); return LE_Restore( id ); }
+static qboolean	LS_Revert( int id )								{ R_SyncRenderThread(); return LE_Revert( id ); }
+static void		LS_BeginDrag( int id )							{ R_SyncRenderThread(); LE_BeginDrag( id ); }
+static void		LS_EndDrag( int id )							{ R_SyncRenderThread(); LE_EndDrag( id ); }
+static qboolean	LS_Save( void )									{ R_SyncRenderThread(); return LE_Save(); }
+static qboolean	LS_Reload( void )								{ R_SyncRenderThread(); return LE_Reload(); }
+static void		LS_GetStats( rtxLightStats_t *out )				{ R_SyncRenderThread(); LE_GetStats( out ); }
+static void		LS_BeginBatch( void )							{ R_SyncRenderThread(); LE_BeginBatch(); }
+static void		LS_EndBatch( void )								{ R_SyncRenderThread(); LE_EndBatch(); }
+static qboolean	LS_Mute( int id, qboolean muted )				{ R_SyncRenderThread(); return LE_Mute( id, muted ); }
+static void		LS_Solo( int id )								{ R_SyncRenderThread(); LE_Solo( id ); }
+static int		LS_GetDynamic( int maxCount, vec3_t *origins, vec3_t *colors ) { R_SyncRenderThread(); return LE_GetDynamic( maxCount, origins, colors ); }
+static int		LS_CountEmissiveShaders( void )					{ R_SyncRenderThread(); return LE_CountEmissiveShaders(); }
+static qboolean	LS_GetEmissiveShader( int shader, char *name, int nameSize, float *scale, int *numPolys ) { R_SyncRenderThread(); return LE_GetEmissiveShader( shader, name, nameSize, scale, numPolys ); }
+static qboolean	LS_SetEmissiveScale( int shader, float scale )	{ R_SyncRenderThread(); return LE_SetEmissiveScale( shader, scale ); }
+static qboolean	LS_GetSky( rtxSkyDesc_t *out )					{ R_SyncRenderThread(); return LE_GetSky( out ); }
+static qboolean	LS_SetSky( const rtxSkyDesc_t *desc )			{ R_SyncRenderThread(); return LE_SetSky( desc ); }
+static void		LS_ResetSky( void )								{ R_SyncRenderThread(); LE_ResetSky(); }
+static int		LS_Compact( int *slotsReleased )				{ R_SyncRenderThread(); return LE_Compact( slotsReleased ); }
+static qboolean	LS_GetEmissiveSurface( int id, rtxEmissiveSurface_t *out ) { R_SyncRenderThread(); return LE_GetEmissiveSurface( id, out ); }
+
+static rtxLightEditAPI_t g_apiSync = {
 	RTX_LIGHTEDIT_API_VERSION,
 	LE_IsAvailable,
-	LE_Begin,
-	LE_End,
-	LE_Count,
-	LE_Get,
-	LE_GetOriginal,
-	LE_Add,
-	LE_Set,
-	LE_Remove,
-	LE_Restore,
-	LE_Revert,
-	LE_BeginDrag,
-	LE_EndDrag,
-	LE_Save,
-	LE_Reload,
-	LE_GetStats,
+	LS_Begin,
+	LS_End,
+	LS_Count,
+	LS_Get,
+	LS_GetOriginal,
+	LS_Add,
+	LS_Set,
+	LS_Remove,
+	LS_Restore,
+	LS_Revert,
+	LS_BeginDrag,
+	LS_EndDrag,
+	LS_Save,
+	LS_Reload,
+	LS_GetStats,
 	LE_LastError,
 	LE_PointInSolid,
-	LE_BeginBatch,
-	LE_EndBatch,
-	LE_Mute,
-	LE_Solo,
+	LS_BeginBatch,
+	LS_EndBatch,
+	LS_Mute,
+	LS_Solo,
 	LE_GetSolo,
 	LE_Generation,
 	LE_IntensityScale,
-	LE_GetDynamic,
-	LE_CountEmissiveShaders,
-	LE_GetEmissiveShader,
-	LE_SetEmissiveScale,
-	LE_GetSky,
-	LE_SetSky,
-	LE_ResetSky,
-	LE_Compact,
-	LE_GetEmissiveSurface
+	LS_GetDynamic,
+	LS_CountEmissiveShaders,
+	LS_GetEmissiveShader,
+	LS_SetEmissiveScale,
+	LS_GetSky,
+	LS_SetSky,
+	LS_ResetSky,
+	LS_Compact,
+	LS_GetEmissiveSurface
 };
 
 void *RTX_LightEdit_GetExtension( const char *name )
 {
 	if ( name && !Q_stricmp( name, RTX_LIGHTEDIT_API_NAME ) )
-		return &g_api;
+		return &g_apiSync;
 
 	return NULL;
 }

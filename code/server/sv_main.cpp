@@ -428,6 +428,14 @@ Player movement occurs as a result of packet events, which
 happen before SV_Frame is called
 ==================
 */
+// Adds the time of the scope to the game time of com_perflog.
+struct svPerfGameScope {
+	double	start;
+
+	svPerfGameScope() : start( PerfLog_Now() ) {}
+	~svPerfGameScope() { PerfLog_AddGame( PerfLog_Now() - start ); }
+};
+
 /*
 ==================
 SV_FinishSlicedFrame
@@ -523,14 +531,18 @@ void SV_Frame( int msec,float fractionMsec ) {
 			startTime = Sys_Milliseconds ();
 		}
 
-		if ( sv.timeResidual >= frameMsec ) {
-			SV_FinishSlicedFrame();
-		} else {
-			sv.inFrameSlice = qtrue;
-			if ( ge->RunFrameSlice() ) {
-				sv.frameSliced = qfalse;
+		{
+			svPerfGameScope perfGame;
+
+			if ( sv.timeResidual >= frameMsec ) {
+				SV_FinishSlicedFrame();
+			} else {
+				sv.inFrameSlice = qtrue;
+				if ( ge->RunFrameSlice() ) {
+					sv.frameSliced = qfalse;
+				}
+				sv.inFrameSlice = qfalse;
 			}
-			sv.inFrameSlice = qfalse;
 		}
 
 		if ( com_speeds->integer ) {
@@ -577,6 +589,7 @@ void SV_Frame( int msec,float fractionMsec ) {
 //	SV_BotFrame( sv.time );
 
 	// run the game simulation in chunks
+	svPerfGameScope perfGame;
 	while ( sv.timeResidual >= frameMsec ) {
 		sv.timeResidual -= frameMsec;
 		sv.time += frameMsec;

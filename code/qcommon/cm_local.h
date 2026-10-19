@@ -40,6 +40,15 @@ typedef struct {
 	int			children[2];		// negative numbers are leafs
 } cNode_t;
 
+struct cPatch_s;
+
+// A brush of a leaf with the data that a trace tests first, so a rejected brush costs no read of the brush.
+typedef struct {
+	int			brush;				// index in clipMap_t::brushes
+	int			contents;
+	float		bounds[2][3];
+} cLeafBrush_t;
+
 typedef struct {
 	int			cluster;
 	int			area;
@@ -49,6 +58,14 @@ typedef struct {
 
 	ptrdiff_t	firstLeafSurface;
 	int			numLeafSurfaces;
+
+	// The patches of the leaf surfaces, in the same order, without the planar surfaces (see CM_BuildLeafPatchLists).
+	struct cPatch_s	**patches;
+	int			numPatches;
+
+	// The brushes of the leaf that have sides, in the same order (see CM_BuildLeafPatchLists).
+	cLeafBrush_t	*leafBrushes;
+	int			numLeafBrushData;
 } cLeaf_t;
 
 typedef struct cmodel_s {
@@ -84,7 +101,7 @@ public:
 	void				Destroy(void) { }
 };
 
-typedef struct {
+typedef struct cPatch_s {
 	int			checkcount;				// to avoid repeated testings
 	int			surfaceFlags;
 	int			contents;
@@ -157,6 +174,17 @@ extern	int			c_traces, c_brush_traces, c_patch_traces;
 extern	cvar_t		*cm_noAreas;
 extern	cvar_t		*cm_noCurves;
 extern	cvar_t		*cm_playerCurveClip;
+
+// cm_fastTrace: bit flags for trace shortcuts that give the same results as the original code.
+// cm_verifyTrace 1 runs every box trace with and without them and reports differences.
+#define	CM_FAST_OFFSET		1	// tree walk of a box trace uses the real size of the box at slanted planes, not 2048 (off by default: not exact without full bevels)
+#define	CM_FAST_PATCHBOUNDS	2	// a point trace skips a patch when its bounds do not touch the bounds of the patch
+#define	CM_FAST_PATCHLIST	4	// a leaf visits its list of patches, not all its surfaces
+#define	CM_FAST_LEAFBRUSH	8	// a leaf tests contents and bounds on its own brush list before it reads a brush
+#define	CM_FAST_ALL			15
+extern	cvar_t		*cm_fastTrace;
+extern	cvar_t		*cm_verifyTrace;
+extern	int			cm_fastFlags;	// the flags of the trace in progress
 
 extern clipMap_t	SubBSP[MAX_SUB_BSP];
 extern int			NumSubBSP;

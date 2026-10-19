@@ -33,23 +33,27 @@ R2GoreTextureCoordinates::R2GoreTextureCoordinates()
 
 R2GoreTextureCoordinates::~R2GoreTextureCoordinates()
 {
+	// The backend reads the surface struct and tex of a frame in flight: free them later.
+	// Only the main thread reads verts and indexes (R_UpdateGoreVBO), so they go now.
 	for ( int i = 0; i < MAX_LODS; i++ )
 	{
 		if ( tex_vbo[i] )
 		{
-			ri.Z_Free( tex_vbo[i]->verts );
+			if ( tex_vbo[i]->verts )
+				ri.Z_Free( tex_vbo[i]->verts );
 			tex_vbo[i]->verts = NULL;
 
-			ri.Z_Free( tex_vbo[i]->indexes );
+			if ( tex_vbo[i]->indexes )
+				ri.Z_Free( tex_vbo[i]->indexes );
 			tex_vbo[i]->indexes = NULL;
 
-			ri.Z_Free( tex_vbo[i] );
+			R_DeferredFree( tex_vbo[i] );
 			tex_vbo[i] = NULL;
 		}
 
 		else if ( tex[i] )
 		{
-			ri.Z_Free( tex[i] );
+			R_DeferredFree( tex[i] );
 			tex[i] = NULL;
 		}
 	}

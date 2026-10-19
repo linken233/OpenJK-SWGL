@@ -25,7 +25,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #define __G_PUBLIC_H__
 // g_public.h -- game module information visible to server
 
-#define	GAME_API_VERSION	10
+#define	GAME_API_VERSION	11	// 11: snapshot_t holds 1024 entities
 
 // entity->svFlags
 // the server does not know how to interpret most of the values

@@ -203,9 +203,9 @@ void vk_rtx_god_rays_prepare_ubo(
 	float shadowmap_depth_scale)
 {
 #if 0
-	VectorAdd( tr.viewParms.visBounds[0], tr.viewParms.visBounds[1], ubo->world_center );
+	VectorAdd( backEnd.viewParms.visBounds[0], backEnd.viewParms.visBounds[1], ubo->world_center );
 	VectorScale(ubo->world_center, 0.5f, ubo->world_center);
-	VectorSubtract( tr.viewParms.visBounds[1], tr.viewParms.visBounds[0], ubo->world_size);
+	VectorSubtract( backEnd.viewParms.visBounds[1], backEnd.viewParms.visBounds[0], ubo->world_size);
 #else
 	VectorAdd(world_aabb->mins, world_aabb->maxs, ubo->world_center);
 	VectorScale(ubo->world_center, 0.5f, ubo->world_center);

@@ -403,7 +403,7 @@ inline static uint32_t ComputeFinalVertexColor( const byte *colors ) {
 	r = g = b = 0;
 	for( k=0; k<MAXLIGHTMAPS; k++ ) {
 		if ( tess.shader->styles[k] < LS_UNUSED ) {
-			byte *styleColor = styleColors[tess.shader->styles[k]];
+			byte *styleColor = backEndDataBE->styleColors[tess.shader->styles[k]];
 
 			r += (uint32_t)(*colors++) * (uint32_t)(*styleColor++);
 			g += (uint32_t)(*colors++) * (uint32_t)(*styleColor++);
@@ -1290,7 +1290,7 @@ static void RB_SurfaceElectricity()
 	// see if we should grow from start to end
 	if ( e->renderfx & RF_GROW )
 	{
-		perc = 1.0f - ( e->endTime - tr.refdef.time ) / e->angles[1]/*duration*/;
+		perc = 1.0f - ( e->endTime - backEnd.refdef.time ) / e->angles[1]/*duration*/;
 
 		if ( perc > 1.0f )
 		{

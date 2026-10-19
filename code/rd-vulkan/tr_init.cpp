@@ -213,6 +213,10 @@ cvar_t	*r_patchStitching;
 // Vulkan
 cvar_t	*r_defaultImage;
 cvar_t	*r_device;
+cvar_t	*r_swapInterval;
+cvar_t	*r_renderThread;
+cvar_t	*r_renderThreadSyncLog;
+cvar_t	*r_timescale;
 cvar_t	*r_stencilbits;
 cvar_t	*r_ext_multisample;
 cvar_t	*r_ext_supersample;
@@ -257,8 +261,21 @@ cvar_t	*pt_accumulation_rendering_framenum;
 cvar_t	*pt_denoiser;
 cvar_t	*pt_dlight_radius;
 cvar_t	*pt_dlight_min_dist;
+cvar_t	*pt_jobs;
 cvar_t	*pt_dlight_lift;
 cvar_t	*pt_lightgen_scale;
+// Read by the backend: registered here so the backend never calls Cvar_Get.
+cvar_t	*pt_light_scale_edit;
+cvar_t	*pt_light_scale_dlight;
+cvar_t	*pt_light_scale_saber;
+cvar_t	*pt_glow_scale;
+cvar_t	*pt_light_styles;
+cvar_t	*pt_weapon_fx_shaders;
+cvar_t	*pt_sky_per_map;
+cvar_t	*pt_sky_q3map_sun;
+cvar_t	*pt_ambient_floor_scale;
+cvar_t	*tm_per_channel;
+cvar_t	*tm_contrast;
 
 #define UBO_CVAR_DO( _handle, _value ) cvar_t *sun_##_handle;
 	UBO_CVAR_LIST
@@ -933,6 +950,14 @@ static const size_t numCommands = ARRAY_LEN( commands );
 R_Register
 ===============
 */
+void RTX_ParallelFor( int count, int grain, void (*fn)( int begin, int end, void *ctx ), void *ctx )
+{
+	if ( pt_jobs && pt_jobs->integer && ri.Jobs_ParallelFor )
+		ri.Jobs_ParallelFor( count, grain, fn, ctx );
+	else if ( count > 0 )
+		fn( 0, count, ctx );
+}
+
 void R_Register( void )
 {
 	//FIXME: lol badness
@@ -1092,6 +1117,13 @@ void R_Register( void )
 	r_maxpolys							= Cvar_Get( "r_maxpolys",						XSTRING( DEFAULT_MAX_POLYS ),		CVAR_NONE, "" );
 	r_maxpolyverts						= Cvar_Get( "r_maxpolyverts",					XSTRING( DEFAULT_MAX_POLYVERTS ),	CVAR_NONE, "" );
 
+	// Read by the backend: registered here so the backend never looks a cvar up by name.
+	r_swapInterval						= ri.Cvar_Get("r_swapInterval",					"0",						CVAR_NONE);
+	r_timescale							= ri.Cvar_Get("timescale",						"1",						CVAR_NONE);
+
+	r_renderThread						= Cvar_Get( "r_renderThread",					"0",						CVAR_ARCHIVE_ND | CVAR_LATCH, "Run the back end on its own thread.\nApplies after vid_restart." );
+	r_renderThreadSyncLog				= Cvar_Get( "r_renderThreadSyncLog",			"0",						CVAR_NONE, "Print the places that wait for the render thread,\nevery com_perflogFrames frames." );
+
 	// Vulkan
 	r_defaultImage						= Cvar_Get("r_defaultImage",						"",							CVAR_ARCHIVE_ND | CVAR_LATCH, "");
 	r_device							= Cvar_Get("r_device",							"-1",						CVAR_ARCHIVE_ND | CVAR_LATCH, "Select physical device to render:\n" \
@@ -1177,6 +1209,7 @@ void R_Register( void )
 	 * reach, which is what the port used to do. */
 	pt_dlight_radius					= ri.Cvar_Get("pt_dlight_radius",					"2",	CVAR_NONE);
 	pt_dlight_min_dist					= ri.Cvar_Get("pt_dlight_min_dist",					"0.433",	CVAR_NONE);	// fraction of the raster radius, 0 disables it
+	pt_jobs								= ri.Cvar_Get("pt_jobs",							"1",	CVAR_NONE);	// 1 = the RTX CPU preparation runs on the job pool, 0 = serial
 	pt_dlight_lift						= ri.Cvar_Get("pt_dlight_lift",						"16",	CVAR_NONE);	// units a dlight on a surface moves off it, 0 disables it
 	/* Overall level of the lights read from the map's entity lump. q3map2's `light` key
 	 * is an inverse-square strength with no absolute unit, so the conversion to the
@@ -1184,6 +1217,18 @@ void R_Register( void )
 	/* Converts the .lgt intensity to the tracer radiance. The file stores a lightmap
 	 * luminance times a distance squared, which has no absolute unit. */
 	pt_lightgen_scale					= ri.Cvar_Get("pt_lightgen_scale",				"0.005",	CVAR_ARCHIVE);
+
+	pt_light_scale_edit					= ri.Cvar_Get("pt_light_scale_edit",			"0.1",		CVAR_ARCHIVE_ND);
+	pt_light_scale_dlight				= ri.Cvar_Get("pt_light_scale_dlight",			"0.02",		CVAR_ARCHIVE_ND);	// intensity of blaster bolts, explosions and muzzle flashes, 1 for no change
+	pt_light_scale_saber				= ri.Cvar_Get("pt_light_scale_saber",			"10",		CVAR_ARCHIVE_ND);
+	pt_glow_scale						= ri.Cvar_Get("pt_glow_scale",					"1.0",		CVAR_ARCHIVE_ND);
+	pt_light_styles						= ri.Cvar_Get("pt_light_styles",				"1",		CVAR_ARCHIVE_ND);
+	pt_weapon_fx_shaders				= ri.Cvar_Get("pt_weapon_fx_shaders",			"gfx/effects/sabers/ gfx/effects/blaster_blob gfx/effects/whiteGlow gfx/effects/blasterFrontFlash gfx/effects/blasterSideFlash", CVAR_ARCHIVE_ND);
+	pt_sky_per_map						= ri.Cvar_Get("pt_sky_per_map",					"1",		CVAR_ARCHIVE_ND);
+	pt_sky_q3map_sun					= ri.Cvar_Get("pt_sky_q3map_sun",				"0",		CVAR_ARCHIVE_ND);
+	pt_ambient_floor_scale				= ri.Cvar_Get("pt_ambient_floor_scale",			"1",		CVAR_ARCHIVE_ND);
+	tm_per_channel						= ri.Cvar_Get("tm_per_channel",					"1",		CVAR_ARCHIVE_ND);	// 0 keeps the hue of bright colors, 1 maps each channel
+	tm_contrast							= ri.Cvar_Get("tm_contrast",					"1",		CVAR_ARCHIVE_ND);	// around the middle gray, 1 for no change
 
 #define UBO_CVAR_DO( _handle, _value ) sun_##_handle = ri.Cvar_Get( #_handle,	#_value, CVAR_NONE);
 	UBO_CVAR_LIST
@@ -1337,6 +1382,11 @@ void R_Init( void ) {
 
 	vk_debug("----- R_Init -----\n" );
 	ri.Printf(PRINT_ALL, "----- R_Init -----\n");
+
+	// The thread must be idle before the state it reads is cleared.
+	R_RenderThreadShutdown();
+	r_numVideoMaps = 0;
+
 	// clear all our internal state
 	Com_Memset( &tr, 0, sizeof( tr ) );
 	Com_Memset( &backEnd, 0, sizeof( backEnd ) );
@@ -1399,10 +1449,32 @@ void R_Init( void ) {
 	max_polys = Q_min( r_maxpolys->integer, DEFAULT_MAX_POLYS );
 	max_polyverts = Q_min( r_maxpolyverts->integer, DEFAULT_MAX_POLYVERTS );
 
-	ptr = (byte *)Hunk_Alloc( sizeof( *backEndData ) + sizeof(srfPoly_t) * max_polys + sizeof(polyVert_t) * max_polyverts, h_low);
-	backEndData = (backEndData_t *) ptr;
-	backEndData->polys = (srfPoly_t *) ((char *) ptr + sizeof( *backEndData ));
-	backEndData->polyVerts = (polyVert_t *) ((char *) ptr + sizeof( *backEndData ) + sizeof(srfPoly_t) * max_polys);
+	// One buffer for the frontend and one for the backend when the render thread is on.
+	{
+		const size_t g2PoolBytes = sizeof(mat3x4_t) * G2_SNAP_MAX_BONES;
+		const size_t bufferBytes = sizeof( *backEndData ) + sizeof(srfPoly_t) * max_polys + sizeof(polyVert_t) * max_polyverts + g2PoolBytes * 3;
+		const int numBuffers = R_RenderThreadWanted() ? 2 : 1;
+
+		for ( int b = 0; b < numBuffers; b++ )
+		{
+			ptr = (byte *)Hunk_Alloc( (int)bufferBytes, h_low);
+			backEndDataBuf[b] = (backEndData_t *) ptr;
+			backEndDataBuf[b]->polys = (srfPoly_t *) ((char *) ptr + sizeof( *backEndData ));
+			backEndDataBuf[b]->polyVerts = (polyVert_t *) ((char *) ptr + sizeof( *backEndData ) + sizeof(srfPoly_t) * max_polys);
+
+			// Bone pools of the Ghoul2 snapshot.
+			byte *pool = (byte *)( backEndDataBuf[b]->polyVerts + max_polyverts );
+			backEndDataBuf[b]->g2.bones = (mat3x4_t *)pool;
+			backEndDataBuf[b]->g2.prevBones = (mat3x4_t *)( pool + g2PoolBytes );
+			backEndDataBuf[b]->g2.rtxBones = (mat3x4_t *)( pool + g2PoolBytes * 2 );
+		}
+
+		if ( numBuffers == 1 )
+			backEndDataBuf[1] = NULL;
+
+		backEndData = backEndDataBuf[0];
+		backEndDataBE = backEndDataBuf[0];
+	}
 
 	R_InitNextFrame();
 
@@ -1451,6 +1523,8 @@ void R_Init( void ) {
 	vk_rtx_begin_registration();
 #endif
 
+	R_RenderThreadInit();
+
 	vk_debug("----- finished R_Init -----\n" );
 
 }
@@ -1464,6 +1538,9 @@ RE_Shutdown
 */
 void RE_Shutdown( qboolean destroyWindow, qboolean restarting ) {
 	vk_debug("RE_Shutdown( %i, %i )\n", destroyWindow, restarting);
+
+	// The thread stops first. The frame in flight uses the resources freed below.
+	R_RenderThreadShutdown();
 
 	for (size_t i = 0; i < numCommands; i++)
 		ri.Cmd_RemoveCommand(commands[i].cmd);
@@ -1521,6 +1598,12 @@ Touch all images to make sure they are resident
 =============
 */
 void RE_EndRegistration( void ) {
+	R_SyncRenderThread();
+
+	// The load is over (C_LevelLoadBegin made every frame run on the main thread). The first
+	// frames of the level can still load data in the backend: they run on the main thread too.
+	R_RenderThreadSetSync( 4 );
+
 	vk_wait_idle();
 
 	// command buffer is not in recording state at this stage
@@ -1610,6 +1693,11 @@ void C_LevelLoadBegin(const char *psMapName, ForceReload_e eForceReload)
 	static char sPrevMapName[MAX_QPATH]={0};
 	bool bDeleteModels = eForceReload == eForceReload_MODELS || eForceReload == eForceReload_ALL;
 
+	// Hunk_Clear frees the data of the backend before the renderer hears about it: until
+	// RE_EndRegistration, every frame runs on the main thread.
+	R_SyncRenderThread();
+	R_RenderThreadSetSync( 0x3fffffff );
+
 	if( bDeleteModels )
 	{
 		CModelCache->DeleteAll();
@@ -1635,6 +1723,7 @@ int C_GetLevel( void )
 
 void C_LevelLoadEnd( void )
 {
+	R_SyncRenderThread();
 	CModelCache->LevelLoadEnd( qfalse );
 	ri.SND_RegisterAudio_LevelLoadEnd( qfalse );
 	ri.S_RestartMusic();
@@ -1750,6 +1839,10 @@ void RE_CaptureNextFrame( byte *rgba, int width, int height );
 
 static void *RE_GetExtension( const char *name )
 {
+	if ( !Q_stricmp( name, RD_PERF_API_NAME ) ) {
+		return vk_perf_get_api();
+	}
+
 #ifdef USE_RTX
 	return RTX_LightEdit_GetExtension( name );
 #else
@@ -1769,6 +1862,7 @@ Q_EXPORT refexport_t* QDECL GetRefAPI( int apiVersion, refimport_t *rimp ) {
 
 	assert( rimp );
 	ri = *rimp;
+	RB_PrintInstall();
 
 	memset( &re, 0, sizeof( re ) );
 

@@ -29,6 +29,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "sstring.h"	// to get Gil's string class, because MS's doesn't compile properly in here
 #include "stringed_ingame.h"
 #include "game_version.h"
+#include "jobs.h"
 #include "../shared/sys/sys_local.h"
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
@@ -147,6 +148,11 @@ void QDECL Com_Printf( const char *fmt, ... ) {
 	va_start (argptr,fmt);
 	Q_vsnprintf (msg, sizeof(msg), fmt, argptr);
 	va_end (argptr);
+
+	if ( Jobs_IsWorkerThread() ) {
+		Jobs_QueuePrint( msg );
+		return;
+	}
 
 	if ( rd_buffer ) {
 		if ((strlen (msg) + strlen(rd_buffer)) > (unsigned)(rd_buffersize - 1)) {
@@ -328,6 +334,16 @@ void NORETURN QDECL Com_Error( int code, const char *fmt, ... ) {
 	static int	lastErrorTime;
 	static int	errorCount;
 	int			currentTime;
+
+	if ( Jobs_IsWorkerThread() ) {
+		// The error must not unwind or shut down on a worker. The thread that owns the job raises it.
+		char	text[MAXPRINTMSG];
+
+		va_start( argptr, fmt );
+		Q_vsnprintf( text, sizeof( text ), fmt, argptr );
+		va_end( argptr );
+		Jobs_WorkerError( code, text );
+	}
 
 	if ( com_errorEntered ) {
 		Sys_Error( "recursive error after: %s", com_errorMessage );
@@ -1189,6 +1205,8 @@ void Com_Init( char *commandLine ) {
 		com_fixedtime = Cvar_Get ("fixedtime", "0", CVAR_CHEAT);
 		com_showtrace = Cvar_Get ("com_showtrace", "0", CVAR_CHEAT);
 		com_speeds = Cvar_Get ("com_speeds", "0", 0);
+		PerfLog_Init();
+		Jobs_Init();
 
 #ifdef G2_PERFORMANCE_ANALYSIS
 		com_G2Report = Cvar_Get("com_G2Report", "0", 0);
@@ -1444,6 +1462,8 @@ void Com_Frame( void ) {
 		int		timeVal;
 		static int	lastTime = 0, bias = 0;
 
+		Jobs_DrainPrints();
+
 		// write config file if anything changed
 		Com_WriteConfiguration();
 
@@ -1502,8 +1522,11 @@ void Com_Frame( void ) {
 			timeBeforeServer = Sys_Milliseconds ();
 		}
 
+		const double perfWorkStart = PerfLog_Now();
+
 		SV_Frame (msec, fractionMsec);
 
+		const double perfServerEnd = PerfLog_Now();
 
 		//
 		// client system
@@ -1536,6 +1559,8 @@ void Com_Frame( void ) {
 				timeAfter = Sys_Milliseconds ();
 			}
 		}
+
+		PerfLog_EndFrame( perfWorkStart, perfServerEnd, PerfLog_Now() );
 
 
 		//
@@ -1645,6 +1670,7 @@ Com_Shutdown
 =================
 */
 void Com_Shutdown (void) {
+	Jobs_Shutdown();
 	CM_ClearMap();
 
 	if (logfile) {

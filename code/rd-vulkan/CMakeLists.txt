@@ -83,6 +83,8 @@ set(SPVulkanRendererFiles
 	"${SPDir}/rd-vulkan/vk_frame.cpp"
 	"${SPDir}/rd-vulkan/vk_image.cpp"
 	"${SPDir}/rd-vulkan/vk_normalmap.cpp"
+	"${SPDir}/rd-vulkan/vk_perf.cpp"
+	"${SPDir}/rd-vulkan/vk_perf.h"
 	"${SPDir}/rd-vulkan/vk_mikktspace.cpp"
 	"${SPDir}/rd-vulkan/vk_pbr.cpp"
 	"${SPDir}/rd-vulkan/vk_cubemap.cpp"
@@ -215,7 +217,7 @@ list(APPEND SPVulkanRendererIncludeDirectories "${SPDir}/rd-common")
 
 set(SPVulkanRendererIncludeDirectories ${SPVulkanRendererIncludeDirectories} ${OpenJKLibDir})
 
-set(SPVulkanDefines ${SharedDefines} "RENDERER")
+set(SPVulkanDefines ${SharedDefines} "Q_MATH_INLINE" "RENDERER")
 
 # NVIDIA NRD v4.17.3, compiled into the renderer DLL (see nrd/README.md).
 # A separate OBJECT library keeps the C++17 setting and the NRD defines away from the renderer files.

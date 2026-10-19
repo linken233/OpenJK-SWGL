@@ -34,6 +34,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "sys/sys_loadlib.h"
 #include "qcommon/ojk_saved_game.h"
 #include "cl_dualref.h"
+#include "qcommon/jobs.h"
 
 #define	RETRANSMIT_TIMEOUT	3000	// time between connection packet retransmits
 
@@ -764,6 +765,7 @@ CL_Frame
 extern cvar_t	*cl_newClock;
 static unsigned int frameCount;
 float avgFrametime=0.0;
+void PerfLog_ConnectionTrace( void );	// server/sv_perflog.cpp
 void CL_Frame ( int msec,float fractionMsec ) {
 
 	if ( !com_cl_running->integer ) {
@@ -772,6 +774,8 @@ void CL_Frame ( int msec,float fractionMsec ) {
 
 	// load the ref / cgame if needed
 	CL_StartHunkUsers();
+
+	PerfLog_ConnectionTrace();
 
 	if ( cls.state == CA_DISCONNECTED && !( Key_GetCatcher( ) & KEYCATCH_UI )
 		&& !com_sv_running->integer ) {
@@ -874,10 +878,14 @@ void CL_Frame ( int msec,float fractionMsec ) {
 		}
 	} else {
 		// update the screen
+		const double perfScr = PerfLog_Now();
 		SCR_UpdateScreen();
+		PerfLog_AddPhase( 0, PerfLog_Now() - perfScr );
 	}
 	// update audio
+	const double perfAudio = PerfLog_Now();
 	S_Update();
+	PerfLog_AddPhase( 1, PerfLog_Now() - perfAudio );
 
 	// advance local effects for next frame
 	SCR_RunCinematic();
@@ -1092,6 +1100,10 @@ static void Hunk_ClearToMark_Second( void ) {
 #define DEFAULT_RENDER_LIBRARY	"rdsp_swgl"
 #endif
 
+static qboolean CL_RefIsWorkerThread( void ) {
+	return Jobs_IsWorkerThread() ? qtrue : qfalse;
+}
+
 void CL_InitRef( void ) {
 	refexport_t	*ret;
 	static refimport_t rit;
@@ -1205,6 +1217,12 @@ void CL_InitRef( void ) {
 	rit.SV_PointContents = SV_PointContents;
 
 	rit.saved_game = &ojk::SavedGame::get_instance();
+
+	rit.Jobs_ParallelFor = Jobs_ParallelFor;
+	rit.Jobs_NumThreads = Jobs_NumThreads;
+	rit.Jobs_IsWorkerThread = CL_RefIsWorkerThread;
+	rit.Jobs_SetThreadErrorHook = Jobs_SetThreadErrorHook;
+	rit.Z_SetThreadSafe = Z_SetThreadSafe;
 
 	ret = GetRefAPI( REF_API_VERSION, &rit );
 

@@ -951,6 +951,10 @@ static qboolean SurfIsOffscreen( const drawSurf_t *drawSurf, vec4_t clipDest[128
 	R_RotateForViewer( &tr.ori, &tr.viewParms );
 
 	R_DecomposeSort(drawSurf->sort, &entityNum, &shader, &fogNum, &dlighted);
+
+	// This builds the surface in tess, the working buffer of the backend.
+	R_SyncRenderThread();
+
 	RB_BeginSurface(shader, fogNum);
 
 #ifdef USE_VBO
@@ -1314,6 +1318,15 @@ static void R_SortLitsurfs( dlight_t *dl )
 	dl->head = tape[base].first;
 }
 
+static void R_SortLitsurfsRange( int begin, int end, void *ctx )
+{
+	dlight_t **lights = (dlight_t **)ctx;
+
+	for (int i = begin; i < end; i++) {
+		R_SortLitsurfs(lights[i]);
+	}
+}
+
 /*
 =================
 R_AddLitSurf
@@ -1388,8 +1401,10 @@ void R_AddDrawSurf( surfaceType_t *surface, shader_t *shader,
 	}
 #endif
 
-	// instead of checking for overflow, we just mask the index
-	// so it wraps around
+	// A full list drops the surface: a wrap would overwrite the surfaces that queued commands (cubemap views) still read.
+	if ( tr.refdef.numDrawSurfs >= MAX_DRAWSURFS ) {
+		return;
+	}
 	index = tr.refdef.numDrawSurfs & DRAWSURF_MASK;
 	// the sort data is packed into a single 64 bit value so it can be
 	// compared quickly during the sorting process
@@ -1479,15 +1494,21 @@ void R_SortDrawSurfs( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 
 #ifdef USE_PMLIGHT
 	{
-		dlight_t *dl;
+		static dlight_t	*sortLights[MAX_REAL_DLIGHTS];
+		int				numSortLights = 0;
 
 		// all the lit surfaces are in a single queue
 		// but each light's surfaces are sorted within its subsection
+		// (the lists of two lights share no node: one job per light)
 		for (i = 0; i < tr.refdef.num_dlights; ++i) {
-			dl = &tr.refdef.dlights[i];
-			if (dl->head) {
-				R_SortLitsurfs(dl);
+			if (tr.refdef.dlights[i].head) {
+				sortLights[numSortLights++] = &tr.refdef.dlights[i];
 			}
+		}
+		if (numSortLights > 1 && ri.Jobs_ParallelFor) {
+			ri.Jobs_ParallelFor(numSortLights, 1, R_SortLitsurfsRange, sortLights);
+		} else {
+			R_SortLitsurfsRange(0, numSortLights, sortLights);
 		}
 	}
 #endif // USE_PMLIGHT
@@ -1673,7 +1694,7 @@ static void R_GenerateDrawSurfs( void ) {
 
 	
 #ifdef USE_VBO_SS
-	if ( tr.ss.groups_count )
+	if ( backEndData->ss.groups_count )
 	{
 		tr.shiftedEntityNum = (sortKey_t)REFENTITYNUM_WORLD << QSORT_REFENTITYNUM_SHIFT;
 
@@ -1754,6 +1775,7 @@ void R_RenderView( const viewParms_t *parms ) {
 	if ( tr.world && !( tr.refdef.rdflags & RDF_NOWORLDMODEL ) )
 	{
 		R_SetViewFogIndex();
+		R_WorldEffectsSetViewOrigin( tr.viewParms.ori.origin );
 	}
 
 	R_GenerateDrawSurfs();

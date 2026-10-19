@@ -31,6 +31,9 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 #include "tr_cache.h"
 
+#include <algorithm>
+#include <functional>
+
 #define	LL(x) x=LittleLong(x)
 #define	LS(x) x=LittleShort(x)
 #define	LF(x) x=LittleFloat(x)
@@ -131,8 +134,12 @@ void G2Time_ReportTimers(void)
 // one view may hold, not how many exist. 4096 covers JKA's own scenes and nothing more;
 // a couple of hundred NPCs at roughly 25 surfaces each hit the ceiling and ERR_DROP.
 static const int MAX_RENDERABLE_SURFACES = 32768;
-static CRenderableSurface renderSurfHeap[MAX_RENDERABLE_SURFACES];
+
+// Two heaps: the frontend allocates from one while the render thread reads the other.
+// R_RenderThreadSwapBuffers swaps them with backEndData.
+static CRenderableSurface renderSurfHeap[2][MAX_RENDERABLE_SURFACES];
 static int currentRenderSurfIndex = 0;
+static int renderSurfHeapSelect = 0;
 
 static CRenderableSurface *AllocGhoul2RenderableSurface( void )
 {
@@ -143,18 +150,28 @@ static CRenderableSurface *AllocGhoul2RenderableSurface( void )
 		return NULL;
 	}
 
-	CRenderableSurface *rs = &renderSurfHeap[currentRenderSurfIndex++];
+	CRenderableSurface *rs = &renderSurfHeap[renderSurfHeapSelect][currentRenderSurfIndex++];
 
 	rs->Init();
 
 	return rs;
 }
 
+// Frontend heap only.
 void ResetGhoul2RenderableSurfaceHeap( void ) {
 	currentRenderSurfIndex = 0;
 }
 
+void R_G2_SwapRenderSurfHeap( void )
+{
+	renderSurfHeapSelect ^= 1;
+	currentRenderSurfIndex = 0;
+}
+
 bool HackadelicOnClient=false; // means this is a render traversal
+
+static int R_G2_SnapAcquire( CBoneCache *bc );
+static void R_G2_SnapMarkBones( int slot, const mdxmSurface_t *surface );
 
 qboolean G2_SetupModelPointers(CGhoul2Info *ghlInfo);
 qboolean G2_SetupModelPointers(CGhoul2Info_v &ghoul2);
@@ -398,18 +415,21 @@ public:
 
 	// GPU Data
 	mat3x4_t boneMatrices[72];
-	int      uboOffset;
 
 	// Previous frame's pose and model->world placement, for r_velocityBuffer's skinned
 	// motion vectors. Kept inside the cache rather than in a side table keyed by
 	// CBoneCache*: the pointer is stable while the model lives, but a removed model's
 	// address can be handed straight back to a new one, and an external table would then
-	// give the new model the old one's history. Rolled forward in RB_TransformBones().
+	// give the new model the old one's history. Rolled forward in R_G2_SnapFillRaster().
 	mat3x4_t prevBoneMatrices[72];
 	mat4_t   modelMatrix;
 	mat4_t   prevModelMatrix;
 	int      prevFrameNum;	// tr.frameCount this was last touched on; -1 = never
 	qboolean prevValid;		// qfalse until a contiguous previous frame exists
+
+	// Slot of this cache in backEndData->g2 for the scene serial snapScene, see R_G2_SnapAcquire.
+	int      snapScene;
+	int      snapSlot;
 
 	// skinned vertices for the collision traces, see g2CollisionVerts_t
 	g2CollisionVerts_t collVerts;
@@ -422,13 +442,14 @@ public:
 		assert(aheader);
 
 		Com_Memset(boneMatrices, 0, sizeof(boneMatrices));
-		uboOffset = -1;
 
 		Com_Memset(prevBoneMatrices, 0, sizeof(prevBoneMatrices));
 		Matrix16Identity(modelMatrix);
 		Matrix16Identity(prevModelMatrix);
 		prevFrameNum = -1;
 		prevValid = qfalse;
+		snapScene = -1;
+		snapSlot = -1;
 
 		collVerts.touch = -1;
 
@@ -833,6 +854,7 @@ public:
 	int				fogNum;
 	qboolean		personalModel;
 	CBoneCache		*boneCache;
+	int				g2Snap = -1;	// snapshot model of boneCache, see R_G2_SnapAcquire
 	int				renderfx;
 	skin_t			*skin;
 	model_t			*currentModel;
@@ -1810,7 +1832,7 @@ void G2_TransformBone (int child,CBoneCache &BC)
 			// this is crazy, we are gonna drive the animation to ID while we are doing post mults to compensate.
 			Multiply_3x4Matrix(&temp,&firstPass, &skel->BasePoseMat);
 			float	matrixScale = VectorLength((float*)&temp);
-			static mdxaBone_t		toMatrix =
+			mdxaBone_t		toMatrix =	// not static: bones of several entities evaluate on the job pool
 			{
 				{
 					{ 1.0f, 0.0f, 0.0f, 0.0f },
@@ -2067,11 +2089,29 @@ void G2_TransformBone (int child,CBoneCache &BC)
 //rww - RAGDOLL_END
 //rwwFIXMEFIXME: Move this into the stupid header or something.
 
+// Creates the bone cache of a model if it has none.
+static void G2_EnsureBoneCache(CGhoul2Info &ghoul2)
+{
+	if (!ghoul2.mBoneCache)
+	{
+		ghoul2.mBoneCache=new CBoneCache((model_t *)ghoul2.currentModel,(mdxaHeader_t *)ghoul2.aHeader);
+
+#ifdef _FULL_G2_LEAK_CHECKING
+		g_Ghoul2Allocations += sizeof(*ghoul2.mBoneCache);
+#endif
+	}
+}
+
 void G2_TransformGhoulBones(boneInfo_v &rootBoneList,mdxaBone_t &rootMatrix, CGhoul2Info &ghoul2, int time,bool smooth=true)
 {
 #ifdef G2_PERFORMANCE_ANALYSIS
-	G2PerformanceTimer_G2_TransformGhoulBones.Start();
-	G2PerformanceCounter_G2_TransformGhoulBones++;
+	// The timers are plain globals: only threads outside the job pool write them.
+	const bool g2Perf = !ri.Jobs_IsWorkerThread();
+	if (g2Perf)
+	{
+		G2PerformanceTimer_G2_TransformGhoulBones.Start();
+		G2PerformanceCounter_G2_TransformGhoulBones++;
+	}
 #endif
 
 	/*
@@ -2101,14 +2141,7 @@ void G2_TransformGhoulBones(boneInfo_v &rootBoneList,mdxaBone_t &rootMatrix, CGh
 		assert(0); // this would be strange
 		return;
 	}
-	if (!ghoul2.mBoneCache)
-	{
-		ghoul2.mBoneCache=new CBoneCache(currentModel,aHeader);
-
-#ifdef _FULL_G2_LEAK_CHECKING
-		g_Ghoul2Allocations += sizeof(*ghoul2.mBoneCache);
-#endif
-	}
+	G2_EnsureBoneCache(ghoul2);
 	ghoul2.mBoneCache->mod=currentModel;
 	ghoul2.mBoneCache->header=aHeader;
 	assert(ghoul2.mBoneCache->mBones.size()==(unsigned)aHeader->numBones);
@@ -2199,7 +2232,10 @@ void G2_TransformGhoulBones(boneInfo_v &rootBoneList,mdxaBone_t &rootMatrix, CGh
 	TB.blendLerp=0;
 
 #ifdef G2_PERFORMANCE_ANALYSIS
-	G2Time_G2_TransformGhoulBones += G2PerformanceTimer_G2_TransformGhoulBones.End();
+	if (g2Perf)
+	{
+		G2Time_G2_TransformGhoulBones += G2PerformanceTimer_G2_TransformGhoulBones.End();
+	}
 #endif
 }
 
@@ -2213,19 +2249,10 @@ void G2_TransformGhoulBones(boneInfo_v &rootBoneList,mdxaBone_t &rootMatrix, CGh
 //======================================================================
 
 #ifdef USE_VBO_GHOUL2
-// The last three parameters are defaulted so the raster callers keep their four-argument
-// form; only the path tracer passes them, and it takes the branch below instead of filling
-// a CRenderableSurface - it has no surface to fill.
-static inline void vk_set_ghoul2_vbo_mesh( const CRenderSurface &RS, CRenderableSurface *surf, const int lod, const int surfaceIndex,
-	shader_t *shader = NULL, int bone_offset = 0, const qboolean rtx = qfalse )
+static inline void vk_set_ghoul2_vbo_mesh( const CRenderSurface &RS, CRenderableSurface *surf, const int lod, const int surfaceIndex )
 {
 	if ( !vk.vboGhoul2Active )
 		return;
-
-#ifdef USE_RTX
-	if ( rtx )
-		return vk_rtx_add_entity_mesh( &RS.currentModel->data.glm->vboModels[lod].vboMeshes[RS.surfaceNum].rtx_mesh, shader, bone_offset );
-#endif
 
 	surf->vboMesh = &RS.currentModel->data.glm->vboModels[lod].vboMeshes[RS.surfaceNum];
 #ifdef _DEBUG
@@ -2267,6 +2294,50 @@ void G2API_SetSurfaceOnOffFromSkin (CGhoul2Info *ghlInfo, qhandle_t renderSkin)
 }
 
 
+/*
+=================
+R_SkinSurfaceShader
+
+The shader a skin gives to the surface called name, or the default shader. Looking for
+the name in the skin costs a string compare per skin surface, for every surface of every
+character in every frame, so the index that matched is remembered.
+=================
+*/
+shader_t *R_SkinSurfaceShader( const skin_t *skin, const char *name )
+{
+	struct skinLookup_t {
+		const skin_t	*skin;
+		const char		*name;
+		int				epoch, numSurfaces, index;
+	};
+	static skinLookup_t	cache[4096];
+
+	const size_t h = ( ( (size_t)skin >> 4 ) * 31 + ( (size_t)name >> 3 ) ) & ( ARRAY_LEN( cache ) - 1 );
+	skinLookup_t *c = &cache[h];
+
+	if ( c->skin != skin || c->name != name || c->epoch != tr.modelEpoch || c->numSurfaces != skin->numSurfaces ) {
+		c->skin = skin;
+		c->name = name;
+		c->epoch = tr.modelEpoch;
+		c->numSurfaces = skin->numSurfaces;
+		c->index = -1;
+		for ( int j = 0 ; j < skin->numSurfaces ; j++ ) {
+			// the names have both been lowercased
+			if ( !strcmp( skin->surfaces[j]->name, name ) ) {
+				c->index = j;
+				break;
+			}
+		}
+	}
+	else if ( c->index >= 0 && strcmp( skin->surfaces[c->index]->name, name ) ) {
+		// the strings behind the pointers changed: look again
+		c->skin = NULL;
+		return R_SkinSurfaceShader( skin, name );
+	}
+
+	return c->index >= 0 ? (shader_t *)skin->surfaces[c->index]->shader : tr.defaultShader;
+}
+
 void RenderSurfaces(CRenderSurface &RS) //also ended up just ripping right from SP.
 {
 #ifdef G2_PERFORMANCE_ANALYSIS
@@ -2307,19 +2378,8 @@ void RenderSurfaces(CRenderSurface &RS) //also ended up just ripping right from 
 		}
 		else if ( RS.skin )
 		{
-			int		j;
-
 			// match the surface name to something in the skin file
-			shader = tr.defaultShader;
-			for ( j = 0 ; j < RS.skin->numSurfaces ; j++ )
-			{
-				// the names have both been lowercased
-				if ( !strcmp( RS.skin->surfaces[j]->name, surfInfo->name ) )
-				{
-					shader = (shader_t*)RS.skin->surfaces[j]->shader;
-					break;
-				}
-			}
+			shader = R_SkinSurfaceShader( RS.skin, surfInfo->name );
 		}
 		else
 		{
@@ -2334,7 +2394,8 @@ void RenderSurfaces(CRenderSurface &RS) //also ended up just ripping right from 
 #ifdef USE_VBO_GHOUL2
 			vk_set_ghoul2_vbo_mesh( RS, newSurf, RS.lod, surface->thisSurfaceIndex );
 #endif
-			newSurf->boneCache = RS.boneCache;
+			newSurf->g2Snap = RS.g2Snap;
+			R_G2_SnapMarkBones( RS.g2Snap, newSurf->surfaceData );
 			R_AddDrawSurf( (surfaceType_t *)newSurf, (shader_t *)shader, RS.fogNum, qfalse );
 			tr.needScreenMap |= shader->hasScreenMap;
 
@@ -2468,7 +2529,8 @@ void RenderSurfaces(CRenderSurface &RS) //also ended up just ripping right from 
 			{
 				newSurf->surfaceData = surface;
 			}
-			newSurf->boneCache = RS.boneCache;
+			newSurf->g2Snap = RS.g2Snap;
+			R_G2_SnapMarkBones( RS.g2Snap, newSurf->surfaceData );
 			R_AddDrawSurf( (surfaceType_t *)newSurf, tr.shadowShader, 0, qfalse );
 		}
 
@@ -2481,7 +2543,8 @@ void RenderSurfaces(CRenderSurface &RS) //also ended up just ripping right from 
 			CRenderableSurface *newSurf = AllocGhoul2RenderableSurface();
 			newSurf->surfaceData = surface;
 			vk_set_ghoul2_vbo_mesh( RS, newSurf, RS.lod, surface->thisSurfaceIndex );
-			newSurf->boneCache = RS.boneCache;
+			newSurf->g2Snap = RS.g2Snap;
+			R_G2_SnapMarkBones( RS.g2Snap, newSurf->surfaceData );
 			R_AddDrawSurf( (surfaceType_t *)newSurf, tr.projectionShadowShader, 0, qfalse );
 		}
 	}
@@ -3073,6 +3136,115 @@ static inline bool bInShadowRange(vec3_t location)
 
 /*
 ==============
+Ghoul2 snapshot, slot handling
+
+A slot is one model of one scene in backEndData->g2. A bone cache owns one slot for
+each scene serial. The scene pass R_G2_SnapshotScene fills the slots and moves to the
+next serial.
+==============
+*/
+static int					g2SnapSerial = 0;
+static int					g2SnapSceneFirst = 0;				// first slot of the scene being built
+static byte					g2SnapBoneUsed[G2_SNAP_MAX_BONES];	// per pool bone: a drawn surface skins with it
+static std::vector<drawSurfsCommand_t *>	g2SnapCmds;		// draw commands of the scene being built
+
+void R_G2_SnapReset( void )
+{
+	g2Snapshot_t &snap = backEndData->g2;
+
+	g2SnapSceneFirst = 0;
+	g2SnapCmds.clear();
+
+	if ( snap.overflowModels || snap.overflowBones
+#ifdef USE_RTX
+		|| snap.overflowRtx
+#endif
+		)
+	{
+		// snap is the buffer that the frontend reuses now: these counters belong to its last frame.
+		static int lastWarnTime = -100000;
+		const int now = ri.Milliseconds();
+
+		if ( now - lastWarnTime >= 5000 )
+		{
+			lastWarnTime = now;
+			ri.Printf( PRINT_WARNING, "Ghoul2 snapshot pool is full: %d models, %d bones dropped. Those models are not drawn.\n",
+				snap.overflowModels, snap.overflowBones );
+		}
+	}
+
+	snap.numModels = 0;
+	snap.numBones = 0;
+	snap.overflowModels = 0;
+	snap.overflowBones = 0;
+#ifdef USE_RTX
+	snap.numRtxModels = 0;
+	snap.numRtxMeshes = 0;
+	snap.overflowRtx = 0;
+#endif
+	g2SnapSerial++;
+}
+
+static int R_G2_SnapAcquire( CBoneCache *bc )
+{
+	g2Snapshot_t &snap = backEndData->g2;
+
+	if ( !bc )
+		return -1;
+
+	if ( bc->snapScene == g2SnapSerial )
+		return bc->snapSlot;
+
+	const int numBones = (int)bc->mBones.size();
+
+	bc->snapScene = g2SnapSerial;
+	bc->snapSlot = -1;
+
+	if ( snap.numModels >= G2_SNAP_MAX_MODELS )
+	{
+		snap.overflowModels++;
+		return -1;
+	}
+
+	if ( snap.numBones + numBones > G2_SNAP_MAX_BONES )
+	{
+		snap.overflowBones++;
+		return -1;
+	}
+
+	const int slot = snap.numModels++;
+	g2SnapModel_t &m = snap.models[slot];
+
+	m.firstBone = snap.numBones;
+	m.numBones = numBones;
+	m.uboOffset = -1;
+	Matrix16Identity( m.prevModelMatrix );
+
+	snap.numBones += numBones;
+	Com_Memset( g2SnapBoneUsed + m.firstBone, 0, numBones );
+
+	bc->snapSlot = slot;
+	return slot;
+}
+
+// Marks the bones a drawn surface skins with. Only the CPU skinning path evaluates by this mask.
+static void R_G2_SnapMarkBones( int slot, const mdxmSurface_t *surface )
+{
+	if ( slot < 0 || !surface || vk.vboGhoul2Active )
+		return;
+
+	const g2SnapModel_t &m = backEndData->g2.models[slot];
+	const int *boneRefs = (const int *)( (const byte *)surface + surface->ofsBoneReferences );
+
+	for ( int i = 0; i < surface->numBoneReferences; i++ )
+	{
+		if ( boneRefs[i] >= 0 && boneRefs[i] < m.numBones )
+			g2SnapBoneUsed[m.firstBone + boneRefs[i]] = 1;
+	}
+}
+
+/*
+==============
 R_AddGHOULSurfaces
 ==============
 */
@@ -3225,6 +3397,11 @@ void R_AddGhoulSurfaces( trRefEntity_t *ent ) {
 			{
 				RS.renderfx |= RF_NOSHADOW;
 			}
+			RS.g2Snap = R_G2_SnapAcquire(ghoul2[i].mBoneCache);
+			if (RS.g2Snap < 0)
+			{
+				continue;	// snapshot pool full: nothing to skin with
+			}
 			RenderSurfaces(RS);
 		}
 	}
@@ -3349,9 +3526,9 @@ static inline float G2_GetVertBoneWeightNotSlow( const mdxmVertex_t *pVert, cons
 }
 
 // The model->world matrix R_RotateForEntity() puts in ori.modelMatrix, minus everything
-// that needs viewParms. Split out so RB_TransformBones() can keep a per-frame copy for
+// that needs viewParms. Split out so the snapshot can keep a per-frame copy for
 // r_velocityBuffer without a view to hand.
-static void RB_BuildEntityModelMatrix( const trRefEntity_t *ent, mat4_t out )
+static void R_G2_BuildEntityModelMatrix( const trRefEntity_t *ent, mat4_t out )
 {
 	out[0] = ent->e.axis[0][0];	out[4] = ent->e.axis[1][0];	out[8]  = ent->e.axis[2][0];	out[12] = ent->e.origin[0];
 	out[1] = ent->e.axis[0][1];	out[5] = ent->e.axis[1][1];	out[9]  = ent->e.axis[2][1];	out[13] = ent->e.origin[1];
@@ -3359,145 +3536,486 @@ static void RB_BuildEntityModelMatrix( const trRefEntity_t *ent, mat4_t out )
 	out[3] = 0.0f;				out[7] = 0.0f;				out[11] = 0.0f;					out[15] = 1.0f;
 }
 
-void RB_TransformBones( const trRefEntity_t *ent, const trRefdef_t *refdef )
+/*
+==============
+Ghoul2 snapshot, scene pass
+
+R_G2_SnapshotScene runs after all views of a scene are built. It lists the Ghoul2
+entities of the scene and evaluates their poses on the job pool, one job for each
+entity. A job does what the backend did before: transform the bones of every model,
+then evaluate every bone. The backend reads only the result in backEndData->g2.
+==============
+*/
+typedef struct g2SnapJob_s {
+	CGhoul2Info_v		*ghoul2;
+	const void			*instance;	// &ghoul2[0]: wrappers with the same mItem share it
+	const trRefEntity_t	*ent;
+	mdxaBone_t			rootMatrix;
+	int					time;
+	qboolean			rtx;		// also evaluate the pose of the path tracer
+} g2SnapJob_t;
+
+static std::vector<g2SnapJob_t>	g2SnapJobs;
+
+void R_G2_NoteDrawSurfsCmd( drawSurfsCommand_t *cmd )
 {
-	if (!ent->e.ghoul2 || !G2API_HaveWeGhoul2Models(*((CGhoul2Info_v *)ent->e.ghoul2)))
-		return;
+	g2SnapCmds.push_back( cmd );
+}
 
-	CGhoul2Info_v &ghoul2 = *((CGhoul2Info_v *)ent->e.ghoul2);
+// Evaluates the bones of a cache and stores the matrices in dst. A NULL dst only evaluates.
+static void R_G2_SnapEvalBones( CBoneCache *bc, mat3x4_t *dst, const byte *used )
+{
+	const int numBones = (int)bc->mBones.size();
 
-	if (!ghoul2.IsValid())
-		return;
-
-	// if we don't want server ghoul2 models and this is one, or we just don't
-	// want ghoul2 models at all, then return
-	if (r_noGhoul2->integer || r_noServerGhoul2->integer)
+	for ( int bone = 0; bone < numBones; bone++ )
 	{
-		return;
-	}
-
-	if (!G2_SetupModelPointers(ghoul2))
-	{
-		return;
-	}
-
-	int currentTime = G2API_GetTime(refdef->time);
-
-	HackadelicOnClient = true;
-
-	mdxaBone_t rootMatrix;
-	RootMatrix(ghoul2, currentTime, ent->e.modelScale, rootMatrix);
-
-	int modelList[256];
-	assert(ghoul2.size() < ARRAY_LEN(modelList));
-	modelList[255] = 548;
-
-	// order sort the ghoul 2 models so bolt ons get bolted to the right model
-	int modelCount;
-	G2_Sort_Models(ghoul2, modelList, ARRAY_LEN(modelList), &modelCount);
-	assert(modelList[255] == 548);
-
-	// construct a world matrix for this entity
-	G2_GenerateWorldMatrix(ent->e.angles, ent->e.origin);
-
-	// walk each possible model for this entity and try transforming all bones
-	for (int j = 0; j < modelCount; ++j)
-	{
-		CGhoul2Info& g2Info = ghoul2[modelList[j]];
-
-		if (!g2Info.mValid)
-		{
+		if ( used && !used[bone] )
 			continue;
-		}
 
-		if ((g2Info.mFlags & (GHOUL2_NOMODEL | GHOUL2_NORENDER)) != 0)
-		{
-			continue;
-		}
+		const mdxaBone_t &b = bc->EvalRender( bone );
 
-		if (j && g2Info.mModelBoltLink != -1)
-		{
-			int	boltMod = (g2Info.mModelBoltLink >> MODEL_SHIFT) & MODEL_AND;
-			int	boltNum = (g2Info.mModelBoltLink >> BOLT_SHIFT) & BOLT_AND;
-
-			mdxaBone_t bolt;
-			G2_GetBoltMatrixLow(ghoul2[boltMod], boltNum, ent->e.modelScale, bolt);
-			G2_TransformGhoulBones(g2Info.mBlist, bolt, g2Info, currentTime);
-		}
-		else
-		{
-			G2_TransformGhoulBones(g2Info.mBlist, rootMatrix, g2Info, currentTime);
-		}
-
-		CBoneCache *bc = g2Info.mBoneCache;
-		//if (bc->uboGPUFrame == currentFrameNum)
-		//	return;
-
-		// Roll last frame's pose and placement forward before this frame overwrites them.
-		// Only on the first visit of a frame - this function runs once per view, and a
-		// second visit would make "previous" mean "this frame" and flatten the vector to
-		// zero. prevValid stays false unless the cache was also touched on frame-1, so a
-		// model that just appeared, or came back after being culled for a while, reports
-		// no motion for one frame instead of a jump from a stale pose.
-		if ( vk.velocityActive && bc->prevFrameNum != tr.frameCount ) {
-			bc->prevValid = (qboolean)( bc->prevFrameNum == tr.frameCount - 1 );
-
-			if ( bc->prevValid ) {
-				Com_Memcpy( bc->prevBoneMatrices, bc->boneMatrices, sizeof( bc->prevBoneMatrices ) );
-				Matrix16Copy( bc->modelMatrix, bc->prevModelMatrix );
-			}
-
-			bc->prevFrameNum = tr.frameCount;
-		}
-
-		for (int bone = 0; bone < (int)bc->mBones.size(); bone++)
-		{
-			const mdxaBone_t& b = bc->EvalRender(bone);
-			Com_Memcpy(
-				bc->boneMatrices + bone,
-				&b.matrix[0][0],
-				sizeof(mat3x4_t));
-		}
-		bc->uboOffset = -1;
-
-		vkUniformBones_t bonesBlock = {};
-		Com_Memcpy(
-			bonesBlock.boneMatrices,
-			bc->boneMatrices,
-			sizeof(mat3x4_t) * bc->mBones.size());
-
-		if ( vk.velocityActive ) {
-			// Same matrix R_RotateForEntity() builds for the Entity UBO, rebuilt here
-			// because that one is computed per view and only for this frame - the history
-			// has to live with the cache. Depends on nothing but the entity's own axis
-			// and origin, so the two agree by construction.
-			RB_BuildEntityModelMatrix( ent, bc->modelMatrix );
-
-			if ( !bc->prevValid ) {
-				Com_Memcpy( bc->prevBoneMatrices, bc->boneMatrices, sizeof( bc->prevBoneMatrices ) );
-				Matrix16Copy( bc->modelMatrix, bc->prevModelMatrix );
-				bc->prevValid = qtrue;
-			}
-
-			Com_Memcpy(
-				bonesBlock.prevBoneMatrices,
-				bc->prevBoneMatrices,
-				sizeof(mat3x4_t) * bc->mBones.size());
-			Matrix16Copy( bc->prevModelMatrix, bonesBlock.prevModelMatrix );
-		}
-
-		int uboOffset = vk_append_uniform( &bonesBlock, sizeof(bonesBlock), vk.uniform_bones_item_size );
-
-		bc->uboOffset = uboOffset;
-		//bc->uboGPUFrame = currentFrameNum;
+		if ( dst )
+			Com_Memcpy( dst + bone, &b.matrix[0][0], sizeof(mat3x4_t) );
 	}
 }
 
-int RB_GetBoneUboOffset( CRenderableSurface *surf )
+static void R_G2_SnapTransformModel( g2SnapJob_t &job, CGhoul2Info_v &ghoul2, CGhoul2Info &g2Info, int sortIndex )
 {
-	if ( surf->boneCache )
-		return surf->boneCache->uboOffset;
-	
+	if ( sortIndex && g2Info.mModelBoltLink != -1 )
+	{
+		const int boltMod = (g2Info.mModelBoltLink >> MODEL_SHIFT) & MODEL_AND;
+		const int boltNum = (g2Info.mModelBoltLink >> BOLT_SHIFT) & BOLT_AND;
+
+		mdxaBone_t bolt;
+		G2_GetBoltMatrixLow( ghoul2[boltMod], boltNum, job.ent->e.modelScale, bolt );
+		G2_TransformGhoulBones( g2Info.mBlist, bolt, g2Info, job.time );
+	}
+	else
+	{
+		G2_TransformGhoulBones( g2Info.mBlist, job.rootMatrix, g2Info, job.time );
+	}
+}
+
+/*
+==============
+R_G2_SnapFillRaster
+
+Stores the pose for the raster path. The velocity history rolls forward once for each
+cache and frame: a second visit would make "previous" mean "this frame".
+prevValid stays false unless the cache was also touched on frame - 1, so a model that
+just appeared reports no motion for one frame instead of a jump from a stale pose.
+==============
+*/
+static void R_G2_SnapFillRaster( const g2SnapJob_t &job, CBoneCache *bc, int slot )
+{
+	g2Snapshot_t &snap = backEndData->g2;
+	g2SnapModel_t &m = snap.models[slot];
+	const int keep = MIN( m.numBones, (int)ARRAY_LEN( bc->boneMatrices ) );
+
+	if ( vk.velocityActive && bc->prevFrameNum != tr.frameCount )
+	{
+		bc->prevValid = (qboolean)( bc->prevFrameNum == tr.frameCount - 1 );
+
+		if ( bc->prevValid )
+		{
+			Com_Memcpy( bc->prevBoneMatrices, bc->boneMatrices, sizeof( bc->prevBoneMatrices ) );
+			Matrix16Copy( bc->modelMatrix, bc->prevModelMatrix );
+		}
+
+		bc->prevFrameNum = tr.frameCount;
+	}
+
+	R_G2_SnapEvalBones( bc, snap.bones + m.firstBone, NULL );
+	Com_Memcpy( bc->boneMatrices, snap.bones + m.firstBone, sizeof(mat3x4_t) * keep );
+
+	if ( vk.velocityActive )
+	{
+		// Same matrix R_RotateForEntity() builds for the Entity UBO. The history lives with the cache.
+		R_G2_BuildEntityModelMatrix( job.ent, bc->modelMatrix );
+
+		if ( !bc->prevValid )
+		{
+			Com_Memcpy( bc->prevBoneMatrices, bc->boneMatrices, sizeof( bc->prevBoneMatrices ) );
+			Matrix16Copy( bc->modelMatrix, bc->prevModelMatrix );
+			bc->prevValid = qtrue;
+		}
+
+		Com_Memcpy( snap.prevBones + m.firstBone, bc->prevBoneMatrices, sizeof(mat3x4_t) * keep );
+		Matrix16Copy( bc->prevModelMatrix, m.prevModelMatrix );
+	}
+}
+
+// Runs on the job pool. Touches only the caches and the snapshot slots of its entity.
+static void R_G2_SnapRunJob( g2SnapJob_t &job )
+{
+	g2Snapshot_t &snap = backEndData->g2;
+	CGhoul2Info_v &ghoul2 = *job.ghoul2;
+	int modelList[256];
+	int modelCount;
+
+	G2_Sort_Models( ghoul2, modelList, ARRAY_LEN( modelList ), &modelCount );
+
+	for ( int j = 0; j < modelCount; j++ )
+	{
+		CGhoul2Info &g2Info = ghoul2[modelList[j]];
+
+		if ( !g2Info.mValid || ( g2Info.mFlags & ( GHOUL2_NOMODEL | GHOUL2_NORENDER ) ) )
+			continue;
+
+		if ( !g2Info.currentModel || !g2Info.aHeader )
+			continue;
+
+		// The frontend already transformed the bones for the CPU skinning path.
+		if ( vk.vboGhoul2Active )
+			R_G2_SnapTransformModel( job, ghoul2, g2Info, j );
+
+		CBoneCache *bc = g2Info.mBoneCache;
+		if ( !bc )
+			continue;
+
+		const int slot = ( bc->snapScene == g2SnapSerial ) ? bc->snapSlot : -1;
+
+		if ( !vk.vboGhoul2Active )
+		{
+			if ( slot >= 0 )
+				R_G2_SnapEvalBones( bc, snap.bones + snap.models[slot].firstBone, g2SnapBoneUsed + snap.models[slot].firstBone );
+		}
+		else if ( slot >= 0 )
+			R_G2_SnapFillRaster( job, bc, slot );
+		else
+			R_G2_SnapEvalBones( bc, NULL, NULL );
+	}
+
+	if ( !job.rtx )
+		return;
+
+	// The path tracer takes its own pose. It transforms the bones again, as it did in the backend.
+	for ( int j = 0; j < modelCount; j++ )
+	{
+		CGhoul2Info &g2Info = ghoul2[modelList[j]];
+
+		if ( !g2Info.mValid || ( g2Info.mFlags & ( GHOUL2_NOMODEL | GHOUL2_NORENDER ) ) )
+			continue;
+
+		if ( !g2Info.currentModel || !g2Info.aHeader )
+			continue;
+
+		R_G2_SnapTransformModel( job, ghoul2, g2Info, j );
+
+		CBoneCache *bc = g2Info.mBoneCache;
+		if ( !bc )
+			continue;
+
+		const int slot = ( bc->snapScene == g2SnapSerial ) ? bc->snapSlot : -1;
+
+		R_G2_SnapEvalBones( bc, slot >= 0 ? snap.rtxBones + snap.models[slot].firstBone : NULL, NULL );
+	}
+}
+
+static void R_G2_SnapJobRange( int begin, int end, void *ctx )
+{
+	for ( int i = begin; i < end; i++ )
+		R_G2_SnapRunJob( g2SnapJobs[i] );
+}
+
+#ifdef USE_RTX
+// Lists the meshes of the model that the path tracer draws. Same walk as RenderSurfaces.
+static void R_G2_SnapAddRtxMeshes( CRenderSurface &RS )
+{
+	g2Snapshot_t &snap = backEndData->g2;
+
+	assert( RS.currentModel );
+	assert( RS.currentModel->data.glm && RS.currentModel->data.glm->header );
+
+	mdxmSurface_t			*surface = (mdxmSurface_t *)G2_FindSurface( RS.currentModel, RS.surfaceNum, RS.lod );
+	mdxmHierarchyOffsets_t	*surfIndexes = (mdxmHierarchyOffsets_t *)((byte *)RS.currentModel->data.glm->header + sizeof(mdxmHeader_t));
+	mdxmSurfHierarchy_t		*surfInfo = (mdxmSurfHierarchy_t *)((byte *)surfIndexes + surfIndexes->offsets[surface->thisSurfaceIndex]);
+	const shader_t			*shader = 0;
+
+	const surfaceInfo_t	*surfOverride = G2_FindOverrideSurface( RS.surfaceNum, RS.rootSList );
+
+	// the default flags of the surface, unless a surface override replaces them
+	int offFlags = surfInfo->flags;
+
+	if ( surfOverride )
+		offFlags = surfOverride->offFlags;
+
+	if ( !offFlags )
+	{
+		shader = R_GetShaderByHandle( surfInfo->shaderIndex );
+
+		if ( RS.cust_shader )
+			shader = RS.cust_shader;
+		else if ( RS.skin )
+		{
+			// match the surface name to something in the skin file
+			shader = tr.defaultShader;
+
+			for ( int j = 0; j < RS.skin->numSurfaces; j++ )
+			{
+				// the names have both been lowercased
+				if ( !strcmp( RS.skin->surfaces[j]->name, surfInfo->name ) )
+				{
+					shader = (shader_t*)RS.skin->surfaces[j]->shader;
+					break;
+				}
+			}
+		}
+
+		// A skin names a shader that does not exist (models/players/<name>/cheese) for a surface it
+		// does not want drawn. The tracer shows it as a white patch.
+		if ( !RS.personalModel && !shader->missingShader )
+		{
+			if ( snap.numRtxMeshes >= G2_SNAP_MAX_RTX_MESHES )
+				snap.overflowRtx++;
+			else
+			{
+				g2SnapRtxMesh_t &mesh = snap.rtxMeshes[snap.numRtxMeshes++];
+
+				mesh.mesh = vk.vboGhoul2Active ? &RS.currentModel->data.glm->vboModels[RS.lod].vboMeshes[RS.surfaceNum].rtx_mesh : NULL;
+				mesh.shader = (shader_t *)shader;
+				mesh.surface = surface;
+			}
+		}
+	}
+
+	if ( offFlags & G2SURFACEFLAG_NODESCENDANTS )
+		return;
+
+	for ( int i = 0; i < surfInfo->numChildren; i++ )
+	{
+		RS.surfaceNum = surfInfo->childIndexes[i];
+		R_G2_SnapAddRtxMeshes( RS );
+	}
+}
+
+// Builds the model records of the path tracer for one entity and takes the snapshot slots of its models.
+static void R_G2_SnapBuildRtx( trRefEntity_t *ent, CGhoul2Info_v &ghoul2 )
+{
+	g2Snapshot_t &snap = backEndData->g2;
+	int modelList[256] = { 0 };
+	int modelCount;
+
+	ent->g2RtxFirst = snap.numRtxModels;
+	ent->g2RtxCount = 0;
+
+	// no third person objects outside of a portal
+	const qboolean personalModel = (qboolean)( (ent->e.renderfx & RF_THIRD_PERSON) && (tr.viewParms.portalView == PV_NONE) );
+
+	assert( ghoul2.size() <= 255 );
+	G2_Sort_Models( ghoul2, modelList, ARRAY_LEN( modelList ), &modelCount );
+
+	for ( int i = 0; i < modelCount; i++ )
+	{
+		CGhoul2Info *model = &ghoul2[ modelList[i] ];
+
+		if ( !model->mValid || ( model->mFlags & ( GHOUL2_NOMODEL | GHOUL2_NORENDER ) ) )
+			continue;
+
+		if ( !model->currentModel || !model->aHeader || !((mdxaHeader_t *)model->aHeader)->numBones )
+			continue;
+
+		if ( snap.numRtxModels >= G2_SNAP_MAX_RTX_MODELS )
+		{
+			snap.overflowRtx++;
+			continue;
+		}
+
+		shader_t	*cust_shader = NULL;
+		skin_t		*skin = NULL;
+
+		if ( ent->e.customShader )
+			cust_shader = R_GetShaderByHandle( ent->e.customShader );
+		else
+		{
+			// SP's mCustomSkin is a configstring index, not a render skin handle.
+			// cgame resolves the real handle into ent->e.customSkin.
+			if ( ent->e.customSkin )
+				skin = R_GetSkinByHandle( ent->e.customSkin );
+			else if ( model->mSkin > 0 && model->mSkin < tr.numSkins )
+				skin = R_GetSkinByHandle( model->mSkin );
+		}
+
+		G2_EnsureBoneCache( *model );
+
+		g2SnapRtxModel_t &rec = snap.rtxModels[snap.numRtxModels++];
+		rec.snapModel = R_G2_SnapAcquire( model->mBoneCache );
+		rec.firstMesh = snap.numRtxMeshes;
+		rec.numMeshes = 0;
+		ent->g2RtxCount++;
+
+		if ( rec.snapModel < 0 )
+			continue;
+
+		G2_FindOverrideSurface( -1, model->mSlist );	// reset the quick surface override lookup
+
+		CRenderSurface RS( model->mSurfaceRoot, model->mSlist, cust_shader, 0, personalModel, model->mBoneCache, ent->e.renderfx, skin, (model_t *)model->currentModel, 0, model->mBltlist, NULL, NULL );
+		R_G2_SnapAddRtxMeshes( RS );
+
+		rec.numMeshes = snap.numRtxMeshes - rec.firstMesh;
+	}
+}
+#endif
+
+/*
+==============
+R_G2_SnapshotScene
+
+Called when all views of the scene are built. Takes the snapshot of every Ghoul2 model
+the scene draws, gives the range of slots to the draw commands of the scene, and starts
+a new scene serial.
+==============
+*/
+void R_G2_SnapshotScene( void )
+{
+	g2Snapshot_t &snap = backEndData->g2;
+	const trRefdef_t &refdef = tr.refdef;
+	const int firstSlot = g2SnapSceneFirst;
+	qboolean rtxScene = qfalse;
+
+#ifdef USE_RTX
+	rtxScene = (qboolean)( vk.rtxActive && !( refdef.rdflags & ( RDF_NOWORLDMODEL | RDF_SKYBOXPORTAL ) ) );
+#endif
+
+	g2SnapJobs.clear();
+
+	if ( refdef.num_entities > 0 && r_drawentities->integer )
+	{
+		const int currentTime = G2API_GetTime( refdef.time );
+
+		HackadelicOnClient = true;
+
+		for ( int i = 0; i < refdef.num_entities; i++ )
+		{
+			trRefEntity_t *ent = &refdef.entities[i];
+
+			if ( ent->e.reType != RT_MODEL || !ent->e.ghoul2 )
+				continue;
+
+			const model_t *model = R_GetModelByHandle( ent->e.hModel );
+			if ( !model || ( model->type != MOD_MDXM && model->type != MOD_BAD ) )
+				continue;
+
+			CGhoul2Info_v &ghoul2 = *((CGhoul2Info_v *)ent->e.ghoul2);
+
+			if ( !G2API_HaveWeGhoul2Models( ghoul2 ) || !ghoul2.IsValid() )
+				continue;
+
+			// the same checks as R_AddGhoulSurfaces
+			if ( r_noGhoul2->integer || r_noServerGhoul2->integer )
+				continue;
+
+			if ( !G2_SetupModelPointers( ghoul2 ) )
+				continue;
+
+			// The tracer and the GPU skinning path pose every model of the scene, as the backend did.
+			// The CPU skinning path poses only the models that a drawn surface asked for.
+			qboolean wanted = (qboolean)( rtxScene || vk.vboGhoul2Active );
+
+			for ( int k = 0; k < ghoul2.size() && !wanted; k++ )
+			{
+				const CBoneCache *bc = ghoul2[k].mValid ? ghoul2[k].mBoneCache : NULL;
+
+				if ( bc && bc->snapScene == g2SnapSerial && bc->snapSlot >= 0 )
+					wanted = qtrue;
+			}
+
+			if ( !wanted )
+				continue;
+
+			g2SnapJob_t job;
+			job.ghoul2 = &ghoul2;
+			if ( ghoul2.size() <= 0 )
+				continue;
+
+			job.instance = &ghoul2[0];
+			job.ent = ent;
+			job.time = currentTime;
+			job.rtx = rtxScene;
+			RootMatrix( ghoul2, currentTime, ent->e.modelScale, job.rootMatrix );
+
+#ifdef USE_RTX
+			if ( rtxScene )
+				R_G2_SnapBuildRtx( ent, ghoul2 );
+#endif
+
+			g2SnapJobs.push_back( job );
+		}
+
+		// Two entities can share one Ghoul2 instance, also through two wrappers. One job serves both; the last entity wins.
+		if ( g2SnapJobs.size() > 1 )
+		{
+			std::stable_sort( g2SnapJobs.begin(), g2SnapJobs.end(),
+				[]( const g2SnapJob_t &a, const g2SnapJob_t &b ) { return std::less<const void *>()( a.instance, b.instance ); } );
+
+			size_t out = 0;
+			for ( size_t i = 0; i < g2SnapJobs.size(); i++ )
+			{
+				if ( i + 1 < g2SnapJobs.size() && g2SnapJobs[i + 1].instance == g2SnapJobs[i].instance )
+					continue;
+
+				g2SnapJobs[out++] = g2SnapJobs[i];
+			}
+			g2SnapJobs.resize( out );
+		}
+
+		// CPU skinning evaluated the bones with the flag off. The GPU and tracer paths with it on.
+		HackadelicOnClient = ( vk.vboGhoul2Active || rtxScene ) ? true : false;
+
+		if ( !g2SnapJobs.empty() )
+			ri.Jobs_ParallelFor( (int)g2SnapJobs.size(), 1, R_G2_SnapJobRange, NULL );
+
+		HackadelicOnClient = false;
+	}
+
+	tr.refdef.g2SnapFirst = firstSlot;
+	tr.refdef.g2SnapCount = snap.numModels - firstSlot;
+
+	for ( drawSurfsCommand_t *cmd : g2SnapCmds )
+	{
+		cmd->refdef.g2SnapFirst = tr.refdef.g2SnapFirst;
+		cmd->refdef.g2SnapCount = tr.refdef.g2SnapCount;
+	}
+
+	g2SnapCmds.clear();
+	g2SnapSceneFirst = snap.numModels;
+	g2SnapSerial++;
+}
+
+/*
+==============
+RB_G2_UploadBones
+
+Backend. Puts the poses of the Ghoul2 models of a draw command in the bone UBO.
+==============
+*/
+void RB_G2_UploadBones( const trRefdef_t *refdef )
+{
+	g2Snapshot_t &snap = backEndDataBE->g2;
+
+	for ( int i = refdef->g2SnapFirst; i < refdef->g2SnapFirst + refdef->g2SnapCount; i++ )
+	{
+		g2SnapModel_t &m = snap.models[i];
+		vkUniformBones_t bonesBlock = {};
+		const int count = MIN( m.numBones, (int)ARRAY_LEN( bonesBlock.boneMatrices ) );
+
+		Com_Memcpy( bonesBlock.boneMatrices, snap.bones + m.firstBone, sizeof(mat3x4_t) * count );
+
+		if ( vk.velocityActive )
+		{
+			Com_Memcpy( bonesBlock.prevBoneMatrices, snap.prevBones + m.firstBone, sizeof(mat3x4_t) * count );
+			Matrix16Copy( m.prevModelMatrix, bonesBlock.prevModelMatrix );
+		}
+
+		m.uboOffset = vk_append_uniform( &bonesBlock, sizeof(bonesBlock), vk.uniform_bones_item_size );
+	}
+}
+
+int RB_GetBoneUboOffset( const CRenderableSurface *surf )
+{
+	if ( surf->g2Snap >= 0 )
+		return backEndDataBE->g2.models[surf->g2Snap].uboOffset;
+
 	return -1;
 }
 
@@ -3897,7 +4415,13 @@ void RB_SurfaceGhoul(CRenderableSurface* surf)
 
 	// grab the pointer to the surface info within the loaded mesh file
 	surface = surf->surfaceData;
-	CBoneCache *bones = surf->boneCache;
+
+	// The poses come from the frontend snapshot, never from the bone cache.
+	if ( surf->g2Snap < 0 )
+		return;
+
+	const g2SnapModel_t &snapModel = backEndDataBE->g2.models[surf->g2Snap];
+	const mdxaBone_t *bones = (const mdxaBone_t *)( backEndDataBE->g2.bones + snapModel.firstBone );
 
 #ifndef _G2_GORE //we use this later, for gore
 	delete surf;
@@ -3931,7 +4455,7 @@ void RB_SurfaceGhoul(CRenderableSurface* surf)
 
 	for (int j = 0; j < numVerts; j++, baseVertex++, v++)
 	{
-		const mdxaBone_t* bone = &bones->EvalRender(piBoneReferences[G2_GetVertBoneIndex(v, 0)]);
+		const mdxaBone_t* bone = &bones[piBoneReferences[G2_GetVertBoneIndex(v, 0)]];
 		int iNumWeights = G2_GetVertWeights(v);
 		tess.normal[baseVertex][0] = DotProduct(bone->matrix[0], v->normal);
 		tess.normal[baseVertex][1] = DotProduct(bone->matrix[1], v->normal);
@@ -3948,7 +4472,7 @@ void RB_SurfaceGhoul(CRenderableSurface* surf)
 			float fBoneWeight = G2_GetVertBoneWeightNotSlow(v, 0);
 			if (iNumWeights == 2)
 			{
-				const mdxaBone_t* bone2 = &bones->EvalRender(piBoneReferences[G2_GetVertBoneIndex(v, 1)]);
+				const mdxaBone_t* bone2 = &bones[piBoneReferences[G2_GetVertBoneIndex(v, 1)]];
 				float t1 = 0.0f;
 				float t2 = 0.0f;
 
@@ -3974,7 +4498,7 @@ void RB_SurfaceGhoul(CRenderableSurface* surf)
 				float fTotalWeight = fBoneWeight;
 				for (int k = 1; k < iNumWeights - 1; k++)
 				{
-					bone = &bones->EvalRender(piBoneReferences[G2_GetVertBoneIndex(v, k)]);
+					bone = &bones[piBoneReferences[G2_GetVertBoneIndex(v, k)]];
 					fBoneWeight = G2_GetVertBoneWeightNotSlow(v, k);
 					fTotalWeight += fBoneWeight;
 
@@ -3982,7 +4506,7 @@ void RB_SurfaceGhoul(CRenderableSurface* surf)
 					tess.xyz[baseVertex][1] += fBoneWeight * (DotProduct(bone->matrix[1], v->vertCoords) + bone->matrix[1][3]);
 					tess.xyz[baseVertex][2] += fBoneWeight * (DotProduct(bone->matrix[2], v->vertCoords) + bone->matrix[2][3]);
 				}
-				bone = &bones->EvalRender(piBoneReferences[G2_GetVertBoneIndex(v, iNumWeights - 1)]);
+				bone = &bones[piBoneReferences[G2_GetVertBoneIndex(v, iNumWeights - 1)]];
 				fBoneWeight = 1.0f - fTotalWeight;
 
 				tess.xyz[baseVertex][0] += fBoneWeight * (DotProduct(bone->matrix[0], v->vertCoords) + bone->matrix[0][3]);
@@ -5204,7 +5728,8 @@ void vk_rtx_GhoulBounds( float *bounds )
 	rtx_g2_bounds = bounds;
 }
 
-static void vk_rtx_AddSurfaceBounds( mdxmSurface_t *surface, CBoneCache &bones, float *bounds )
+// bones: the pose of the model, one mat3x4 for each bone
+static void vk_rtx_AddSurfaceBounds( const mdxmSurface_t *surface, const mat3x4_t *bones, float *bounds )
 {
 	const mdxmVertex_t *v = (const mdxmVertex_t *)( (byte *)surface + surface->ofsVerts );
 	const int *boneRefs = (const int *)( (byte *)surface + surface->ofsBoneReferences );
@@ -5217,238 +5742,59 @@ static void vk_rtx_AddSurfaceBounds( mdxmSurface_t *surface, CBoneCache &bones, 
 
 		for ( int k = 0; k < numWeights; k++ )
 		{
-			const mdxaBone_t &bone = bones.EvalRender( boneRefs[G2_GetVertBoneIndex( v, k )] );
+			const float *bone = bones[boneRefs[G2_GetVertBoneIndex( v, k )]];
 			const float w = G2_GetVertBoneWeight( v, k, totalWeight, numWeights );
 
-			p[0] += w * ( DotProduct( bone.matrix[0], v->vertCoords ) + bone.matrix[0][3] );
-			p[1] += w * ( DotProduct( bone.matrix[1], v->vertCoords ) + bone.matrix[1][3] );
-			p[2] += w * ( DotProduct( bone.matrix[2], v->vertCoords ) + bone.matrix[2][3] );
+			p[0] += w * ( DotProduct( bone, v->vertCoords ) + bone[3] );
+			p[1] += w * ( DotProduct( bone + 4, v->vertCoords ) + bone[7] );
+			p[2] += w * ( DotProduct( bone + 8, v->vertCoords ) + bone[11] );
 		}
 
 		AddPointToBounds( p, bounds, bounds + 3 );
 	}
 }
 
-static void vk_rtx_RenderSurfaces( CRenderSurface &RS, const trRefEntity_t *ent, int entityNum, int bone_offset ) //also ended up just ripping right from SP.
+/*
+==============
+vk_rtx_AddGhoulSurfaces
+
+Backend. Gives the meshes and bone matrices of a Ghoul2 entity to the path tracer. The
+frontend listed the meshes in R_G2_SnapBuildRtx; this reads only the snapshot.
+==============
+*/
+void vk_rtx_AddGhoulSurfaces( trRefEntity_t *ent, int entityNum, int *mdxm_matrix_offset, mat3x4_t *mdxm_matrix_data )
 {
-	// back track and get the surfinfo struct for this surface
-	mdxmSurface_t			*surface;
-	mdxmHierarchyOffsets_t	*surfIndexes;
-	mdxmSurfHierarchy_t		*surfInfo;
-	const shader_t			*shader = 0;
-	int						offFlags = 0;	// sunny shouldnt this be uint?
-	uint32_t				i;
+	const g2Snapshot_t &snap = backEndDataBE->g2;
 
-	assert( RS.currentModel );
-	assert( RS.currentModel->data.glm && RS.currentModel->data.glm->header );
-
-	// back track and get the surfinfo struct for this surface
-	surface		= (mdxmSurface_t *)G2_FindSurface( RS.currentModel, RS.surfaceNum, RS.lod );
-	surfIndexes = (mdxmHierarchyOffsets_t *)((byte *)RS.currentModel->data.glm->header + sizeof(mdxmHeader_t));
-	surfInfo	= (mdxmSurfHierarchy_t *)((byte *)surfIndexes + surfIndexes->offsets[surface->thisSurfaceIndex]);
-
-	// see if we have an override surface in the surface list
-	const surfaceInfo_t	*surfOverride = G2_FindOverrideSurface( RS.surfaceNum, RS.rootSList );
-
-	// really, we should use the default flags for this surface unless it's been overriden
-	offFlags = surfInfo->flags;
-
-	// set the off flags if we have some
-	if ( surfOverride )
-		offFlags = surfOverride->offFlags;
-
-	// if this surface is not off, add it to the shader render list
-	if ( !offFlags )
+	for ( int k = 0; k < ent->g2RtxCount; k++ )
 	{
-		shader = R_GetShaderByHandle( surfInfo->shaderIndex );
+		const g2SnapRtxModel_t &rec = snap.rtxModels[ent->g2RtxFirst + k];
 
- 		if ( RS.cust_shader )
-			shader = RS.cust_shader;
+		if ( rec.snapModel < 0 )
+			continue;
 
-		else if ( RS.skin )
+		const g2SnapModel_t &m = snap.models[rec.snapModel];
+
+		// The bone buffer holds the current and the previous frame: half of it for each.
+		if ( *mdxm_matrix_offset + m.numBones > MAX_MDXM_MATRICES / 2 )
+			continue;
+
+		const int bone_offset = *mdxm_matrix_offset;
+		*mdxm_matrix_offset += m.numBones;
+
+		const mat3x4_t *pose = snap.rtxBones + m.firstBone;
+		Com_Memcpy( &mdxm_matrix_data[bone_offset], pose, sizeof(mat3x4_t) * m.numBones );
+
+		for ( int i = 0; i < rec.numMeshes; i++ )
 		{
-			uint32_t j;
+			const g2SnapRtxMesh_t &mesh = snap.rtxMeshes[rec.firstMesh + i];
 
-			// match the surface name to something in the skin file
-			shader = tr.defaultShader;
+			if ( mesh.mesh )
+				vk_rtx_add_entity_mesh( mesh.mesh, mesh.shader, bone_offset );
 
-			for ( j = 0 ; j < RS.skin->numSurfaces ; j++ )
-			{
-				// the names have both been lowercased
-				if ( !strcmp( RS.skin->surfaces[j]->name, surfInfo->name ) )
-				{
-					shader = (shader_t*)RS.skin->surfaces[j]->shader;
-					break;
-				}
-			}
-		}
-
-		// A skin names a shader that does not exist (models/players/<name>/cheese) for a surface it
-		// does not want drawn. The tracer shows it as a white patch.
-		// don't add third_person objects if not viewing through a portal
-		if ( !RS.personalModel && !shader->missingShader )
-		{
-#ifdef USE_VBO_GHOUL2
-			vk_set_ghoul2_vbo_mesh( RS, NULL, RS.lod, surface->thisSurfaceIndex, (shader_t*)shader, bone_offset, qtrue );
-#endif
 			if ( rtx_g2_bounds )
-				vk_rtx_AddSurfaceBounds( surface, *RS.boneCache, rtx_g2_bounds );
-
-#if 0
-#ifdef USE_VK_IMGUI
-			if ( vk_imgui_outline_selected() ) {
-				mdxmSurfHierarchy_t *debug_surf = (mdxmSurfHierarchy_t*)vk_imgui_get_selected_surface();
-				shader_t *debug_shader = vk_imgui_get_selected_shader();
-				qboolean merge_shaders = vk_imgui_merge_shaders();
-
-				if ( ( debug_surf && debug_surf == surfInfo ) || 
-					 ( !merge_shaders && debug_shader && debug_shader == shader ) ||
-					 ( merge_shaders && debug_shader && !strcmp( debug_shader->name, shader->name ) ) )
-				{
-					// sunny not implemented .. use cluster debug method?
-				}
-			}
-#endif
-#endif
+				vk_rtx_AddSurfaceBounds( mesh.surface, pose, rtx_g2_bounds );
 		}
 	}
-
-	// if we are turning off all descendants, then stop this recursion now
-	if ( offFlags & G2SURFACEFLAG_NODESCENDANTS )
-		return;
-
-	// now recursively call for the children
-	for ( i = 0; i < surfInfo->numChildren; i++ )
-	{
-		RS.surfaceNum = surfInfo->childIndexes[i];
-		vk_rtx_RenderSurfaces( RS, ent, entityNum, bone_offset );
-	}
-}
-
-void vk_rtx_AddGhoulSurfaces( trRefEntity_t *ent, int entityNum, int *mdxm_matrix_offset, mat3x4_t *mdxm_matrix_data ) 
-{
-	if ( ent->e.ghoul2 == NULL || !G2API_HaveWeGhoul2Models( *( (CGhoul2Info_v*)ent->e.ghoul2 ) ) )
-		return;
-
-	CGhoul2Info_v	&ghoul2 = *((CGhoul2Info_v *)ent->e.ghoul2);
-	mdxaBone_t		rootMatrix;
-	shader_t		*cust_shader = 0;
-	qboolean		personalModel;
-	int				whichLod, modelCount, fogNum, currentTime;
-	int				modelList[256] = { 0 };
-	skin_t			*skin;
-	uint32_t		i;
-
-	if ( !ghoul2.IsValid() )
-		return;
-
-	// if we don't want server ghoul2 models and this is one, or we just don't want ghoul2 models at all, then return
-	if ( r_noGhoul2->integer || r_noServerGhoul2->integer )
-		return;
-
-	if ( !G2_SetupModelPointers( ghoul2 ) )
-		return;
-
-	currentTime = G2API_GetTime( tr.refdef.time );
-	fogNum = 0;
-
-	// culling is disabled for now ..
-
-	HackadelicOnClient = true;
-
-	// are any of these models setting a new origin?
-	RootMatrix( ghoul2, currentTime, ent->e.modelScale,rootMatrix );
-
-   	// don't add third_person objects if not in a portal
-	personalModel = (qboolean)( (ent->e.renderfx & RF_THIRD_PERSON) && (tr.viewParms.portalView == PV_NONE) );
-
-	assert( ghoul2.size() <= 255 );
-	modelList[255] = 548;
-
-	// order sort the ghoul 2 models so bolt ons get bolted to the right model
-	G2_Sort_Models( ghoul2, modelList, ARRAY_LEN(modelList), &modelCount );
-	assert( modelList[255] == 548 );
-
-	// construct a world matrix for this entity
-	//G2_GenerateWorldMatrix( ent->e.angles, ent->e.origin );
-
-	// walk each possible model for this entity and try rendering it out
-	for ( i = 0; i < modelCount; i++ )
-	{
-		CGhoul2Info *model = &ghoul2[ modelList[ i ] ];
-
-		if ( model->mValid && !(model->mFlags & GHOUL2_NOMODEL) && !(model->mFlags & GHOUL2_NORENDER) )
-		{
-			//
-			// figure out whether we should be using a custom shader for this model
-			//
-			skin = NULL;
-			cust_shader = NULL;
-
-			if ( ent->e.customShader )
-				cust_shader = R_GetShaderByHandle( ent->e.customShader );
-
-			else
-			{
-				// figure out the custom skin thing
-				//
-				// Upstream checks model->mCustomSkin first. In SP that field is a
-				// configstring index (G_SkinIndex/CS_CHARSKINS), not a render skin
-				// handle, so R_GetSkinByHandle returns whatever unrelated skin happens
-				// to sit at that index - and every surface of the model then draws with
-				// another character's shaders. CGAME resolves the real handle into
-				// ent->e.customSkin, which is what the rasterised path above uses.
-				if ( ent->e.customSkin )
-					skin = R_GetSkinByHandle( ent->e.customSkin );
-
-				else if ( model->mSkin > 0 && model->mSkin < tr.numSkins )
-					skin = R_GetSkinByHandle( model->mSkin );
-			}
-			
-#if 0
-			whichLod = G2_ComputeLOD( ent, model->currentModel, model->mLodBias );
-#else
-			whichLod = 0;
-#endif
-
-			//
-			// bone matrices for this model
-			//
-			if ( i && model->mModelBoltLink != -1 )
-			{
-				int	boltMod = (model->mModelBoltLink >> MODEL_SHIFT) & MODEL_AND;
-				int	boltNum = (model->mModelBoltLink >> BOLT_SHIFT) & BOLT_AND;
-				mdxaBone_t bolt;
-				G2_GetBoltMatrixLow( ghoul2[boltMod], boltNum, ent->e.modelScale, bolt );
-				G2_TransformGhoulBones( model->mBlist, bolt, *model, currentTime );
-			}
-			else
-				G2_TransformGhoulBones( model->mBlist, rootMatrix, *model, currentTime );
-
-			const int model_index = model->currentModel->data.glm->vboModels[whichLod].vbo->index;
-			CBoneCache *bc = model->mBoneCache;
-
-			// The bone buffer holds the current and the previous frame: half of it for each.
-			if ( *mdxm_matrix_offset + (int)bc->mBones.size() > MAX_MDXM_MATRICES / 2 )
-				continue;
-
-			const int bone_offset = *mdxm_matrix_offset;
-			*mdxm_matrix_offset += (int)bc->mBones.size();
-
-			for ( int bone = 0; bone < (int)bc->mBones.size(); bone++ )
-				Com_Memcpy( &mdxm_matrix_data[bone_offset + bone], bc->EvalRender( bone ).matrix, sizeof(mat3x4_t) );
-
-			//
-			// meshes (surfaces) for this model
-			//
-			G2_FindOverrideSurface( -1, model->mSlist ); //reset the quick surface override lookup;
-
-			CRenderSurface RS( model->mSurfaceRoot, model->mSlist, cust_shader, fogNum, personalModel, model->mBoneCache, ent->e.renderfx, skin, (model_t *)model->currentModel, whichLod, model->mBltlist, NULL, NULL );
-
-			vk_rtx_RenderSurfaces( RS, ent, entityNum, bone_offset );
-		}
-	}
-
-	HackadelicOnClient = false;
 }
 #endif

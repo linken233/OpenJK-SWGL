@@ -852,6 +852,9 @@ static qhandle_t RE_RegisterModel_Actual( const char *name ) {
 		return RE_RegisterBSP(name);
 	}
 
+	// A new model changes tr.models and builds buffers that the backend may use.
+	R_SyncRenderThread();
+
 	// allocate a new model_t
 	if ( ( mod = R_AllocModel() ) == NULL ) {
 		ri.Printf( PRINT_WARNING, "RE_RegisterModel: R_AllocModel() failed for '%s'\n", name);
@@ -1249,6 +1252,7 @@ void RE_BeginRegistration( glconfig_t *glconfigOut ) {
 
 void R_SVModelInit()
 {
+	R_SyncRenderThread();
 	R_ModelInit();
 }
 
@@ -1265,7 +1269,9 @@ void R_ModelInit( void )
 	tr.numModels = 0;
 
 	// every ghoul2 instance's resolved model pointers now dangle - see G2_SetupModelPointers
-	tr.modelEpoch++;
+	// The counter survives R_Init, which clears tr: static caches keyed on the epoch never see an old value again.
+	static int s_modelEpoch;
+	tr.modelEpoch = ++s_modelEpoch;
 
 	CModelCache->DeleteAll();
 
@@ -1277,10 +1283,14 @@ extern void R_ClearShaderHunkState( void );
 // Resets every renderer pointer into the hunk. Hunk_Clear frees the hunk without notice.
 void RE_HunkClearCrap( void )
 {
+	// The backend reads the data that Hunk_Clear frees.
+	R_SyncRenderThread();
+
 	memset( tr.models, 0, sizeof( tr.models ) );
 	memset( tr.shaders, 0, sizeof( tr.shaders ) );
 	memset( tr.sortedShaders, 0, sizeof( tr.sortedShaders ) );
 	tr.numShaders = 0;
+	r_numVideoMaps = 0;	// the videoMap shaders are gone
 	memset( tr.skins, 0, sizeof( tr.skins ) );
 	tr.numSkins = 0;
 
@@ -1311,12 +1321,13 @@ void RE_HunkClearCrap( void )
 	tr.goreIBO = NULL;
 #endif
 #ifdef USE_VBO_SS
-	tr.ss.groups_count = 0;
 	tr.ss.vbo = NULL;
 	tr.ss.ibo = NULL;
 #endif
 
 	backEndData = NULL;
+	backEndDataBE = NULL;
+	backEndDataBuf[0] = backEndDataBuf[1] = NULL;
 
 	// Server model and skin loads run before R_Init and need a valid empty state.
 	R_ClearShaderHunkState();

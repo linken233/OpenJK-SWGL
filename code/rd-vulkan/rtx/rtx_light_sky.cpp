@@ -39,20 +39,6 @@ static rtxSkyDesc_t	g_sky;				// mode GLOBAL when the map has no setting
 static qboolean		g_fromFile = qfalse;	// the file holds a global block
 static qboolean		g_fromQ3 = qfalse;		// the values come from q3map_sun
 
-static cvar_t *pt_sky_per_map;
-static cvar_t *pt_sky_q3map_sun;
-static cvar_t *pt_ambient_floor_scale;
-
-static void RegisterCvars( void )
-{
-	if ( pt_sky_per_map )
-		return;
-
-	pt_sky_per_map = ri.Cvar_Get( "pt_sky_per_map", "1", CVAR_ARCHIVE_ND );
-	pt_sky_q3map_sun = ri.Cvar_Get( "pt_sky_q3map_sun", "0", CVAR_ARCHIVE_ND );
-	pt_ambient_floor_scale = ri.Cvar_Get( "pt_ambient_floor_scale", "1", CVAR_ARCHIVE_ND );
-}
-
 static qboolean MapHasSun( void )
 {
 	return (qboolean)( VectorLengthSquared( tr.sunLight ) > 0.0f );
@@ -147,8 +133,6 @@ static void SkyChanged( qboolean edit )
 
 void RTX_LightSky_Clear( void )
 {
-	RegisterCvars();
-
 	SetDefaults( &g_sky, RTX_SKY_GLOBAL );
 	g_fromFile = qfalse;
 	g_fromQ3 = qfalse;
@@ -159,8 +143,6 @@ void RTX_LightSky_Clear( void )
 // The q3map_sun direction uses the convention of sun_azimuth and sun_elevation.
 void RTX_LightSky_MapLoaded( void )
 {
-	RegisterCvars();
-
 	if ( g_sky.mode != RTX_SKY_GLOBAL || !pt_sky_q3map_sun->integer || !MapHasSun() )
 		return;
 
@@ -189,8 +171,6 @@ void RTX_LightSky_MapLoaded( void )
 
 qboolean RTX_LightSky_Active( void )
 {
-	RegisterCvars();
-
 	return (qboolean)( g_sky.mode != RTX_SKY_GLOBAL && pt_sky_per_map->integer );
 }
 
@@ -218,8 +198,6 @@ float RTX_LightSky_Diffuse( void )
 
 void RTX_LightSky_AmbientFloor( vec3_t out )
 {
-	RegisterCvars();
-
 	VectorScale( g_sky.ambientColor, g_sky.ambientIntensity * MAX( 0.0f, pt_ambient_floor_scale->value ), out );
 }
 
@@ -244,10 +222,9 @@ void RTX_LightSky_HybridSun( float envScale, vec3_t out )
 
 void RTX_LightSky_CvarCheck( void )
 {
-	RegisterCvars();
-
 	if ( pt_sky_per_map->modified )
 	{
+		R_SyncRenderThread();
 		pt_sky_per_map->modified = qfalse;
 		SkyChanged( (qboolean)( g_sky.mode != RTX_SKY_GLOBAL ) );
 	}
@@ -261,8 +238,6 @@ File layer
 
 void RTX_LightSky_SetFromFile( const rtxSkyDesc_t *desc )
 {
-	RegisterCvars();
-
 	g_sky = *desc;
 	Sanitize( &g_sky );
 
@@ -300,8 +275,6 @@ qboolean RTX_LightSky_Get( rtxSkyDesc_t *out )
 {
 	if ( !out || !RTX_LightEdit_IsReady() )
 		return qfalse;
-
-	RegisterCvars();
 
 	if ( g_sky.mode != RTX_SKY_GLOBAL )
 		*out = g_sky;
@@ -369,8 +342,6 @@ void RTX_LightSky_Print_f( void )
 {
 	rtxSkyDesc_t	save;
 	std::string		text;
-
-	RegisterCvars();
 
 	if ( RTX_LightSky_GetForSave( &save ) )
 	{

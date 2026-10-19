@@ -24,7 +24,9 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "tr_local.h"
 #include "tr_WorldEffects.h"
 
-backEndData_t	*backEndData;
+backEndData_t	*backEndData;			// frontend
+backEndData_t	*backEndDataBE;			// backend
+backEndData_t	*backEndDataBuf[2];
 backEndState_t	backEnd;
 
 //bool tr_stencilled = false;
@@ -307,8 +309,8 @@ proj_prev * view_prev reaches gbuffer_skinned_vel.vert through the Camera UBO an
 composed with u_ModelMatrix in the shader rather than CPU-side.
 
 GPU-skinned Ghoul2 is the one surface type with a complete motion vector: CBoneCache
-keeps last frame's pose and model->world matrix, RB_TransformBones() rolls them forward
-and ships them in the Bones UBO, and gbuffer_skinned_vel.vert skins the vertex twice -
+keeps last frame's pose and model->world matrix, R_G2_SnapFillRaster() rolls them forward
+in the frontend, RB_G2_UploadBones() ships them in the Bones UBO, and gbuffer_skinned_vel.vert skins the vertex twice -
 so camera, entity movement and animation all land in the vector. Everything else (world,
 brush models, MDV, CPU-skinned Ghoul2 under r_vbo_models 0) still composes model_now and
 reports only the camera's share of its own motion; that would need per-entity transform
@@ -344,7 +346,7 @@ static void RB_RenderGBufferSurfList( const drawSurf_t *drawSurfs, int numDrawSu
 	vkGBufferPushConstants_t			pushData;
 	vkGBufferVelocityPushConstants_t	velocityPushData;
 #ifdef USE_VBO_GHOUL2
-	CBoneCache				*oldBoneCache = nullptr;
+	int						oldBoneSnap = -2;	// snapshot model of the last Ghoul2 surface
 #endif
 
 	oldEntityNum = -1;
@@ -541,10 +543,10 @@ static void RB_RenderGBufferSurfList( const drawSurf_t *drawSurfs, int numDrawSu
 
 #ifdef USE_VBO_GHOUL2
 		if ( surfClass == GB_GHOUL2_VBO ) {
-			CBoneCache *boneCache = ((CRenderableSurface *)drawSurf->surface)->boneCache;
+			const int boneSnap = ((CRenderableSurface *)drawSurf->surface)->g2Snap;
 
-			if ( boneCache != oldBoneCache ) {
-				oldBoneCache = boneCache;
+			if ( boneSnap != oldBoneSnap ) {
+				oldBoneSnap = boneSnap;
 
 				// Force a rebind (vk_draw_geometry() -> vk_bind_descriptor_sets() picks
 				// this up below) even though vk.cmd->uniform_descriptor's handle itself
@@ -783,7 +785,7 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 	drawSurf_t		*drawSurf;
 	sortKey_t		oldSort;
 	float			oldShaderSort, originalTime;
-	CBoneCache		*oldBoneCache = nullptr;
+	int				oldBoneSnap = -2;
 
 	// Only for the primary view's own opaque pass: portal/mirror sub-views and the glow
 	// pass have no G-buffer of their own, and RDF_NOWORLDMODEL scenes (HUD model icons)
@@ -851,11 +853,11 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 
 		if ( vk.vboGhoul2Active && *drawSurf->surface == SF_MDX )
 		{
-			if ( ((CRenderableSurface*)drawSurf->surface)->boneCache != oldBoneCache )
+			if ( ((CRenderableSurface*)drawSurf->surface)->g2Snap != oldBoneSnap )
 			{
 				RB_EndSurface();
 				RB_BeginSurface( shader, fogNum );
-				oldBoneCache = ((CRenderableSurface*)drawSurf->surface)->boneCache;
+				oldBoneSnap = ((CRenderableSurface*)drawSurf->surface)->g2Snap;
 				vk.cmd->bones_ubo_offset = RB_GetBoneUboOffset((CRenderableSurface*)drawSurf->surface);
 			}
 		}
@@ -1193,7 +1195,7 @@ void RE_StretchRaw ( int x, int y, int w, int h, int cols, int rows, const byte 
 
 	start = 0;
 	if (r_speeds->integer) {
-		start = ri.Milliseconds() * ri.Cvar_VariableValue("timescale");
+		start = ri.Milliseconds() * r_timescale->value;
 	}
 
 	// make sure rows and cols are powers of 2
@@ -1213,7 +1215,7 @@ void RE_StretchRaw ( int x, int y, int w, int h, int cols, int rows, const byte 
 	RE_UploadCinematic( cols, rows, (byte*)data, client, dirty );
 
 	if (r_speeds->integer) {
-		end = ri.Milliseconds() * ri.Cvar_VariableValue("timescale");
+		end = ri.Milliseconds() * r_timescale->value;
 		ri.Printf(PRINT_ALL, "RE_UploadCinematic( %i, %i ): %i msec\n", cols, rows, end - start);
 	}
 
@@ -1596,10 +1598,7 @@ static void vk_update_entity_constants( const trRefdef_t *refdef ) {
 	for ( i = 0; i < refdef->num_entities; i++ ) {
 		trRefEntity_t *ent = &refdef->entities[i];
 
-		// Only models use the entity light (as in rd-vanilla). Sprites, beams and FX do not.
-		if ( ent->e.reType == RT_MODEL )
-			R_SetupEntityLighting( refdef, ent );
-
+		// The frontend computed the light of the models (RE_RenderScene).
 		vkUniformEntity_t uniform = {};
 		vk_update_entity_light_constants( uniform, ent );
 		vk_update_entity_matrix_constants( uniform, ent, (int)i );
@@ -1616,36 +1615,11 @@ static void vk_update_entity_constants( const trRefdef_t *refdef ) {
 }
 
 static void vk_update_ghoul2_constants( const trRefdef_t *refdef ) {
-	uint32_t i;
-
 	if ( !vk.vboGhoul2Active )
 		return;
 
-	for ( i = 0; i < refdef->num_entities; i++ )
-	{
-		const trRefEntity_t *ent = &refdef->entities[i];
-		if (ent->e.reType != RT_MODEL)
-			continue;
-
-		model_t *model = R_GetModelByHandle(ent->e.hModel);
-		if (!model)
-			continue;
-
-		switch (model->type)
-		{
-		case MOD_MDXM:
-		case MOD_BAD:
-		{
-			// Transform Bones and upload them
-			RB_TransformBones( ent, refdef );
-		}
-		break;
-
-		default:
-			break;
-		}
-	}
-
+	// The frontend snapshot holds the poses; the backend only uploads them.
+	RB_G2_UploadBones( refdef );
 }
 
 // Linear fog range for the scope and the linFogStart worldspawn key (same rules as rd-vanilla).
@@ -1682,10 +1656,10 @@ static void vk_update_fog_constants(const trRefdef_t* refdef)
 	size_t size;
 	vkUniformFog_t uniform = {};
 
-	uniform.num_fogs = tr.world ? ( tr.world->numfogs - 1 ) : 0;
+	uniform.num_fogs = backEndDataBE->numFogs ? ( backEndDataBE->numFogs - 1 ) : 0;
 
-	// RE_LAGoggles fills the slot past numfogs, and every surface uses it.
-	if ( tr.world && refdef->doLAGoggles )
+	// RE_LAGoggles fills the slot past numFogs, and every surface uses it.
+	if ( backEndDataBE->numFogs && refdef->doLAGoggles )
 		uniform.num_fogs++;
 
 	size = sizeof(vec4_t);
@@ -1694,7 +1668,7 @@ static void vk_update_fog_constants(const trRefdef_t* refdef)
 
 	for ( i = 0; i < (uint32_t)uniform.num_fogs; ++i )
 	{
-		const fog_t *fog = tr.world->fogs + i + 1;
+		const fog_t *fog = backEndDataBE->fogs + i + 1;
 		vkUniformFogEntry_t *fogData = uniform.fogs + i;
 
 		VectorCopy4( fog->surface, fogData->plane );
@@ -1921,6 +1895,10 @@ const void	*RB_DrawBuffer( const void *data ) {
 
 	cmd = (const drawBufferCommand_t *)data;
 
+	// The start of the frame. The frontend does not touch these any more.
+	glState.finishCalled = qfalse;
+	backEnd.doneBloom = qfalse;
+
 	vk_begin_frame();
 
 #ifdef USE_RTX
@@ -1954,6 +1932,7 @@ static int	rb_captureWidth, rb_captureHeight;
 
 void RE_CaptureNextFrame( byte *rgba, int width, int height )
 {
+	R_SyncRenderThread();
 	rb_captureRGBA = rgba;
 	rb_captureWidth = width;
 	rb_captureHeight = height;
@@ -1993,16 +1972,12 @@ const void	*RB_SwapBuffers( const void *data ) {
 	// finish any 2D drawing if needed
 	RB_EndSurface();
 
-	ResetGhoul2RenderableSurfaceHeap();
-
 	// texture swapping test
 	if ( r_showImages->integer ) {
 		RB_ShowImages(tr.images.items, tr.images.count);
 	}
 
 	cmd = (const swapBuffersCommand_t *)data;
-
-	tr.needScreenMap = 0;
 
 	vk_end_frame();
 
@@ -2013,6 +1988,7 @@ const void	*RB_SwapBuffers( const void *data ) {
 #else
 	if ( backEnd.doneSurfaces && !glState.finishCalled ) {
 #endif
+		vk_perf_scope perfIdle( VKP_IDLE );
 		vk_queue_wait_idle();
 	}
 
@@ -2094,10 +2070,10 @@ static const void *RB_ClearColor( const void *data )
 
 	backEnd.projection2D = qtrue;
 
-	if ( r_fastsky->integer )
+	if ( r_fastsky->integer || backEndDataBE->globalFog < 0 )
 		vk_clear_color_attachments( (float*)tr.clearColor );
 	else
-		vk_clear_color_attachments( (float*)tr.world->fogs[tr.world->globalFog].color );
+		vk_clear_color_attachments( (float*)backEndDataBE->fogs[backEndDataBE->globalFog].color );
 
 	backEnd.projection2D = qfalse;
 
@@ -2112,8 +2088,10 @@ RB_ExecuteRenderCommands
 extern const void *R_DrawWireframeAutomap( const void *data ); //tr_world.cpp
 void RB_ExecuteRenderCommands( const void *data ) {
 	int		t1, t2;
+	vk_perf_scope perfBackend( VKP_BACKEND );
+	vk_perf_cpu_scope perfBackendCpu( VKP_BACKEND_CPU );
 
-	t1 = ri.Milliseconds()*ri.Cvar_VariableValue( "timescale" );
+	t1 = ri.Milliseconds()*r_timescale->value;
 
 	while ( 1 ) {
 		data = PADP(data, sizeof(void *));
@@ -2161,7 +2139,7 @@ void RB_ExecuteRenderCommands( const void *data ) {
 		default:
 			// stop rendering
 			vk_end_frame();
-			t2 = ri.Milliseconds()*ri.Cvar_VariableValue( "timescale" );
+			t2 = ri.Milliseconds()*r_timescale->value;
 			backEnd.pc.msec = t2 - t1;
 			return;
 		}

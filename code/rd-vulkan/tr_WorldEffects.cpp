@@ -33,6 +33,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 // Includes
 ////////////////////////////////////////////////////////////////////////////////////////
 
+#include <mutex>
 #include "tr_local.h"
 #include "tr_WorldEffects.h"
 
@@ -356,9 +357,68 @@ public:
 ratl::vector_vs<CWindZone, MAX_WIND_ZONES>		mWindZones;
 ratl::vector_vs<CWindZone*, MAX_WIND_ZONES>		mLocalWindZones;
 
+/*
+Weather commands of the game while the render thread runs
+
+The backend updates and draws the particle clouds, so the game cannot change them during
+a backend frame. RE_WorldEffectCommand keeps the command in a queue. R_WorldEffectsFlushQueue
+applies the queue when the thread is idle (R_SyncRenderThread, R_IssueRenderCommands).
+A function that reads the weather state flushes the queue first. Main thread only.
+*/
+#define WE_QUEUE_SIZE		32
+#define WE_COMMAND_SIZE		2048
+
+static char		weQueue[WE_QUEUE_SIZE][WE_COMMAND_SIZE];
+static int		weQueueCount = 0;
+static bool		weFlushing = false;
+static vec3_t	weViewOrigin = { 0.0f, 0.0f, 0.0f };
+static std::mutex	weWindMutex;	// the backend updates the wind, the game reads it
+
+void R_WorldEffectsSetViewOrigin(const vec3_t origin)
+{
+	VectorCopy(origin, weViewOrigin);
+}
+
+static void WE_ExecuteCommand(const char *command);
+
+void R_WorldEffectsFlushQueue(void)
+{
+	if (!weQueueCount || weFlushing || R_OnRenderThread() || R_RenderThreadBusy())
+	{
+		return;
+	}
+
+	// An image load inside a command calls R_SyncRenderThread again.
+	struct flushGuard_t
+	{
+		flushGuard_t() { weFlushing = true; }
+		~flushGuard_t() { weFlushing = false; weQueueCount = 0; }
+	} guard;
+
+	const int count = weQueueCount;
+	for (int i = 0; i < count; i++)
+	{
+		char command[WE_COMMAND_SIZE];
+		Q_strncpyz(command, weQueue[i], sizeof(command));
+		WE_ExecuteCommand(command);
+	}
+}
+
+// A reader of the weather state sees the commands that the game gave before.
+static void WE_SyncQueued(void)
+{
+	if (weQueueCount && !R_OnRenderThread())
+	{
+		R_SyncRenderThread();
+	}
+}
+
 // SP local wind zones (fx_wind) add to the global wind inside their bounds.
 bool R_GetWindVector(vec3_t windVector, vec3_t atpoint)
 {
+	WE_SyncQueued();
+	std::lock_guard<std::mutex> lock(weWindMutex);
+
 	VectorCopy(mGlobalWindDirection.v, windVector);
 	if (atpoint && mLocalWindZones.size())
 	{
@@ -376,6 +436,8 @@ bool R_GetWindVector(vec3_t windVector, vec3_t atpoint)
 
 bool R_GetWindSpeed(float &windSpeed, vec3_t atpoint)
 {
+	WE_SyncQueued();
+	std::lock_guard<std::mutex> lock(weWindMutex);
 	windSpeed = mGlobalWindSpeed;
 	if (atpoint && mLocalWindZones.size())
 	{
@@ -878,26 +940,30 @@ bool				COutside::SWeatherZone::mMarkedOutside = false;
 
 void RE_AddWeatherZone(vec3_t mins, vec3_t maxs)
 {
+	R_SyncRenderThread();
 	mOutside.AddWeatherZone(mins, maxs);
 }
 
 bool R_IsOutside(vec3_t pos)
 {
+	WE_SyncQueued();
 	return mOutside.PointOutside(pos);
 }
 
 // SP asks for a given position. Without one, use the view origin.
 bool R_IsShaking(vec3_t pos)
 {
+	WE_SyncQueued();
 	if (!pos)
 	{
-		pos = backEnd.viewParms.ori.origin;
+		pos = weViewOrigin;	// origin of the last 3D view, set by the frontend
 	}
 	return (mOutside.mOutsideShake && mOutside.PointOutside(pos));
 }
 
 float R_IsOutsideCausingPain(vec3_t pos)
 {
+	WE_SyncQueued();
 	return (mOutside.mOutsidePain && mOutside.PointOutside(pos));
 }
 
@@ -914,6 +980,7 @@ static void R_SetGlobalFogColorFields(fog_t *fog, const vec3_t color, int colorI
 // SP fx_rain lightning: a non-zero color replaces the global fog color, a zero color restores it.
 bool R_SetTempGlobalFogColor(vec3_t color)
 {
+	WE_SyncQueued();
 	if (tr.world && tr.world->globalFog != -1)
 	{
 		fog_t *fog = &tr.world->fogs[tr.world->globalFog];
@@ -1598,6 +1665,13 @@ ratl::vector_vs<CWeatherParticleCloud, MAX_PARTICLE_CLOUDS>	mParticleClouds;
 ////////////////////////////////////////////////////////////////////////////////////////
 void R_InitWorldEffects(void)
 {
+	// Everything is cleared below: the commands in the queue have no effect any more.
+	if (!weFlushing)
+	{
+		weQueueCount = 0;
+	}
+	R_SyncRenderThread();
+
 	srand(ri.Milliseconds());
 
 	for (int i=0; i<mParticleClouds.size(); i++)
@@ -1623,12 +1697,21 @@ void R_ShutdownWorldEffects(void)
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////
+// RB_WorldEffectsNeedSync - True while the next RB_RenderWorldEffects scans the world for the
+// point cache. That reads and writes a file and uses the collision code of the engine.
+////////////////////////////////////////////////////////////////////////////////////////
+qboolean RB_WorldEffectsNeedSync(void)
+{
+	return (tr.world && mParticleClouds.size() && !mOutside.Initialized()) ? qtrue : qfalse;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////
 // RB_RenderWorldEffects - If any particle clouds exist, this will update and render them
 ////////////////////////////////////////////////////////////////////////////////////////
 void RB_RenderWorldEffects(void)
 {
 	if (!tr.world ||
-		(tr.refdef.rdflags & RDF_NOWORLDMODEL) ||
+		(backEnd.refdef.rdflags & RDF_NOWORLDMODEL) ||
 		(backEnd.refdef.rdflags & RDF_SKYBOXPORTAL) ||
 		!mParticleClouds.size() ||
 		ri.CL_IsRunningInGameCinematic())
@@ -1662,6 +1745,7 @@ void RB_RenderWorldEffects(void)
 		//-----------------------
 		if (!mFrozen)
 		{
+			std::lock_guard<std::mutex> windLock(weWindMutex);
 			mGlobalWindVelocity.Clear();
 			for (int wz=0; wz<mWindZones.size(); wz++)
 			{
@@ -1755,6 +1839,26 @@ void RE_WorldEffectCommand(const char *command)
 		return;
 	}
 
+	// The backend updates and draws the particle clouds: wait for the thread to be idle.
+	if (R_RenderThreadBusy() || weQueueCount)
+	{
+		if (weQueueCount == WE_QUEUE_SIZE)
+		{
+			R_SyncRenderThread();
+		}
+		if (weQueueCount < WE_QUEUE_SIZE && R_RenderThreadBusy())
+		{
+			Q_strncpyz(weQueue[weQueueCount++], command, WE_COMMAND_SIZE);
+			return;
+		}
+		R_WorldEffectsFlushQueue();
+	}
+
+	WE_ExecuteCommand(command);
+}
+
+static void WE_ExecuteCommand(const char *command)
+{
 	// RAII guard: this function has many early `return`s below, and
 	// COM_ParseExt() requires an active session -- COM_ParseSession's
 	// destructor calls COM_EndParseSession() on every exit path so none
@@ -2178,6 +2282,7 @@ void RE_WorldEffectCommand(const char *command)
 
 float R_GetChanceOfSaberFizz()
 {
+	WE_SyncQueued();
  	float	chance = 0.0f;
 	int		numWater = 0;
 	for (int i=0; i<mParticleClouds.size(); i++)
@@ -2197,6 +2302,7 @@ float R_GetChanceOfSaberFizz()
 
 bool R_IsRaining()
 {
+	WE_SyncQueued();
 	return !mParticleClouds.empty();
 }
 

@@ -34,7 +34,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 // needs to be larger than PACKET_BACKUP
 
 
-#define	MAX_ENTITIES_IN_SNAPSHOT	512
+#define	MAX_ENTITIES_IN_SNAPSHOT	1024	// as the server limit MAX_SNAPSHOT_ENTITIES
 
 #define	SNAPFLAG_RATE_DELAYED		1		// the server withheld a packet to save bandwidth
 #define	SNAPFLAG_DROPPED_COMMANDS	2		// the server lost some cmds coming from the client

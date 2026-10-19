@@ -1418,18 +1418,8 @@ void R_BuildMD3( model_t *mod, mdvModel_t *mdvModel )
 #define MAX_GORE_VERTICES	GORE_VERTEX_SIZE / sizeof(g2GoreVert_t)
 #define MAX_GORE_INDIDCES	GORE_INDEX_SIZE / sizeof(glIndex_t)
 
-// Gore uploads wait for the next frame command buffer (vk_flush_gore_uploads).
-// The regions are byte ranges of the staging buffer, copied at the same offset.
-#define MAX_GORE_UPLOADS	256
-
-typedef struct {
-	VkBufferCopy	regions[MAX_GORE_UPLOADS];
-	uint32_t		count;
-} goreUploads_t;
-
-static goreUploads_t	goreVBOUploads;
-static goreUploads_t	goreIBOUploads;
-
+// The pending uploads live in backEndData: the frontend adds to them (R_UpdateGoreVBO),
+// the backend records them (vk_flush_gore_uploads).
 static qboolean R_QueueGoreUpload( goreUploads_t *list, VkDeviceSize offset, VkDeviceSize size )
 {
 	if ( list->count ) {
@@ -1485,18 +1475,24 @@ static void vk_record_gore_copies( VkCommandBuffer cmd, VkBuffer src, VkBuffer d
 // Records the queued gore copies. Call outside a render pass, before the first draw.
 void vk_flush_gore_uploads( VkCommandBuffer cmd )
 {
+	if ( !backEndDataBE )
+		return;
+
 	if ( !tr.goreVBO || !tr.goreIBO ) {
-		goreVBOUploads.count = goreIBOUploads.count = 0;
+		backEndDataBE->goreVBOUploads.count = backEndDataBE->goreIBOUploads.count = 0;
 		return;
 	}
 
-	vk_record_gore_copies( cmd, tr.goreVBO->staging.buffer, tr.goreVBO->buffer, &goreVBOUploads );
-	vk_record_gore_copies( cmd, tr.goreIBO->staging.buffer, tr.goreIBO->buffer, &goreIBOUploads );
+	vk_record_gore_copies( cmd, tr.goreVBO->staging.buffer, tr.goreVBO->buffer, &backEndDataBE->goreVBOUploads );
+	vk_record_gore_copies( cmd, tr.goreIBO->staging.buffer, tr.goreIBO->buffer, &backEndDataBE->goreIBOUploads );
 }
 
 void R_CreateGoreVBO( void )
 {
-	goreVBOUploads.count = goreIBOUploads.count = 0;
+	for ( int b = 0; b < 2; b++ ) {
+		if ( backEndDataBuf[b] )
+			backEndDataBuf[b]->goreVBOUploads.count = backEndDataBuf[b]->goreIBOUploads.count = 0;
+	}
 
 	tr.goreVBO = R_CreateDynamicVBO( "Gore VBO", GORE_VERTEX_SIZE );
 
@@ -1593,12 +1589,14 @@ void R_UpdateGoreVBO( srfG2GoreSurface_t *goreSurface )
 	Com_Memcpy((byte *)tr.goreVBO->mapped + vbo_offset, goreSurface->verts, vbo_size);
 	Com_Memcpy((byte *)tr.goreIBO->mapped + ibo_offset, goreSurface->indexes, ibo_size);
 
-	// Upload to GPU. Outside a frame, the copy goes into the next frame command buffer.
-	// In a frame, or with a full list, use a separate submit and wait (slow).
-	if ( vk.frame_count
-		|| !R_QueueGoreUpload( &goreVBOUploads, vbo_offset, vbo_size )
-		|| !R_QueueGoreUpload( &goreIBOUploads, ibo_offset, ibo_size ) )
+	// Upload to GPU. The copy goes into the next frame command buffer.
+	// With a full list, use a separate submit and wait (slow).
+	if ( !backEndData
+		|| !R_QueueGoreUpload( &backEndData->goreVBOUploads, vbo_offset, vbo_size )
+		|| !R_QueueGoreUpload( &backEndData->goreIBOUploads, ibo_offset, ibo_size ) )
 	{
+		// This submits to the queue from the main thread.
+		R_SyncRenderThread();
 		R_UpdateDynamicBuffer(tr.goreVBO->buffer, tr.goreVBO->staging.buffer, vbo_offset, vbo_size);
 		R_UpdateDynamicBuffer(tr.goreIBO->buffer, tr.goreIBO->staging.buffer, ibo_offset, ibo_size);
 	}

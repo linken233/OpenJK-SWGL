@@ -409,7 +409,8 @@ static void fill_model_instance_distortion( uint32_t *data, const trRefdef_t *re
 	data[1] |= INSTANCE_DISTORT_CROP;
 }
 
-static void fill_model_instance_shader_data( InstanceBuffer *uniform_instance_buffer, int current_instance_index, const trRefdef_t *refdef, trRefEntity_t* entity, shader_t *shader )
+// distortion: the caller checked vk_rtx_is_distortion_entity, which a job must not call.
+static void fill_model_instance_shader_data( InstanceBuffer *uniform_instance_buffer, int current_instance_index, const trRefdef_t *refdef, trRefEntity_t* entity, shader_t *shader, qboolean distortion )
 {
 	uint32_t forceRGBGen = 0;
 
@@ -561,7 +562,7 @@ static void fill_model_instance_shader_data( InstanceBuffer *uniform_instance_bu
 		}
 	}
 
-	if ( shader && vk_rtx_is_distortion_entity( entity ) )
+	if ( shader && distortion )
 		fill_model_instance_distortion( data, refdef, entity, shader );
 	else if ( shader && vk_rtx_is_nodepth_entity( entity ) )
 		data[1] |= INSTANCE_NODEPTH;
@@ -665,51 +666,6 @@ static int dlight_cluster( world_t *worldData, vec3_t origin, float probe )
 	return cluster;
 }
 
-// An impact effect places its dlight exactly on the surface it hit. The raster lights that
-// surface from any distance, but the tracer needs dot(n, L) > 0: a light in the plane of a
-// wall lights nothing of it, and the few samples that pass come back noisy. Find the nearest
-// surface within probe units and move the light off it along the surface normal.
-static void dlight_lift_off_surface( vec3_t origin, float lift, float probe )
-{
-	static const vec3_t axes[6] = {
-		{  1,  0,  0 }, { -1,  0,  0 }, {  0,  1,  0 }, {  0, -1,  0 }, {  0,  0,  1 }, {  0,  0, -1 }
-	};
-
-	trace_t best;
-	float best_fraction = 2.0f;
-
-	for ( int i = 0; i < 6; i++ )
-	{
-		vec3_t end;
-		trace_t tr;
-
-		VectorMA( origin, probe, axes[i], end );
-		ri.SV_Trace( &tr, origin, vec3_origin, vec3_origin, end, ENTITYNUM_NONE, CONTENTS_SOLID, G2_NOCOLLIDE, 0 );
-
-		if ( tr.startsolid || tr.allsolid || tr.fraction >= 1.0f )
-			continue;
-
-		if ( tr.fraction < best_fraction )
-		{
-			best_fraction = tr.fraction;
-			best = tr;
-		}
-	}
-
-	if ( best_fraction > 1.0f )
-		return;
-
-	// Do not push the light through the surface on the far side of a thin room.
-	vec3_t target, lifted;
-	trace_t tr;
-
-	VectorMA( best.endpos, lift, best.plane.normal, target );
-	ri.SV_Trace( &tr, best.endpos, vec3_origin, vec3_origin, target, ENTITYNUM_NONE, CONTENTS_SOLID, G2_NOCOLLIDE, 0 );
-	VectorMA( best.endpos, tr.fraction * lift * 0.9f, best.plane.normal, lifted );
-
-	VectorCopy( lifted, origin );
-}
-
 // ReSTIR matches a light to its previous-frame self by this id (see
 // update_mlight_prev_to_current and reproject_light_index), so it has to identify the
 // light, not its slot or its position: refdef->dlights is rebuilt every frame in any
@@ -802,10 +758,6 @@ add_dlights(const dlight_t* dlights, int num_dlights, light_poly_t* light_list, 
 	dlight_track_ids( dlights, num_dlights, ids );
 
 	// Intensity of the dynamic lights (blaster bolts, explosions, muzzle flashes), 1 for no change.
-	static cvar_t *pt_light_scale_dlight;
-	if ( !pt_light_scale_dlight )
-		pt_light_scale_dlight = ri.Cvar_Get( "pt_light_scale_dlight", "0.02", CVAR_ARCHIVE_ND );
-
 	const float dlight_scale = MAX( 0.f, pt_light_scale_dlight->value );
 
 	for (int i = 0; i < num_dlights; i++)
@@ -816,8 +768,9 @@ add_dlights(const dlight_t* dlights, int num_dlights, light_poly_t* light_list, 
 		const dlight_t* dlight = dlights + i;
 		light_poly_t* light = light_list + *num_lights;
 
+		// The frontend moved the light off the surface it hit, see R_LiftDlightsForRtx.
 		vec3_t origin;
-		VectorCopy( dlight->origin, origin );
+		VectorCopy( dlight->rtxOrigin, origin );
 
 		const qboolean is_spot = (qboolean)(dlight->light_type == DLIGHT_SPOT);
 		const float falloff_radius = dlight->radius;
@@ -825,9 +778,6 @@ add_dlights(const dlight_t* dlights, int num_dlights, light_poly_t* light_list, 
 
 		if ( emitter_radius <= 0.0f || emitter_radius > falloff_radius )
 			emitter_radius = falloff_radius;
-
-		if ( !is_spot && pt_dlight_lift->value > 0.0f )
-			dlight_lift_off_surface( origin, pt_dlight_lift->value, 4.0f );
 
 		light->cluster = dlight_cluster( worldData, origin, 8.0f );
 
@@ -935,7 +885,7 @@ void vk_rtx_add_entity_mesh( maliasmesh_t *mesh, shader_t *shader, int bone_offs
 
 static qboolean vk_rtx_collect_entity_meshes( const model_t* model, const uint32_t entityNum, trRefEntity_t *entity, int *mdxm_matrix_offset, mat3x4_t *mdxm_matrix_data )
 {
-	Com_Memset( &entity_meshes, NULL, sizeof(vk_rtx_entity_mesh_t) * SHADER_MAX_ENTITIES );
+	// Only entries below entity_mesh_count are read, and vk_rtx_add_entity_mesh sets all their fields.
 	entity_mesh_count = 0;
 
 	switch (model->type)
@@ -1129,7 +1079,7 @@ static void process_bsp_entity(
 	ModelInstance* mi = uniform_instance_buffer->model_instances + current_instance_idx;
 	// calc_color reads the entity color here; without it a brush model got the data another
 	// instance left at this index.
-	fill_model_instance_shader_data( uniform_instance_buffer, current_instance_idx, refdef, entity, NULL );
+	fill_model_instance_shader_data( uniform_instance_buffer, current_instance_idx, refdef, entity, NULL, qfalse );
 	memcpy(&mi->transform, transform, sizeof(transform));
 	memcpy(&mi->transform_prev, transform, sizeof(transform));
 	mi->material = 0;
@@ -1170,7 +1120,64 @@ static void process_bsp_entity(
 	(*instance_count)++;
 }
 
-static void process_regular_entity( 
+// One mesh instance whose data a job writes. process_regular_entity fills the list in order.
+typedef struct {
+	trRefEntity_t	*entity;
+	maliasmesh_t	*mesh;
+	shader_t		*shader;
+	uint32_t		material_id;
+	int				bone_offset;
+	int				instance_index;
+	int				render_prim_offset;
+	qboolean		distortion;		// the distortion data uses tess and backEnd, so it stays on the calling thread
+	mat4_t			transform;
+} vk_rtx_instance_job_t;
+
+static vk_rtx_instance_job_t	instance_jobs[SHADER_MAX_ENTITIES];
+static int						instance_job_count;
+
+typedef struct {
+	const trRefdef_t	*refdef;
+	qboolean			serial_pass;
+} instanceJobCtx_t;
+
+// Each job writes only the slots of its own instance index.
+static void instance_job_range( int begin, int end, void *p )
+{
+	const instanceJobCtx_t *ctx = (const instanceJobCtx_t *)p;
+	InstanceBuffer *buffer = &vk.uniform_instance_buffer;
+
+	for ( int n = begin; n < end; n++ )
+	{
+		const vk_rtx_instance_job_t *job = &instance_jobs[n];
+
+		if ( job->distortion != ctx->serial_pass )
+			continue;
+
+		ModelInstance *mi = &buffer->model_instances[job->instance_index];
+
+		fill_model_instance_shader_data( buffer, job->instance_index, ctx->refdef, job->entity, job->shader, job->distortion );
+		fill_model_instance( mi, job->entity, job->mesh, job->shader, job->transform, qfalse, qfalse, job->material_id, job->bone_offset );
+
+		mi->render_buffer_idx = VERTEX_BUFFER_INSTANCED;
+		mi->render_prim_offset = job->render_prim_offset;
+	}
+}
+
+static void vk_rtx_run_instance_jobs( const trRefdef_t *refdef )
+{
+	instanceJobCtx_t ctx;
+	ctx.refdef = refdef;
+
+	// Grain 8: one job is a few hundred nanoseconds to a few microseconds.
+	ctx.serial_pass = qfalse;
+	RTX_ParallelFor( instance_job_count, 8, instance_job_range, &ctx );
+
+	ctx.serial_pass = qtrue;
+	instance_job_range( 0, instance_job_count, &ctx );
+}
+
+static void process_regular_entity(
 	const uint32_t entityNum,
 	const trRefdef_t *refdef,
 	trRefEntity_t *entity, 
@@ -1194,6 +1201,7 @@ static void process_regular_entity(
 
 	InstanceBuffer *uniform_instance_buffer = &vk.uniform_instance_buffer;
 	uint32_t i;
+	const int job_base = instance_job_count;
 
 	mat4_t transform;
 	create_entity_matrix( transform, (trRefEntity_t*)entity, qfalse );
@@ -1218,7 +1226,10 @@ static void process_regular_entity(
 		}
 
 		if (  entity_mesh->mesh->indexOffset < 0 ) // failed to upload the vertex data - don't instance this mesh
+		{
+			instance_job_count = job_base;	// drop the jobs of the meshes before this one
 			return;
+		}
 
 		uint32_t material_id = compute_mesh_material_flags( entity, entity_mesh->mesh->modelIndex, entity_mesh->shader );
 
@@ -1260,14 +1271,24 @@ static void process_regular_entity(
 
 		memcpy(&model_entity_ids[entity_frame_num][current_instance_index], &hash, sizeof(uint32_t));
 		
-		//ModelInstance* mi = uniform_instance_buffer->model_instances + current_instance_index;
-		ModelInstance* mi = &uniform_instance_buffer->model_instances[current_instance_index];
+		// The instance data is written later by vk_rtx_run_instance_jobs, in parallel.
+		// Everything that depends on the running counters is decided here, in order.
+		{
+			vk_rtx_instance_job_t *job = &instance_jobs[instance_job_count++];
 
-		fill_model_instance_shader_data( uniform_instance_buffer, current_instance_index, refdef, entity,  entity_mesh->shader );
-		fill_model_instance( mi, entity, entity_mesh->mesh, 
-							  entity_mesh->shader,  transform, is_viewer_weapon, is_double_sided, 
-							  material_id, entity_mesh->bone_offset 
-		);
+			// Calling it here keeps the jobs from writing the lighting of a shared entity.
+			R_SetupEntityLighting( refdef, entity );
+
+			job->entity = entity;
+			job->mesh = entity_mesh->mesh;
+			job->shader = entity_mesh->shader;
+			job->material_id = material_id;
+			job->bone_offset = entity_mesh->bone_offset;
+			job->instance_index = current_instance_index;
+			job->render_prim_offset = current_num_instanced_prim;
+			job->distortion = ( entity_mesh->shader && vk_rtx_is_distortion_entity( entity ) ) ? qtrue : qfalse;
+			Com_Memcpy( job->transform, transform, sizeof( job->transform ) );
+		}
 
 
 #if 0
@@ -1287,9 +1308,6 @@ static void process_regular_entity(
 #endif
 		{
 			uniform_instance_buffer->animated_model_indices[current_animated_index] = current_instance_index;
-
-			mi->render_buffer_idx = VERTEX_BUFFER_INSTANCED;
-			mi->render_prim_offset = current_num_instanced_prim;
 
 			current_animated_index++;
 			current_num_instanced_prim += entity_mesh->mesh->numIndexes / 3;
@@ -1319,11 +1337,78 @@ static void process_regular_entity(
 	*num_instanced_prim = current_num_instanced_prim;
 }
 
-static void prepare_entities( EntityUploadInfo *upload_info, const trRefdef_t *refdef ) 
+typedef struct {
+	InstanceBuffer	*buffer;
+	const int		*cur_ids;
+	const int		*prev_ids;
+	int				cur_count;
+	int				prev_count;
+} entityMatchCtx_t;
+
+// Finds the previous frame instance of each current instance. A job writes only its own entries.
+static void match_current_to_prev_range( int begin, int end, void *p )
+{
+	const entityMatchCtx_t *c = (const entityMatchCtx_t *)p;
+
+	for ( int i = begin; i < end; i++ )
+	{
+		entity_hash_t hash;
+		memcpy( &hash, &c->cur_ids[i], sizeof( entity_hash_t ) );
+
+		if ( hash.entity == 0u )
+			continue;
+
+		for ( int j = c->prev_count - 1; j >= 0; j-- )
+		{
+			if ( c->cur_ids[i] != c->prev_ids[j] )
+				continue;
+
+			c->buffer->model_current_to_prev[i] = j;
+
+			// Copy the "prev" instance paramters from the previous frame's instance buffer
+			ModelInstance* mi_curr = c->buffer->model_instances + i;
+			ModelInstance* mi_prev = model_instances_prev + j;
+
+			memcpy(mi_curr->transform_prev, mi_prev->transform, sizeof(mi_curr->transform_prev));
+			mi_curr->prim_offset_curr_pose_prev_frame = mi_prev->prim_offset_curr_pose_curr_frame;
+			mi_curr->prim_offset_prev_pose_prev_frame = mi_prev->prim_offset_prev_pose_curr_frame;
+			mi_curr->pose_lerp_prev_frame = mi_prev->pose_lerp_curr_frame;
+			mi_curr->mdxm_matrix_offset_prev = mi_prev->mdxm_matrix_offset_curr;
+			break;
+		}
+	}
+}
+
+// Finds the current instance of each previous frame instance.
+static void match_prev_to_current_range( int begin, int end, void *p )
+{
+	const entityMatchCtx_t *c = (const entityMatchCtx_t *)p;
+
+	for ( int j = begin; j < end; j++ )
+	{
+		entity_hash_t hash;
+		memcpy( &hash, &c->prev_ids[j], sizeof( entity_hash_t ) );
+
+		if ( hash.entity == 0u )
+			continue;
+
+		for ( int i = c->cur_count - 1; i >= 0; i-- )
+		{
+			if ( c->cur_ids[i] == c->prev_ids[j] )
+			{
+				c->buffer->model_prev_to_current[j] = i;
+				break;
+			}
+		}
+	}
+}
+
+static void prepare_entities( EntityUploadInfo *upload_info, const trRefdef_t *refdef )
 {
 	uint32_t i;
 
 	entity_frame_num = !entity_frame_num;
+	instance_job_count = 0;
 
 	{
 		static float last_float_time = 0.0f;
@@ -1543,6 +1628,9 @@ static void prepare_entities( EntityUploadInfo *upload_info, const trRefdef_t *r
 	{
 	}
 
+	// The meshes are counted. Write the instance data of all of them.
+	vk_rtx_run_instance_jobs( refdef );
+
 	// bind
 	upload_info->num_instances = instance_idx;
 	upload_info->num_prims  = num_instanced_prim;
@@ -1552,26 +1640,17 @@ static void prepare_entities( EntityUploadInfo *upload_info, const trRefdef_t *r
 	memset(instance_buffer->mlight_prev_to_current, ~0u, sizeof(instance_buffer->mlight_prev_to_current));
 
 	model_entity_id_count[entity_frame_num] = model_instance_idx;
-	for(int i = 0; i < model_entity_id_count[entity_frame_num]; i++) {
-		for(int j = 0; j < model_entity_id_count[!entity_frame_num]; j++) {
-			entity_hash_t hash;
-			memcpy(&hash, &model_entity_ids[entity_frame_num][i], sizeof(entity_hash_t));
+	{
+		// A repeated id makes the last match win, as in the serial double loop.
+		entityMatchCtx_t match;
+		match.buffer = instance_buffer;
+		match.cur_ids = model_entity_ids[entity_frame_num];
+		match.prev_ids = model_entity_ids[!entity_frame_num];
+		match.cur_count = model_entity_id_count[entity_frame_num];
+		match.prev_count = model_entity_id_count[!entity_frame_num];
 
-			if(model_entity_ids[entity_frame_num][i] == model_entity_ids[!entity_frame_num][j] && hash.entity != 0u) {
-				instance_buffer->model_current_to_prev[i] = j;
-				instance_buffer->model_prev_to_current[j] = i;
-
-				// Copy the "prev" instance paramters from the previous frame's instance buffer
-				ModelInstance* mi_curr = instance_buffer->model_instances + i;
-				ModelInstance* mi_prev = model_instances_prev + j;
-
-				memcpy(mi_curr->transform_prev, mi_prev->transform, sizeof(mi_curr->transform_prev));
-				mi_curr->prim_offset_curr_pose_prev_frame = mi_prev->prim_offset_curr_pose_curr_frame;
-				mi_curr->prim_offset_prev_pose_prev_frame = mi_prev->prim_offset_prev_pose_curr_frame;
-				mi_curr->pose_lerp_prev_frame = mi_prev->pose_lerp_curr_frame;
-				mi_curr->mdxm_matrix_offset_prev = mi_prev->mdxm_matrix_offset_curr;
-			}
-		}
+		RTX_ParallelFor( match.cur_count, 16, match_current_to_prev_range, &match );
+		RTX_ParallelFor( match.prev_count, 16, match_prev_to_current_range, &match );
 	}
 
 	mdxm_matrix_count[entity_frame_num] = mdxm_matrix_offset;
@@ -1921,13 +2000,6 @@ static void vk_rtx_prepare_ubo( trRefdef_t *refdef, world_t *world, mnode_t *vie
 	// The tone mapping as tone_mapping_apply does it: the tracer inverts it for the colours in
 	// screen units (screen_to_hdr_color).
 	{
-		static cvar_t *tm_per_channel, *tm_contrast;
-		if ( !tm_per_channel )
-		{
-			tm_per_channel = ri.Cvar_Get( "tm_per_channel", "1", CVAR_ARCHIVE_ND );
-			tm_contrast = ri.Cvar_Get( "tm_contrast", "1", CVAR_ARCHIVE_ND );
-		}
-
 		ubo->tonemap_hdr = vk.rtx_surf_is_hdr ? 1 : 0;
 		ubo->tonemap_per_channel = Com_Clamp( 0.f, 1.f, tm_per_channel->value );
 		ubo->tonemap_contrast = Com_Clamp( 0.5f, 2.f, tm_contrast->value );
@@ -2102,7 +2174,7 @@ static void vk_rtx_prepare_fog_ubo( vkUniformRTX_t *ubo, const trRefdef_t *refde
 	// The LA goggles fog replaces every other fog: one box around the world.
 	if ( refdef->doLAGoggles )
 	{
-		const fog_t *fog = tr.world->fogs + tr.world->numfogs;
+		const fog_t *fog = backEndDataBE->fogs + backEndDataBE->numFogs;
 		const float depth = fog->parms.depthForOpaque < 1.0f ? 1.0f : fog->parms.depthForOpaque;
 
 		VectorSet( ubo->fog_volumes[0], -65536.0f, -65536.0f, -65536.0f );
@@ -2112,9 +2184,9 @@ static void vk_rtx_prepare_fog_ubo( vkUniformRTX_t *ubo, const trRefdef_t *refde
 		return;
 	}
 
-	for ( int i = 1; i < tr.world->numfogs && count < MAX_FOG_VOLUMES; i++ )
+	for ( int i = 1; i < backEndDataBE->numFogs && count < MAX_FOG_VOLUMES; i++ )
 	{
-		const fog_t *fog = tr.world->fogs + i;
+		const fog_t *fog = backEndDataBE->fogs + i;
 		const float depth = fog->parms.depthForOpaque < 1.0f ? 1.0f : fog->parms.depthForOpaque;
 		float (*v)[4] = ubo->fog_volumes + count * 3;
 
@@ -2438,13 +2510,12 @@ uint32_t vk_rtx_debug_image_index( void )
 	static char resolved_from[MAX_QPATH] = { 0 };
 	static uint32_t resolved = RTX_IMG_TAA_OUTPUT;
 
-	if ( !pt_debug_image )
-		return RTX_IMG_TAA_OUTPUT;
+	const char *debugImage = backEndDataBE->debugImage;	// copy made at the swap
 
 	// Only re-resolve when the string changes; this runs every frame.
-	if ( strcmp( resolved_from, pt_debug_image->string ) )
+	if ( strcmp( resolved_from, debugImage ) )
 	{
-		Q_strncpyz( resolved_from, pt_debug_image->string, sizeof( resolved_from ) );
+		Q_strncpyz( resolved_from, debugImage, sizeof( resolved_from ) );
 
 		if ( !resolved_from[0] || !strcmp( resolved_from, "0" ) )
 			resolved = RTX_IMG_TAA_OUTPUT;
@@ -2704,6 +2775,7 @@ static void vk_begin_trace_rays( world_t &worldData, trRefdef_t *refdef, referen
 	{
 		VkCommandBuffer trace_cmd_buf = vkpt_begin_command_buffer(&vk.cmd_buffers_graphics);
 
+		vk_gpu_timer_write( trace_cmd_buf, VKP_TS_START, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT );
 
 		update_transparency(trace_cmd_buf, refdef, ubo->V);
 
@@ -2731,6 +2803,8 @@ static void vk_begin_trace_rays( world_t &worldData, trRefdef_t *refdef, referen
 		vkpt_pt_create_toplevel( trace_cmd_buf, vk.current_frame_index, upload_info );
 		vkpt_pt_update_descripter_set_bindings( vk.current_frame_index );
 		END_PERF_MARKER( trace_cmd_buf, PROFILER_BVH_UPDATE );
+
+		vk_gpu_timer_write( trace_cmd_buf, VKP_TS_ACCEL_END, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT );
 
 		BEGIN_PERF_MARKER( trace_cmd_buf, PROFILER_SHADOW_MAP );
 		if ( god_rays_enabled )
@@ -2865,6 +2939,8 @@ static void vk_begin_trace_rays( world_t &worldData, trRefdef_t *refdef, referen
 			VkBufferCopy copyRegion = { 0, 0, sizeof(ReadbackBuffer) };
 			qvkCmdCopyBuffer( post_cmd_buf, vk.buf_readback.buffer, vk.buf_readback_staging[vk.current_frame_index].buffer, 1, &copyRegion);
 		}
+
+		vk_gpu_timer_write( post_cmd_buf, VKP_TS_RT_END, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT );
 
 		vkpt_submit_command_buffer_simple( post_cmd_buf, vk.queue_graphics, true );
 	}

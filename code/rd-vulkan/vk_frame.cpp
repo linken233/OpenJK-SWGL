@@ -85,6 +85,8 @@ void vk_create_sync_primitives( void )
 	vk.image_uploaded = VK_NULL_HANDLE;
 	vk.aux_fence_wait = qfalse;
 #endif
+
+	vk_gpu_timer_create();
 }
 
 void vk_destroy_sync_primitives( void )
@@ -92,6 +94,8 @@ void vk_destroy_sync_primitives( void )
     uint32_t i;
 
     vk_debug("Destroy Sempahore and Fence\n");
+
+	vk_gpu_timer_destroy();
 
 #ifdef USE_UPLOAD_QUEUE
 	qvkDestroySemaphore( vk.device, vk.image_uploaded2, NULL );
@@ -1219,7 +1223,7 @@ void vk_destroy_framebuffers( void )
 
 static qboolean vk_find_screenmap_drawsurfs( void )
 {
-    const void* curCmd = &backEndData->commands.cmds;
+    const void* curCmd = &backEndDataBE->commands.cmds;
     const drawBufferCommand_t* db_cmd;
     const drawSurfsCommand_t* ds_cmd;
 
@@ -1612,7 +1616,7 @@ void vk_render_ssao( const void *viewParms_ )
 
     push.radius     = r_ssaoRadius->value;
     push.intensity  = r_ssaoIntensity->value;
-    push.frameNoise = (float)( tr.frameCount & 63 ) * 0.0625f;
+    push.frameNoise = (float)( backEndDataBE->frameCount & 63 ) * 0.0625f;
     push.sliceCount = r_ssaoSlices->integer;
     push.stepCount  = r_ssaoSteps->integer;
 
@@ -1763,8 +1767,11 @@ void vk_begin_frame( void )
 #endif
 	vk.cmd = &vk.tess[ vk.cmd_index ];
 
+	qboolean fenceWaited = qfalse;
+
 	if ( vk.cmd->waitForFence ) {
 		vk.cmd->waitForFence = qfalse;
+		vk_perf_scope perfFence( VKP_FENCE_WAIT );
 		res = qvkWaitForFences( vk.device, 1, &vk.cmd->rendering_finished_fence, VK_FALSE, 1e10 );
 		if ( res != VK_SUCCESS ) {
 			if ( res == VK_ERROR_DEVICE_LOST ) {
@@ -1775,11 +1782,16 @@ void vk_begin_frame( void )
 				ri.Error( ERR_FATAL, "Vulkan: %s returned %s", "vkWaitForFences", vk_result_string( res ) );
 			}
 		}
+		fenceWaited = ( res == VK_SUCCESS ) ? qtrue : qfalse;
 		VK_CHECK( qvkResetFences( vk.device, 1, &vk.cmd->rendering_finished_fence ) );
     }
 
+	// The fence of the previous use of this command buffer is done: its timestamps are ready.
+	vk_gpu_timer_begin_frame( vk.cmd_index, fenceWaited );
+
 	if ( !ri.VK_IsMinimized() && !vk.cmd->swapchain_image_acquired ) {
 		qboolean retry = qfalse;
+		vk_perf_scope perfAcquire( VKP_ACQUIRE );
 _retry:
         res = qvkAcquireNextImageKHR( vk.device, vk.swapchain, 5 * 1000000000ULL, vk.cmd->image_acquired, VK_NULL_HANDLE, &vk.cmd->swapchain_image_index );
 		// when running via RDP: "Application has already acquired the maximum number of images (0x2)"
@@ -1803,6 +1815,9 @@ _retry:
     begin_info.pInheritanceInfo = VK_NULL_HANDLE;
 
     VK_CHECK( qvkBeginCommandBuffer( vk.cmd->command_buffer, &begin_info ) );
+
+	vk_gpu_timer_write( vk.cmd->command_buffer, VKP_TS_MAIN_TOP, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT );
+	vk_gpu_timer_write( vk.cmd->command_buffer, VKP_TS_MAIN_COLOR, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT );
 
 #ifdef _G2_GORE
 	// the gore marks added since the last frame, before the first render pass
@@ -1956,6 +1971,7 @@ static void vk_resize_geometry_buffer( void )
 
 void vk_wait_idle( void )
 {
+    R_SyncRenderThread();
     VK_CHECK(qvkDeviceWaitIdle(vk.device));
 }
 
@@ -2048,7 +2064,7 @@ void vk_end_frame( void )
         return;
 
     vk.frame_count = 0;
-    tr.ss.groups_count = 0;
+    backEndDataBE->ss.groups_count = 0;
 
     if ( vk.geometry_buffer_size_new )
     {
@@ -2124,6 +2140,8 @@ void vk_end_frame( void )
 
     vk_end_render_pass();
 
+	vk_gpu_timer_write( vk.cmd->command_buffer, VKP_TS_MAIN_END, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT );
+
     VK_CHECK( qvkEndCommandBuffer( vk.cmd->command_buffer ) );
  
     // Queue submission and synchronization 
@@ -2182,8 +2200,13 @@ void vk_end_frame( void )
         submit_info.pSignalSemaphores = NULL;
     }
 
-    VK_CHECK( qvkQueueSubmit( vk.queue, 1, &submit_info, vk.cmd->rendering_finished_fence ) );
+	{
+		vk_perf_scope perfSubmit( VKP_SUBMIT );
+		VK_CHECK( qvkQueueSubmit( vk.queue, 1, &submit_info, vk.cmd->rendering_finished_fence ) );
+	}
     vk.cmd->waitForFence = qtrue;
+
+	vk_perf_count( VKP_GEOMETRY_PCT, (int)( vk.cmd->vertex_buffer_offset * 100 / vk.geometry_buffer_size ) );
 
 	// A frame used more than 3/4 of the geometry buffer: double it before the next
 	// frame, so that a later frame does not overflow and get dropped.
@@ -2220,7 +2243,10 @@ void vk_present_frame( void )
 
     vk.cmd->swapchain_image_acquired = qfalse;
 
-	res = qvkQueuePresentKHR( vk.queue, &present_info );
+	{
+		vk_perf_scope perfPresent( VKP_PRESENT );
+		res = qvkQueuePresentKHR( vk.queue, &present_info );
+	}
 	switch ( res ) {
 		case VK_SUCCESS:
 			break;

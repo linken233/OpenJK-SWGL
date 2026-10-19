@@ -688,11 +688,6 @@ rtx_material_t *vk_rtx_shader_to_material( shader_t *shader )
 // emitted in screen units (see get_material): 1 is the brightness of the rasterizer.
 static cvar_t *vk_rtx_glow_scale( void )
 {
-	static cvar_t *pt_glow_scale;
-
-	if ( !pt_glow_scale )
-		pt_glow_scale = ri.Cvar_Get( "pt_glow_scale", "1.0", CVAR_ARCHIVE_ND );
-
 	return pt_glow_scale;
 }
 

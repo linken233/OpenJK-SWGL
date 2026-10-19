@@ -427,6 +427,11 @@ extern PFN_vkQueueSubmit								qvkQueueSubmit;
 extern PFN_vkQueueWaitIdle								qvkQueueWaitIdle;
 extern PFN_vkResetDescriptorPool						qvkResetDescriptorPool;
 extern PFN_vkResetFences								qvkResetFences;
+extern PFN_vkCreateQueryPool							qvkCreateQueryPool;
+extern PFN_vkDestroyQueryPool							qvkDestroyQueryPool;
+extern PFN_vkCmdResetQueryPool							qvkCmdResetQueryPool;
+extern PFN_vkCmdWriteTimestamp							qvkCmdWriteTimestamp;
+extern PFN_vkGetQueryPoolResults						qvkGetQueryPoolResults;
 extern PFN_vkUpdateDescriptorSets						qvkUpdateDescriptorSets;
 extern PFN_vkWaitForFences								qvkWaitForFences;
 extern PFN_vkAcquireNextImageKHR						qvkAcquireNextImageKHR;
@@ -1744,6 +1749,22 @@ void		vk_create_framebuffers( void );
 void		vk_destroy_framebuffers( void );
 void		vk_create_sync_primitives( void );
 void		vk_destroy_sync_primitives( void );
+
+// GPU frame timing with timestamp queries (vk_perf.cpp), shown by com_perflog.
+typedef enum {
+	VKP_TS_START,		// first trace command buffer (RTX only)
+	VKP_TS_MAIN_TOP,	// start of the main command buffer
+	VKP_TS_MAIN_COLOR,	// the main command buffer has the swapchain image
+	VKP_TS_ACCEL_END,	// end of the TLAS build (RTX only)
+	VKP_TS_RT_END,		// end of the post command buffer (RTX only)
+	VKP_TS_MAIN_END,	// end of the main command buffer
+	VKP_TS_COUNT
+} vkGpuStamp_t;
+
+void		vk_gpu_timer_create( void );
+void		vk_gpu_timer_destroy( void );
+void		vk_gpu_timer_begin_frame( int index, qboolean fenceWaited );
+void		vk_gpu_timer_write( VkCommandBuffer cmd, int stamp, VkPipelineStageFlagBits stage );
 void		vk_release_geometry_buffers( void );
 void		vk_release_indirect_buffers( void );
 void		vk_wait_idle( void );
@@ -1767,7 +1788,9 @@ void		vk_create_shader_modules( void );
 void		vk_destroy_shader_modules( void );
 
 // command
-VkCommandBuffer vk_begin_command_buffer( void );
+VkCommandBuffer vk_begin_command_buffer_at( const char *file, int line, const char *func );
+// The wait log of the render thread names the caller.
+#define vk_begin_command_buffer()	vk_begin_command_buffer_at( __FILE__, __LINE__, __FUNCTION__ )
 void		vk_end_command_buffer( VkCommandBuffer command_buffer, const char *location );
 void		vk_create_command_pool( void );
 void		vk_create_command_buffer( void );
@@ -1890,11 +1913,15 @@ void		GfxInfo_f( void );
 void		vk_set_object_name( uint64_t obj, const char *objName, VkDebugReportObjectTypeEXT objType );
 #define		VK_SET_OBJECT_NAME( obj, objName, objType) vk_set_object_name( (uint64_t)( obj ), ( objName ), ( objType ) );
 
-#define VK_CHECK( function_call ) { \
-	VkResult result = function_call; \
-	if ( result < 0 ) \
-		vk_debug( "Vulkan: error %s returned by %s \n", vk_result_string( result ), #function_call ); \
-}
+// A negative VkResult is an error: log it (Debug builds) and stop with ERR_FATAL.
+// A call whose error is an expected, handled case must not go through VK_CHECK.
+#define VK_CHECK( function_call ) do { \
+	const VkResult vk_check_result = ( function_call ); \
+	if ( vk_check_result < 0 ) { \
+		vk_debug( "Vulkan: error %s returned by %s \n", vk_result_string( vk_check_result ), #function_call ); \
+		ri.Error( ERR_FATAL, "Vulkan: %s returned by %s", vk_result_string( vk_check_result ), #function_call ); \
+	} \
+} while ( 0 )
 
 void		vk_debug( const char *msg, ... );
 void		R_DebugGraphics( void );

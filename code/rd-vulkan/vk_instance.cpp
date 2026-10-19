@@ -143,6 +143,11 @@ PFN_vkQueueSubmit								qvkQueueSubmit;
 PFN_vkQueueWaitIdle								qvkQueueWaitIdle;
 PFN_vkResetDescriptorPool						qvkResetDescriptorPool;
 PFN_vkResetFences								qvkResetFences;
+PFN_vkCreateQueryPool							qvkCreateQueryPool;
+PFN_vkDestroyQueryPool							qvkDestroyQueryPool;
+PFN_vkCmdResetQueryPool							qvkCmdResetQueryPool;
+PFN_vkCmdWriteTimestamp							qvkCmdWriteTimestamp;
+PFN_vkGetQueryPoolResults						qvkGetQueryPoolResults;
 PFN_vkUpdateDescriptorSets						qvkUpdateDescriptorSets;
 PFN_vkWaitForFences								qvkWaitForFences;
 PFN_vkAcquireNextImageKHR						qvkAcquireNextImageKHR;
@@ -537,7 +542,13 @@ qboolean vk_select_surface_format( VkPhysicalDevice physical_device, VkSurfaceKH
 
     candidates = (VkSurfaceFormatKHR*)malloc(format_count * sizeof(VkSurfaceFormatKHR));
 
-    VK_CHECK(qvkGetPhysicalDeviceSurfaceFormatsKHR(physical_device, surface, &format_count, candidates));
+    // an error is handled by the caller like the first query, the device is rejected
+    result = qvkGetPhysicalDeviceSurfaceFormatsKHR(physical_device, surface, &format_count, candidates);
+    if (result < 0) {
+        ri.Printf(PRINT_ERROR, "vkGetPhysicalDeviceSurfaceFormatsKHR returned error %s\n", vk_result_string(result));
+        free(candidates);
+        return qfalse;
+    }
 
 	get_present_format(24, &base_bgr, &base_rgb);
 
@@ -647,8 +658,11 @@ static qboolean vk_create_device( VkPhysicalDevice physical_device, int device_i
 		// select queue family with presentation and graphics support
 		vk.queue_family_index = ~0U;
 		for (i = 0; i < queue_family_count; i++) {
-			VkBool32 presentation_supported;
-			VK_CHECK(qvkGetPhysicalDeviceSurfaceSupportKHR(physical_device, i, vk.surface, &presentation_supported));
+			VkBool32 presentation_supported = VK_FALSE;
+			// a failed query only rejects this queue family
+			if (qvkGetPhysicalDeviceSurfaceSupportKHR(physical_device, i, vk.surface, &presentation_supported) < 0) {
+				presentation_supported = VK_FALSE;
+			}
 
 			if (presentation_supported && (queue_families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) != 0) {
 				vk.queue_family_index = i;
@@ -1364,6 +1378,11 @@ __initStart:
 	INIT_DEVICE_FUNCTION(vkResetCommandBuffer)
 	INIT_DEVICE_FUNCTION(vkResetDescriptorPool)
 	INIT_DEVICE_FUNCTION(vkResetFences)
+	INIT_DEVICE_FUNCTION(vkCreateQueryPool)
+	INIT_DEVICE_FUNCTION(vkDestroyQueryPool)
+	INIT_DEVICE_FUNCTION(vkCmdResetQueryPool)
+	INIT_DEVICE_FUNCTION(vkCmdWriteTimestamp)
+	INIT_DEVICE_FUNCTION(vkGetQueryPoolResults)
 	INIT_DEVICE_FUNCTION(vkUnmapMemory)
 	INIT_DEVICE_FUNCTION(vkUpdateDescriptorSets)
 	INIT_DEVICE_FUNCTION(vkWaitForFences)
@@ -1551,6 +1570,11 @@ void vk_deinit_library( void )
 	qvkResetCommandBuffer = NULL;
 	qvkResetDescriptorPool = NULL;
 	qvkResetFences = NULL;
+	qvkCreateQueryPool = NULL;
+	qvkDestroyQueryPool = NULL;
+	qvkCmdResetQueryPool = NULL;
+	qvkCmdWriteTimestamp = NULL;
+	qvkGetQueryPoolResults = NULL;
 	qvkUnmapMemory = NULL;
 	qvkUpdateDescriptorSets = NULL;
 	qvkWaitForFences = NULL;

@@ -47,6 +47,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "../server/server.h"
 
 #include <float.h>
+#include <unordered_map>
 
 #include "qcommon/ojk_saved_game_helper.h"
 
@@ -220,7 +221,7 @@ public:
 	const EG2_Collision	eG2TraceType;
 	bool				hitOne;
 	float				m_fRadius;
-	const float			*surfBounds = nullptr;	// per surface mins/maxs of the collision cache, or NULL
+	g2CollisionVerts_t	*collCache = nullptr;	// the skinned surfaces of the model for a collision trace, or NULL
 
 #ifdef _G2_GORE
 	//gore application thing
@@ -553,7 +554,7 @@ static void G2_TransformModelForCollision( CGhoul2Info &g, int lod, const vec3_t
 	const uint32_t		surfSig = G2_CollisionSurfaceSignature( g );
 	const int			numSurfaces = g.currentModel->data.glm->header->numSurfaces;
 
-	if ( cache->touch == touch && cache->lod == lod && cache->surfSig == surfSig
+	if ( cache->touch == touch && cache->lod == lod && cache->surfSig == surfSig && cache->epoch == tr.modelEpoch
 		&& VectorCompare( cache->scale, scale ) && (int)cache->surfVerts.size() == numSurfaces )
 	{
 		g.mTransformedVertsArray = cache->surfVerts.data();
@@ -571,29 +572,167 @@ static void G2_TransformModelForCollision( CGhoul2Info &g, int lod, const vec3_t
 	cache->verts.resize( numFloats );
 	cache->surfVerts.assign( numSurfaces, 0 );
 	cache->surfBounds.assign( numSurfaces * 6, 0.0f );
+	cache->surfState.assign( numSurfaces, 0 );
+	cache->surfDef.assign( numSurfaces, nullptr );
+	cache->surfOut.assign( numSurfaces, nullptr );
+	cache->surfCons.assign( numSurfaces * 6, 0.0f );
 
+	// Only the room for the vertices is set here. G2_CollisionSurfaceMayTouch skins a surface when a trace needs it.
 	float *out = cache->verts.data();
 	for ( size_t i = 0; i < surfaces.size(); i++ )
 	{
 		const mdxmSurface_t *surface = surfaces[i];
-		float *bounds = &cache->surfBounds[surface->thisSurfaceIndex * 6];
 
-		G2_SkinSurfaceVerts( surface, scale, g.mBoneCache, out );
-		cache->surfVerts[surface->thisSurfaceIndex] = (intptr_t)out;
-
-		ClearBounds( bounds, bounds + 3 );
-		for ( int j = 0; j < surface->numVerts; j++ )
-			AddPointToBounds( out + j * 5, bounds, bounds + 3 );
-
+		cache->surfDef[surface->thisSurfaceIndex] = surface;
+		cache->surfOut[surface->thisSurfaceIndex] = out;
 		out += surface->numVerts * 5;
 	}
 
+	cache->boneCache = g.mBoneCache;
+	cache->epoch = tr.modelEpoch;
 	cache->touch = touch;
 	cache->lod = lod;
 	cache->surfSig = surfSig;
 	VectorCopy( scale, cache->scale );
 
 	g.mTransformedVertsArray = cache->surfVerts.data();
+}
+
+// Per surface, for each bone reference: the box of the vertices that use it, in model space. A skinned vertex is a
+// weighted sum of its bone-transformed positions, so the transformed boxes bound the skinned surface (see G2_CollisionSurfaceCons).
+struct g2SurfBoneBoxes_t
+{
+	bool				valid;		// false: a bone index is out of range, no bound
+	float				negSlack;	// largest sum of the negative weights of one vertex (the last weight is 1 - the rest)
+	std::vector<float>	boxes;		// 6 per bone reference: mins xyz, maxs xyz; mins > maxs when no vertex uses it
+};
+
+static std::unordered_map<const mdxmSurface_t *, g2SurfBoneBoxes_t>	g2_surfBoneBoxes;
+static int															g2_surfBoneBoxesEpoch = -1;
+
+static const g2SurfBoneBoxes_t &G2_GetSurfBoneBoxes( const mdxmSurface_t *surface )
+{
+	if ( g2_surfBoneBoxesEpoch != tr.modelEpoch )
+	{
+		g2_surfBoneBoxes.clear();
+		g2_surfBoneBoxesEpoch = tr.modelEpoch;
+	}
+
+	auto it = g2_surfBoneBoxes.find( surface );
+	if ( it != g2_surfBoneBoxes.end() )
+		return it->second;
+
+	g2SurfBoneBoxes_t &sb = g2_surfBoneBoxes[surface];
+	const int numRefs = surface->numBoneReferences;
+	const int numVerts = surface->numVerts;
+	const mdxmVertex_t *v = (const mdxmVertex_t *)((const byte *)surface + surface->ofsVerts);
+
+	sb.valid = true;
+	sb.negSlack = 0.0f;
+	sb.boxes.assign( numRefs * 6, 0.0f );
+	for ( int r = 0; r < numRefs; r++ )
+		ClearBounds( &sb.boxes[r * 6], &sb.boxes[r * 6 + 3] );
+
+	for ( int j = 0; j < numVerts; j++, v++ )
+	{
+		const int iNumWeights = G2_GetVertWeights( v );
+		float fTotalWeight = 0.0f;
+		float neg = 0.0f;
+
+		for ( int k = 0; k < iNumWeights; k++ )
+		{
+			const int iBoneIndex = G2_GetVertBoneIndex( v, k );
+			const float w = G2_GetVertBoneWeight( v, k, fTotalWeight, iNumWeights );
+
+			if ( iBoneIndex >= numRefs )
+			{
+				sb.valid = false;
+				continue;
+			}
+			if ( w < 0.0f )
+				neg -= w;
+			AddPointToBounds( v->vertCoords, &sb.boxes[iBoneIndex * 6], &sb.boxes[iBoneIndex * 6 + 3] );
+		}
+		if ( neg > sb.negSlack )
+			sb.negSlack = neg;
+	}
+
+	return sb;
+}
+
+// Box that holds every skinned vertex of the surface (with the scale applied), from the bone matrices only. Returns false when
+// the surface has no bound. Skinned vertices are convex sums of the bone-transformed positions, so they stay in the box of
+// those positions, plus negSlack times its size for the negative last weight, plus a margin for float rounding.
+static bool G2_CollisionSurfaceCons( const mdxmSurface_t *surface, const vec3_t scale, CBoneCache *boneCache, float *out )
+{
+	const g2SurfBoneBoxes_t &sb = G2_GetSurfBoneBoxes( surface );
+
+	if ( !sb.valid )
+		return false;
+
+	const int *piBoneReferences = (const int *)((const byte *)surface + surface->ofsBoneReferences);
+	float lo[3] = { FLT_MAX, FLT_MAX, FLT_MAX }, hi[3] = { -FLT_MAX, -FLT_MAX, -FLT_MAX };
+	bool any = false;
+
+	for ( int r = 0; r < surface->numBoneReferences; r++ )
+	{
+		const float *b = &sb.boxes[r * 6];
+
+		if ( b[0] > b[3] )
+			continue;
+
+		const mdxaBone_t &bone = EvalBoneCache( piBoneReferences[r], boneCache );
+		const float c[3] = { ( b[0] + b[3] ) * 0.5f, ( b[1] + b[4] ) * 0.5f, ( b[2] + b[5] ) * 0.5f };
+		const float h[3] = { ( b[3] - b[0] ) * 0.5f, ( b[4] - b[1] ) * 0.5f, ( b[5] - b[2] ) * 0.5f };
+
+		for ( int a = 0; a < 3; a++ )
+		{
+			const float *m = bone.matrix[a];
+			const float center = m[0] * c[0] + m[1] * c[1] + m[2] * c[2] + m[3];
+			const float half = fabsf( m[0] ) * h[0] + fabsf( m[1] ) * h[1] + fabsf( m[2] ) * h[2];
+
+			if ( center - half < lo[a] ) lo[a] = center - half;
+			if ( center + half > hi[a] ) hi[a] = center + half;
+		}
+		any = true;
+	}
+
+	if ( !any )
+	{
+		// no vertex: the empty box that G2_TraceTouchesBounds rejects
+		out[0] = out[1] = out[2] = FLT_MAX;
+		out[3] = out[4] = out[5] = -FLT_MAX;
+		return true;
+	}
+
+	for ( int a = 0; a < 3; a++ )
+	{
+		const float pad = sb.negSlack * ( hi[a] - lo[a] ) + 0.5f;
+		const float s0 = ( lo[a] - pad ) * scale[a];
+		const float s1 = ( hi[a] + pad ) * scale[a];
+
+		out[a] = ( s0 < s1 ? s0 : s1 ) - 0.01f;
+		out[a + 3] = ( s0 < s1 ? s1 : s0 ) + 0.01f;
+	}
+
+	return true;
+}
+
+// Skins one surface of the collision cache and stores its exact box.
+static void G2_CollisionSurfaceSkin( g2CollisionVerts_t *cache, int idx )
+{
+	const mdxmSurface_t	*surface = cache->surfDef[idx];
+	float				*out = cache->surfOut[idx];
+	float				*bounds = &cache->surfBounds[idx * 6];
+
+	G2_SkinSurfaceVerts( surface, cache->scale, cache->boneCache, out );
+	cache->surfVerts[idx] = (intptr_t)out;
+
+	ClearBounds( bounds, bounds + 3 );
+	for ( int j = 0; j < surface->numVerts; j++ )
+		AddPointToBounds( out + j * 5, bounds, bounds + 3 );
+
+	cache->surfState[idx] = 2;
 }
 
 // main calling point for the model transform for collision detection. At this point all of the skeleton has been transformed.
@@ -1100,7 +1239,7 @@ static void G2_GorePolys( const mdxmSurface_t *surface, CTraceSurface &TS, const
 				if ( gore->tex_vbo[TS.lod]->indexes )
 					Z_Free( gore->tex_vbo[TS.lod]->indexes );
 
-				Z_Free(gore->tex_vbo[TS.lod]);
+				R_DeferredFree( gore->tex_vbo[TS.lod] );	// the backend can still read the struct
 			}
 
 			gore->tex_vbo[TS.lod]=(srfG2GoreSurface_t *)goreSurface;
@@ -1158,7 +1297,7 @@ static void G2_GorePolys( const mdxmSurface_t *surface, CTraceSurface &TS, const
 		int *data=(int *)R_Malloc ( sizeof(int)*size, TAG_GHOUL2, qtrue );
 
 		if ( gore->tex[TS.lod] )
-			R_Free(gore->tex[TS.lod]);
+			R_DeferredFree( gore->tex[TS.lod] );	// the backend can still read the data
 
 		gore->tex[TS.lod]=(float *)data;
 		*data++=newNumVerts;
@@ -1570,9 +1709,8 @@ static bool G2_RadiusTracePolys(
 // Can the trace touch a triangle of this surface? Slab test of the segment against the
 // surface box. A radius trace tests a box of half width radius around the segment, so
 // the box grows by radius * sqrt(2), plus a margin.
-static bool G2_TraceTouchesSurfaceBounds( const CTraceSurface &TS, int surfaceIndex )
+static bool G2_TraceTouchesBounds( const CTraceSurface &TS, const float *b )
 {
-	const float	*b = &TS.surfBounds[surfaceIndex * 6];
 	const float	margin = ( Q_fabs(TS.m_fRadius) < 0.1f ) ? 1.0f : Q_fabs(TS.m_fRadius) * 1.5f + 1.0f;
 	float		tmin = 0.0f, tmax = 1.0f;
 
@@ -1605,6 +1743,81 @@ static bool G2_TraceTouchesSurfaceBounds( const CTraceSurface &TS, int surfaceIn
 	}
 
 	return true;
+}
+
+// r_g2VerifyCons 1: skins every surface that the conservative box is computed for and checks that the box holds all its vertices.
+static void G2_VerifyCons( const g2CollisionVerts_t *cache, int idx, bool hasCons )
+{
+	static std::vector<float>	tmp;
+	static int					numChecked, numBad;
+	static float				minMargin = 1.0e9f;
+	const mdxmSurface_t			*surface = cache->surfDef[idx];
+	const float					*cons = &cache->surfCons[idx * 6];
+
+	tmp.resize( (size_t)surface->numVerts * 5 );
+	G2_SkinSurfaceVerts( surface, cache->scale, cache->boneCache, tmp.data() );
+
+	for ( int j = 0; j < surface->numVerts; j++ )
+	{
+		for ( int a = 0; a < 3; a++ )
+		{
+			const float p = tmp[j * 5 + a];
+			const float margin = hasCons ? ( p - cons[a] < cons[a + 3] - p ? p - cons[a] : cons[a + 3] - p ) : -1.0f;
+
+			if ( margin < minMargin )
+				minMargin = margin;
+			if ( margin < 0.0f )
+			{
+				if ( ++numBad <= 10 )
+					ri.Printf( PRINT_ALL, "r_g2VerifyCons: vertex %i axis %i value %g outside %g %g (surface %i)\n", j, a, p, cons[a], cons[a + 3], idx );
+				break;
+			}
+		}
+	}
+
+	if ( ++numChecked % 20000 == 0 )
+		ri.Printf( PRINT_ALL, "r_g2VerifyCons: surfaces %i, vertices outside %i, smallest margin %g\n", numChecked, numBad, minMargin );
+}
+
+// Can the trace touch a triangle of this surface of the collision cache? The conservative box goes first and the
+// surface is skinned only when it passes. The exact box then decides, as it did when every surface was skinned.
+static bool G2_CollisionSurfaceMayTouch( CTraceSurface &TS, int idx )
+{
+	g2CollisionVerts_t *cache = TS.collCache;
+
+	if ( !cache->surfDef[idx] )
+		return false;
+
+	if ( cache->surfState[idx] == 0 )
+	{
+		float *cons = &cache->surfCons[idx * 6];
+
+		static cvar_t *verify = NULL;
+
+		if ( !verify )
+			verify = ri.Cvar_Get( "r_g2VerifyCons", "0", 0 );
+
+		const bool hasCons = G2_CollisionSurfaceCons( cache->surfDef[idx], cache->scale, cache->boneCache, cons );
+
+		if ( !hasCons )
+		{
+			cons[0] = cons[1] = cons[2] = -FLT_MAX;	// no bound: the box covers everything
+			cons[3] = cons[4] = cons[5] = FLT_MAX;
+		}
+		else if ( verify->integer )
+			G2_VerifyCons( cache, idx, true );
+		cache->surfState[idx] = 1;
+	}
+
+	if ( cache->surfState[idx] == 1 )
+	{
+		if ( !G2_TraceTouchesBounds( TS, &cache->surfCons[idx * 6] ) )
+			return false;
+
+		G2_CollisionSurfaceSkin( cache, idx );
+	}
+
+	return G2_TraceTouchesBounds( TS, &cache->surfBounds[idx * 6] );
 }
 
 static void G2_TraceSurfaces(CTraceSurface &TS)
@@ -1642,7 +1855,7 @@ static void G2_TraceSurfaces(CTraceSurface &TS)
 		if (TS.collRecMap)
 		{
 #endif
-			if ( TS.surfBounds && !G2_TraceTouchesSurfaceBounds( TS, surface->thisSurfaceIndex ) )
+			if ( TS.collCache && !G2_CollisionSurfaceMayTouch( TS, surface->thisSurfaceIndex ) )
 			{
 				// the trace does not reach this surface, go on with its children
 			}
@@ -1798,10 +2011,10 @@ void G2_TraceModels(CGhoul2Info_v &ghoul2, vec3_t rayStart, vec3_t rayEnd, CColl
 		// collision trace on the cached vertices: test the surface boxes first
 		if ( collRecMap && g.mBoneCache && g.mTransformedVertsArray )
 		{
-			const g2CollisionVerts_t *cache = G2_GetCollisionVerts( g.mBoneCache );
+			g2CollisionVerts_t *cache = G2_GetCollisionVerts( g.mBoneCache );
 
 			if ( g.mTransformedVertsArray == cache->surfVerts.data() && cache->lod == lod )
-				TS.surfBounds = cache->surfBounds.data();
+				TS.collCache = cache;
 		}
 
 		// start the surface recursion loop

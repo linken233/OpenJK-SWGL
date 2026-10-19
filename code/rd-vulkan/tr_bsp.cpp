@@ -572,6 +572,7 @@ space in big maps...
 =================
 */
 void		RE_SetWorldVisData( const byte *vis ) {
+	R_SyncRenderThread();
 	tr.externalVisData = vis;
 }
 
@@ -2748,6 +2749,7 @@ static void R_LoadCubemapEntities( const world_t *worldData )
 	tr.cubemaps = (cubemap_t *)Hunk_Alloc( tr.numCubemaps * sizeof( *tr.cubemaps ), h_low );
 	Com_Memcpy( tr.cubemaps, probes, tr.numCubemaps * sizeof( *tr.cubemaps ) );
 	tr.numCubemapsCaptured = 0;
+	tr.numCubemapFacesCaptured = 0;
 
 	ri.Printf( PRINT_ALL, "...%i cubemaps (%s)\n", tr.numCubemaps, cubemapClasses[c] );
 }
@@ -2959,6 +2961,9 @@ void RE_LoadWorldMap_Actual( const char *name, world_t &worldData, int index )
 //
 void RE_LoadWorldMap( const char *name )
 {
+	R_SyncRenderThread();
+	R_RenderThreadForceSync( 4 );
+
 	CM_SetUsingCache( qtrue );
 	RE_LoadWorldMap_Actual( name, s_worldData, 0 );
 	CM_SetUsingCache( qfalse );

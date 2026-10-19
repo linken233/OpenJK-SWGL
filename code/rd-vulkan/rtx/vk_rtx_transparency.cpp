@@ -809,14 +809,16 @@ static void fx_surface_sprite( const ss_candidate_t *c, const ss_group_info_t *g
 // instance buffers; the tracer takes the nearest ones as quads of the sprite path.
 static void fx_surface_sprites( const trRefdef_t *refdef )
 {
-	if ( !r_surfaceSprites->integer || !tr.ss.groups_count )
+	const auto &ssData = backEndDataBE->ss;
+
+	if ( !r_surfaceSprites->integer || !ssData.groups_count )
 		return;
 
 	ss_candidates.clear();
 
-	for ( int gi = 0; gi < tr.ss.groups_count && gi < SS_MAX_GROUP; gi++ )
+	for ( int gi = 0; gi < (int)ssData.groups_count && gi < SS_MAX_GROUP; gi++ )
 	{
-		const vk_ss_group_t *group = &tr.ss.groups[gi];
+		const vk_ss_group_t *group = &ssData.groups[gi];
 		ss_group_info_t *info = ss_groups + gi;
 		Vk_Pipeline_Def def;
 
@@ -1269,15 +1271,12 @@ static vec3_t sprite_view_origin;
 
 static qboolean vk_rtx_is_weapon_fx( const shader_t *shader )
 {
-	static cvar_t *prefixes;
-
-	if ( !prefixes )
-		prefixes = ri.Cvar_Get( "pt_weapon_fx_shaders", "gfx/effects/sabers/ gfx/effects/blaster_blob gfx/effects/whiteGlow gfx/effects/blasterFrontFlash gfx/effects/blasterSideFlash", CVAR_ARCHIVE_ND );
+	const char *prefixes = backEndDataBE->weaponFxShaders;	// copy made at the swap
 
 	if ( !shader )
 		return qfalse;
 
-	for ( const char *p = prefixes->string; *p; )
+	for ( const char *p = prefixes; *p; )
 	{
 		while ( *p == ' ' )
 			p++;
@@ -1417,9 +1416,6 @@ void vk_rtx_build_saber_lights( light_poly_t *light_list, int *num_lights,
 		return;
 
 	// copy_light multiplies a light without material by 10. The scale below replaces that factor.
-	static cvar_t *pt_light_scale_saber;
-	if ( !pt_light_scale_saber )
-		pt_light_scale_saber = ri.Cvar_Get( "pt_light_scale_saber", "10", CVAR_ARCHIVE_ND );
 	const float saber_scale = MAX( 0.f, pt_light_scale_saber->value ) / 10.f;
 
 	for ( i = 0; i < num_sabers; i++ )

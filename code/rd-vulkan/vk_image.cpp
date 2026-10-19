@@ -1084,6 +1084,9 @@ void vk_upload_image_data( image_t *image, int x, int y, int width,
 	int num_regions = 0;
 	int buffer_size = 0;
 
+	// The staging buffer and the queue are shared with the render thread.
+	R_SyncRenderThread();
+
 	if ( image->internalFormat == VK_FORMAT_BC3_UNORM_BLOCK ) {
 		compressed = qtrue;
 		buf = pixels;
@@ -1574,6 +1577,9 @@ image_t *R_CreateImageType( const char *name, byte *pic, int width, int height, 
     int					namelen;
     long				hash;
 
+    // A new image changes tr.images and uses the queue and the staging buffer.
+    R_SyncRenderThread();
+
     namelen = (int)strlen(name) + 1;
     if (namelen > MAX_QPATH) {
         ri.Error(ERR_DROP, "R_CreateImage: \"%s\" is too long", name);
@@ -1875,6 +1881,9 @@ qboolean vk_create_phyisical_texture( shaderStage_t *stage, const char *name, im
 void RE_UploadCinematic( int cols, int rows, const byte *data, int client, qboolean dirty )
 {
 	image_t *image;
+
+	// The render thread may still draw the previous image.
+	R_SyncRenderThread();
 
     if ( !tr.scratchImage[client] ) {
 		// Not IMGFLAG_RGB: that makes an sRGB image, and the raster would decode the frame
