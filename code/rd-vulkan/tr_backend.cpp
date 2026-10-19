@@ -1253,6 +1253,11 @@ const void *RB_StretchPic ( const void *data ) {
 
 	cmd = (const stretchPicCommand_t *)data;
 
+	// A portrait frame holds nothing but the scene: no console, no HUD.
+	if ( rb_portraitReady ) {
+		return (const void *)(cmd + 1);
+	}
+
 	shader = cmd->shader;
 	if ( shader != tess.shader ) {
 		RB_EndSurface();
@@ -1267,7 +1272,7 @@ const void *RB_StretchPic ( const void *data ) {
 
 	vk_set_2d();
 
-	if ( vk.bloomActive ) {
+	if ( vk.bloomActive && !rb_portraitReady ) {
 		vk_bloom();
 	}
 
@@ -1296,6 +1301,11 @@ const void *RB_RotatePic ( const void *data )
 	shader_t *shader;
 
 	cmd = (const rotatePicCommand_t *)data;
+
+	// A portrait frame holds nothing but the scene: no console, no HUD.
+	if ( rb_portraitReady ) {
+		return (const void *)(cmd + 1);
+	}
 
 	shader = cmd->shader;
 	image = shader->stages[0]->bundle[0].image[0];
@@ -1385,6 +1395,11 @@ const void *RB_RotatePic2 ( const void *data )
 	shader_t *shader;
 
 	cmd = (const rotatePicCommand_t *)data;
+
+	// A portrait frame holds nothing but the scene: no console, no HUD.
+	if ( rb_portraitReady ) {
+		return (const void *)(cmd + 1);
+	}
 
 	shader = cmd->shader;
 
@@ -1700,6 +1715,347 @@ static void RB_UpdateUniformConstants( const trRefdef_t *refdef, const viewParms
 }
 
 /*
+==================
+Character portrait capture
+
+The cgame "charportraits" command draws each character twice: on black, then on white.
+The difference of the two passes gives the alpha; the black pass gives the premultiplied color.
+==================
+*/
+static int	portraitPass = -1;
+static int	portraitWidth;		// viewport, in pixels
+static int	portraitHeight;
+static int	portraitOutWidth;	// TGA; 0 = measure the head (RB_AnalyzePortrait)
+static int	portraitOutHeight;
+static char	portraitName[MAX_QPATH];
+static byte	*portraitBlack;
+
+// r_capturePortrait <pass 0=black|1=white> <viewport width> <viewport height> <output width> <output height> <file>
+// Output width 0: measure the head (RB_AnalyzePortrait, square viewport only) and write no file.
+void R_CapturePortrait_f( void )
+{
+	if ( ri.Cmd_Argc() != 7 )
+	{
+		Com_Printf( "usage: r_capturePortrait <0|1> <viewport width> <viewport height> <output width> <output height> <file>\n" );
+		return;
+	}
+	portraitPass = atoi( ri.Cmd_Argv( 1 ) );
+	portraitWidth = atoi( ri.Cmd_Argv( 2 ) );
+	portraitHeight = atoi( ri.Cmd_Argv( 3 ) );
+	portraitOutWidth = atoi( ri.Cmd_Argv( 4 ) );
+	portraitOutHeight = atoi( ri.Cmd_Argv( 5 ) );
+	if ( portraitOutWidth != 0 )
+	{
+		portraitOutWidth = Com_Clamp( 1, 4096, portraitOutWidth );
+		portraitOutHeight = Com_Clamp( 1, 4096, portraitOutHeight );
+	}
+	Q_strncpyz( portraitName, ri.Cmd_Argv( 6 ), sizeof( portraitName ) );
+}
+
+// Premultiplied color and alpha of one source pixel.
+static void RB_PortraitSample( const byte *black, const byte *white, int index, float *rgba )
+{
+	float diff = 0;
+	for ( int c = 0; c < 3; c++ )
+	{
+		rgba[c] = black[index + c];
+		diff += white[index + c] - black[index + c];
+	}
+	rgba[3] = Com_Clamp( 0.0f, 255.0f, 255.0f - diff / 3.0f );
+}
+
+static void RB_WritePortraitTGA( const byte *black, const byte *white, int width, int height )
+{
+	// A skin or model that fails to load draws nothing: do not write an empty image.
+	int		opaque = 0;
+	float	sample[4];
+	for ( int i = 0; i < width * height; i++ )
+	{
+		RB_PortraitSample( black, white, i * 3, sample );
+		opaque += ( sample[3] > 128.0f );
+	}
+	if ( opaque < width * height / 1000 + 1 )
+	{
+		Com_Printf( S_COLOR_YELLOW "r_capturePortrait: empty image, %s not written (skin or model not loaded?)\n", portraitName );
+		return;
+	}
+
+	const int	outW = portraitOutWidth;
+	const int	outH = portraitOutHeight;
+	const int	fileSize = 18 + outW * outH * 4;
+	byte		*buffer = (byte *)R_Malloc( fileSize, TAG_TEMP_WORKSPACE, qtrue );
+	const float	scaleX = (float)width / outW;
+	const float	scaleY = (float)height / outH;
+
+	buffer[2] = 2;
+	buffer[12] = outW & 255;
+	buffer[13] = outW >> 8;
+	buffer[14] = outH & 255;
+	buffer[15] = outH >> 8;
+	buffer[16] = 32;
+	buffer[17] = 8;
+
+	// Both passes are bottom-up like the TGA default origin.
+	// Downscale: average of the source pixels under the output pixel. Upscale: bilinear.
+	for ( int y = 0; y < outH; y++ )
+	{
+		for ( int x = 0; x < outW; x++ )
+		{
+			float rgba[4] = { 0, 0, 0, 0 };
+			float sample[4];
+
+			if ( scaleX > 1.0f && scaleY > 1.0f )
+			{
+				const int x0 = (int)( x * scaleX ), x1 = Q_max( x0 + 1, Q_min( (int)( ( x + 1 ) * scaleX ), width ) );
+				const int y0 = (int)( y * scaleY ), y1 = Q_max( y0 + 1, Q_min( (int)( ( y + 1 ) * scaleY ), height ) );
+				const float weight = 1.0f / ( ( x1 - x0 ) * ( y1 - y0 ) );
+				for ( int sy = y0; sy < y1; sy++ )
+				{
+					for ( int sx = x0; sx < x1; sx++ )
+					{
+						RB_PortraitSample( black, white, ( sy * width + sx ) * 3, sample );
+						for ( int c = 0; c < 4; c++ )
+						{
+							rgba[c] += sample[c] * weight;
+						}
+					}
+				}
+			}
+			else
+			{
+				const float	sx = Com_Clamp( 0.0f, (float)( width - 1 ), ( x + 0.5f ) * scaleX - 0.5f );
+				const float	sy = Com_Clamp( 0.0f, (float)( height - 1 ), ( y + 0.5f ) * scaleY - 0.5f );
+				const int	x0 = (int)sx, x1 = Q_min( x0 + 1, width - 1 );
+				const int	y0 = (int)sy, y1 = Q_min( y0 + 1, height - 1 );
+				const float	fx = sx - x0, fy = sy - y0;
+				const int	idx[4] = { y0 * width + x0, y0 * width + x1, y1 * width + x0, y1 * width + x1 };
+				const float	w[4] = { ( 1 - fx ) * ( 1 - fy ), fx * ( 1 - fy ), ( 1 - fx ) * fy, fx * fy };
+				for ( int k = 0; k < 4; k++ )
+				{
+					RB_PortraitSample( black, white, idx[k] * 3, sample );
+					for ( int c = 0; c < 4; c++ )
+					{
+						rgba[c] += sample[c] * w[k];
+					}
+				}
+			}
+
+			byte *dst = buffer + 18 + ( y * outW + x ) * 4;
+			if ( rgba[3] >= 1.0f )
+			{
+				dst[0] = (byte)Com_Clamp( 0.0f, 255.0f, rgba[2] * 255.0f / rgba[3] );
+				dst[1] = (byte)Com_Clamp( 0.0f, 255.0f, rgba[1] * 255.0f / rgba[3] );
+				dst[2] = (byte)Com_Clamp( 0.0f, 255.0f, rgba[0] * 255.0f / rgba[3] );
+			}
+			dst[3] = (byte)rgba[3];
+		}
+	}
+
+	ri.FS_WriteFile( portraitName, buffer, fileSize );
+	R_Free( buffer );
+	Com_Printf( "Wrote %s\n", portraitName );
+}
+
+/*
+Measure the head in the silhouette and write it to the cvar r_portraitHead as
+"<head top> <chin> <head center x> <head width> <clipped> <left> <right> <bottom>", in fractions
+of the view (0 = top / left). <clipped> is 1 when the silhouette touches an edge of the view.
+<head top> <left> <right> <bottom> give the box of the silhouette.
+Rows use the pixel count, not the extent: thin parts (antennas, horns, hair spikes) have little weight.
+The head top is the first row with at least 3% of the silhouette height in pixels.
+The chin is the first row under the head with less than 70% of the head width (jaw above a
+collar, or neck). When nothing narrows (long hair, helmet), the chin is at 13% of the height.
+*/
+static void RB_AnalyzePortrait( const byte *black, const byte *white, int size )
+{
+	int		*count = (int *)R_Malloc( size * sizeof( int ), TAG_TEMP_WORKSPACE, qtrue );
+	float	*sumX = (float *)R_Malloc( size * sizeof( float ), TAG_TEMP_WORKSPACE, qtrue );
+	int		rawTop = -1, bottom = -1;
+	int		left = size, right = -1;
+	float	sample[4];
+
+	// Rows top-down; the passes are bottom-up.
+	for ( int row = 0; row < size; row++ )
+	{
+		const int y = size - 1 - row;
+		for ( int x = 0; x < size; x++ )
+		{
+			RB_PortraitSample( black, white, ( y * size + x ) * 3, sample );
+			if ( sample[3] > 96.0f )
+			{
+				count[row]++;
+				left = Q_min( left, x );
+				right = Q_max( right, x );
+				sumX[row] += x;
+			}
+		}
+		if ( count[row] >= 2 )
+		{
+			if ( rawTop < 0 )
+			{
+				rawTop = row;
+			}
+			bottom = row;
+		}
+	}
+
+	int top = -1;
+	if ( rawTop >= 0 && bottom - rawTop >= 16 )
+	{
+		const int minCount = Q_max( 2, (int)( 0.03f * ( bottom - rawTop ) ) );
+		for ( int row = rawTop; row <= bottom && top < 0; row++ )
+		{
+			if ( count[row] >= minCount )
+			{
+				top = row;
+			}
+		}
+	}
+	if ( top < 0 || bottom - top < 16 )
+	{
+		ri.Cvar_Set( "r_portraitHead", "" );
+		R_Free( count );
+		R_Free( sumX );
+		return;
+	}
+
+	const int	height = bottom - top;
+	int			chin = -1;
+
+	// Skull: the first rows of the head. Shoulders are much wider than the skull.
+	int skullWidth = 0;
+	for ( int row = top; row <= top + height / 16; row++ )
+	{
+		skullWidth = Q_max( skullWidth, count[row] );
+	}
+
+	// Chin: the first row that narrows under the head, or the first shoulder row when the neck
+	// is hidden (B1 droids: the snout hides the neck, and the waist is the first narrow row).
+	int headWidth = skullWidth;
+	for ( int row = top + height / 20; row <= top + height * 45 / 100; row++ )
+	{
+		if ( count[row] < 0.7f * headWidth || count[row] > 1.8f * skullWidth )
+		{
+			chin = row;
+			break;
+		}
+		headWidth = Q_max( headWidth, count[row] );
+	}
+	if ( chin < 0 )
+	{
+		chin = top + (int)( 0.13f * height );
+	}
+
+	// Width of the head: upper band of the head only (8% of the height). Lower rows can also hold
+	// what is beside the head (shoulder pads, lekku, a backpack) and give a false width.
+	headWidth = 0;
+	for ( int row = top; row <= top + height * 8 / 100; row++ )
+	{
+		headWidth = Q_max( headWidth, count[row] );
+	}
+
+	// Center of the head: pixels of the upper part of the head only.
+	float	center = 0;
+	int		pixels = 0;
+	for ( int row = top; row <= top + ( chin - top ) * 6 / 10; row++ )
+	{
+		center += sumX[row];
+		pixels += count[row];
+	}
+	center = pixels ? center / pixels : 0.5f * size;
+
+	const int clipped = ( count[0] || count[size - 1] || left <= 0 || right >= size - 1 ) ? 1 : 0;
+	ri.Cvar_Set( "r_portraitHead", va( "%f %f %f %f %d %f %f %f", (float)top / size, (float)chin / size, center / size,
+		(float)headWidth / size, clipped, (float)left / size, (float)( right + 1 ) / size, (float)( bottom + 1 ) / size ) );
+	R_Free( count );
+	R_Free( sumX );
+}
+
+static int		portraitViewX, portraitViewY;	// viewport origin in the capture image, bottom-up
+qboolean		rb_portraitReady;				// a portrait scene was drawn this frame
+
+// Called from RB_DrawSurfs: remembers where the armed portrait scene sits in the frame.
+static void RB_PortraitMark( void )
+{
+	if ( portraitPass < 0
+		|| !( backEnd.refdef.rdflags & RDF_NOWORLDMODEL )
+		|| backEnd.viewParms.targetCube
+		|| backEnd.viewParms.viewportWidth != portraitWidth
+		|| backEnd.viewParms.viewportHeight != portraitHeight )
+	{
+		return;
+	}
+	portraitViewX = backEnd.viewParms.viewportX;
+	portraitViewY = backEnd.viewParms.viewportY;
+	rb_portraitReady = qtrue;
+}
+
+// Called from RB_SwapBuffers once the frame is finished: cuts the portrait viewport out of the capture image.
+static void RB_CapturePortraitFrame( void )
+{
+	if ( !rb_portraitReady )
+	{
+		return;
+	}
+	rb_portraitReady = qfalse;
+
+	if ( portraitViewX < 0 || portraitViewY < 0
+		|| portraitViewX + portraitWidth > gls.captureWidth
+		|| portraitViewY + portraitHeight > gls.captureHeight )
+	{
+		ri.Printf( PRINT_WARNING, "r_capturePortrait: view %dx%d does not fit the frame\n", portraitWidth, portraitHeight );
+		return;
+	}
+
+	size_t		offset = 0;
+	int			padlen;
+	byte		*source = RB_ReadPixels( 0, 0, gls.captureWidth, gls.captureHeight, &offset, &padlen, 0 );
+	const int	srcPitch = gls.captureWidth * 3 + padlen;
+	const int	count = portraitWidth * portraitHeight * 3;
+	byte		*pixels = (byte *)R_Malloc( count, TAG_TEMP_WORKSPACE, qfalse );
+
+	// Both images are bottom-up.
+	for ( int y = 0; y < portraitHeight; y++ )
+	{
+		Com_Memcpy( pixels + y * portraitWidth * 3, source + offset + ( portraitViewY + y ) * srcPitch + portraitViewX * 3, portraitWidth * 3 );
+	}
+	Hunk_FreeTempMemory( source );
+
+	if ( glConfig.deviceSupportsGamma && !glConfigExt.doGammaCorrectionWithShaders )
+	{
+		R_GammaCorrect( pixels, count );
+	}
+
+	if ( portraitPass == 0 )
+	{
+		if ( portraitBlack )
+		{
+			R_Free( portraitBlack );
+		}
+		portraitBlack = pixels;
+	}
+	else
+	{
+		if ( portraitBlack && portraitOutWidth == 0 && portraitWidth == portraitHeight )
+		{
+			RB_AnalyzePortrait( portraitBlack, pixels, portraitWidth );
+		}
+		else if ( portraitBlack && portraitOutWidth != 0 )
+		{
+			RB_WritePortraitTGA( portraitBlack, pixels, portraitWidth, portraitHeight );
+		}
+		if ( portraitBlack )
+		{
+			R_Free( portraitBlack );
+			portraitBlack = NULL;
+		}
+		R_Free( pixels );
+	}
+	portraitPass = -1;
+}
+
+
+/*
 =============
 RB_DrawSurfs
 
@@ -1714,6 +2070,8 @@ const void	*RB_DrawSurfs( const void *data ) {
 
 	backEnd.refdef = cmd->refdef;
 	backEnd.viewParms = cmd->viewParms;
+
+	RB_PortraitMark();
 
 	backEnd.hasGlowSurfaces = qfalse;
 	backEnd.isGlowPass = qfalse;
@@ -2024,6 +2382,11 @@ const void	*RB_SwapBuffers( const void *data ) {
 	if ( rb_captureRGBA && vk.cmd->waitForFence ) {
 		RB_CaptureFrame();
 	}
+
+	if ( vk.cmd->waitForFence ) {
+		RB_CapturePortraitFrame();
+	}
+	rb_portraitReady = qfalse;
 
 	vk_present_frame();
 

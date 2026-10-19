@@ -3187,6 +3187,8 @@ void		R_TakeScreenshotJPEG( int x, int y, int width, int height, char *fileName 
 void		R_TakeScreenshotPNG( int x, int y, int width, int height, char *fileName );
 byte		*RB_ReadPixels( int x, int y, int width, int height, size_t *offset, int *padlen, int lineAlign );
 extern byte	*rb_captureRGBA;	// set by RE_CaptureNextFrame
+extern qboolean	rb_portraitReady;	// r_capturePortrait: the portrait scene was drawn this frame
+void		R_CapturePortrait_f( void );
 
 // lights
 #ifdef USE_PMLIGHT

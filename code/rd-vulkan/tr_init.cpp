@@ -901,6 +901,7 @@ static consoleCommand_t	commands[] = {
 	{ "screenshot",			R_ScreenShot_f },
 	{ "screenshot_png",		R_ScreenShot_f },
 	{ "screenshot_tga",		R_ScreenShot_f },
+	{ "r_capturePortrait",	R_CapturePortrait_f },
 	{ "gfxinfo",			GfxInfo_f },
 	{ "r_we",				R_WorldEffect_f },
 	{ "imagecacheinfo",		RE_RegisterImages_Info_f },

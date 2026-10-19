@@ -2078,7 +2078,7 @@ void vk_end_frame( void )
         {
             vk.cmd->last_pipeline = VK_NULL_HANDLE; // do not restore clobbered descriptors in vk_bloom()
 
-            if ( vk.bloomActive )
+            if ( vk.bloomActive && !rb_portraitReady )
                 vk_bloom();
 
 #ifdef USE_RTX
@@ -2089,7 +2089,7 @@ void vk_end_frame( void )
                 vk_rtx_begin_blit();
 #endif
 
-            if ( ( backEnd.screenshotMask || rb_captureRGBA ) && vk.capture.image )
+            if ( ( backEnd.screenshotMask || rb_captureRGBA || rb_portraitReady ) && vk.capture.image )
             {
                 vk_end_render_pass();
 
