@@ -2160,7 +2160,7 @@ void spotlight_use( gentity_t *self, gentity_t *other, gentity_t *activator )
 	else
 	{
 		self->e_ThinkFunc = thinkF_NULL;
-		self->s.eFlags &= ~EF_ALT_FIRING;
+		self->s.eFlags &= ~EF_LIGHT_CONE;
 	}
 }
 
@@ -2171,7 +2171,7 @@ void spotlight_think( gentity_t *ent )
 	trace_t		tr;
 
 	// dumb hack flag so that we can draw an interpolated light cone cgame side.
-	ent->s.eFlags |= EF_ALT_FIRING;
+	ent->s.eFlags |= EF_LIGHT_CONE;
 
 	VectorSubtract( ent->enemy->currentOrigin, ent->currentOrigin, dir );
 	VectorNormalize( dir );
@@ -2222,7 +2222,7 @@ void spotlight_link( gentity_t *ent )
 	if ( ent->spawnflags & 1 )
 	{
 		ent->e_ThinkFunc = thinkF_NULL;
-		ent->s.eFlags &= ~EF_ALT_FIRING;
+		ent->s.eFlags &= ~EF_LIGHT_CONE;
 	}
 	else
 	{

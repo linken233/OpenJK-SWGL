@@ -116,6 +116,8 @@ ITM_AMMO_FLAMER_PICKUP,
 ITM_NUM_HC_ITEMS
 };
 
+#define FUEL_MAX			100	// full tank of a fuel item (jetpack, wrist flamethrower)
+
 // Inventory item enums
 enum //# item_e
 {
@@ -127,6 +129,13 @@ enum //# item_e
 	//# #eol
 	INV_GOODIE_KEY,	// don't want to include keys in the icarus list
 	INV_SECURITY_KEY,
+	INV_JETPACK,				// 1 when a jetpack is carried; the item that defines it is in INV_JETPACK_TYPE
+	INV_WRIST_FLAMER,			// 1 when a wrist flamethrower is worn; the item that defines it is in INV_WRIST_FLAMER_TYPE
+	// State of the fuel items. It travels with the inventory, but the HUD and the selection skip it.
+	INV_JETPACK_TYPE,			// bg_itemlist index of the jetpack item, 0 = the first one defined
+	INV_JETPACK_FUEL,			// 0 to 100
+	INV_WRIST_FLAMER_TYPE,		// same for the wrist flamethrower
+	INV_WRIST_FLAMER_FUEL,		// 0 to 100
 
 	INV_MAX						// Be sure to update MAX_INVENTORY
 };

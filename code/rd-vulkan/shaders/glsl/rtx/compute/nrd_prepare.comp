@@ -1,0 +1,136 @@
+/*
+Copyright (C) 2019, NVIDIA CORPORATION. All rights reserved.
+
+This program is free software; you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation; either version 2 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along
+with this program; if not, write to the Free Software Foundation, Inc.,
+51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+*/
+
+// This software contains source code provided by NVIDIA Corporation.
+
+// ========================================================================== //
+// This shader makes the inputs of the NRD RELAX denoiser (DENOISER_NRD_RELAX).
+// The tracer images hold the two checkerboard fields in the left and right halves.
+// The NRD inputs are flat images: one thread for each pixel of the flat image.
+// ========================================================================== //
+
+#version 460
+#extension GL_GOOGLE_include_directive    : enable
+#extension GL_EXT_nonuniform_qualifier    : enable
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+#define GLOBAL_UBO_DESC_SET_IDX 3
+#include "../global_ubo.h"
+
+#define GLOBAL_TEXTURES_DESC_SET_IDX 1
+#include "../global_textures.h"
+
+#include "../utils.glsl"
+#include "../projection.glsl"
+#include "../nrd_front_end.glsl"
+
+// The sub-pixel offset of the primary ray of the pixel, as primary_rays.rgen makes it:
+// the global jitter in the real-time mode, else get_rng(RNG_PRIMARY_OFF_X / _Y) of path_tracer_rgen.h.
+vec2
+nrd_primary_ray_offset(ivec2 ipos)
+{
+	if(global_ubo.flt_taa != AA_MODE_TAA && !(global_ubo.temporal_blend_factor > 0))
+		return global_ubo.sub_pixel_jitter;
+
+	uint seed = texelFetch(TEX_PT_RNG_SEED_A, ipos, 0).r;
+	uvec3 p = uvec3(seed, seed >> 8u, seed >> 16u) & uvec3(BLUE_NOISE_RES - 1, BLUE_NOISE_RES - 1, NUM_BLUE_NOISE_TEX - 1);
+	uvec3 q = uvec3(p.xy, (p.z + 1u) & uint(NUM_BLUE_NOISE_TEX - 1));
+
+	float x = min(texelFetch(TEX_BLUE_NOISE, ivec3(p), 0).r, 0.9999999999999);
+	float y = min(texelFetch(TEX_BLUE_NOISE, ivec3(q), 0).r, 0.9999999999999);
+
+	return vec2(x, y) - vec2(0.5);
+}
+
+void
+main()
+{
+	ivec2 flat_pos = ivec2(gl_GlobalInvocationID);
+	if(any(greaterThanEqual(flat_pos, ivec2(global_ubo.width, global_ubo.height))))
+		return;
+
+	ivec2 ipos = nrd_flat_to_checker(flat_pos);
+	vec2 image_size = vec2(global_ubo.width, global_ubo.height);
+	vec2 offset = nrd_primary_ray_offset(ipos);
+
+	// View Z. The tracer stores the distance from the camera: Z is that distance times
+	// the Z of the direction of the primary ray. A sky pixel is out of the denoising range.
+	float depth = abs(texelFetch(TEX_PT_VIEW_DEPTH_A, ipos, 0).x);
+	bool is_sky = !(depth < PRIMARY_RAY_T_MAX);
+
+	float view_z = 2.0 * PRIMARY_RAY_T_MAX;
+	if(!is_sky)
+	{
+		vec2 uv = (vec2(flat_pos) + vec2(0.5) + offset) / image_size;
+
+		view_z = depth * normalize(projection_screen_to_view(uv, 1.0, false)).z;
+	}
+
+	// Motion: previous minus current, in the units of the screen position (0 to 1). The tracer projects
+	// both positions with the matrices without jitter, so the motion is already non-jittered (README: IN_MV).
+	vec2 motion = texelFetch(TEX_PT_MOTION, ipos, 0).xy;
+	if(any(isnan(motion)) || any(isinf(motion)))
+		motion = vec2(0);
+
+	// 2.5D motion (README: IN_MV): .z = viewZprev - viewZ, in the space of the motion vector.
+	float motion_z = is_sky ? 0.0 : texelFetch(TEX_NRD_PT_VIEWZ_MOTION, ipos, 0).x;
+	if(isnan(motion_z) || isinf(motion_z))
+		motion_z = 0.0;
+
+	// Normal of the shading in the virtual space (reflect_refract.rgen), linear roughness.
+	vec3 normal = decode_normal(texelFetch(TEX_NRD_PT_NORMAL, ipos, 0).x);
+	float roughness = texelFetch(TEX_PT_METALLIC_A, ipos, 0).y;
+	if(is_sky || any(isnan(normal)))
+		normal = vec3(0, 0, 1);
+
+	// Lighting without the material: the tracer divides the albedo out of the diffuse, and the base reflectivity out of the specular.
+	vec3 high_freq = unpackRGBE(texelFetch(TEX_PT_COLOR_HF, ipos, 0).x) / STORAGE_SCALE_HF;
+	vec3 low_freq = texelFetch(TEX_PT_COLOR_LF_SH, ipos, 0).rgb / STORAGE_SCALE_LF;	// flat RGB without DENOISER_FLAG_LF_SH
+	vec3 specular = unpackRGBE(texelFetch(TEX_PT_COLOR_SPEC, ipos, 0).x) / STORAGE_SCALE_SPEC;
+	vec2 hit_dist = texelFetch(TEX_PT_HIT_DIST, ipos, 0).xy;
+
+	// pt_nrd_direct 0: the direct diffuse stays out of NRD, nrd_composite.comp adds it.
+	vec3 diffuse = (nrd_pc.direct != 0 ? high_freq : vec3(0)) + low_freq;
+
+	if(is_sky)
+	{
+		diffuse = vec3(0);
+		specular = vec3(0);
+		hit_dist = vec2(0);
+	}
+
+	imageStore(IMG_NRD_IN_VIEWZ, flat_pos, vec4(view_z, 0, 0, 0));
+	imageStore(IMG_NRD_IN_MV, flat_pos, vec4(motion, motion_z, 0));
+	imageStore(IMG_NRD_IN_NORMAL_ROUGHNESS, flat_pos, nrd_pack_normal_and_roughness(normal, roughness, 0.0));
+	if(nrd_pc.mode == 0)
+	{
+		imageStore(IMG_NRD_IN_DIFF, flat_pos, nrd_relax_pack_radiance_and_hit_dist(diffuse, hit_dist.x));
+		imageStore(IMG_NRD_IN_SPEC, flat_pos, nrd_relax_pack_radiance_and_hit_dist(specular, hit_dist.y));
+	}
+	else
+	{
+		// ReBLUR takes the normalized hit distance, and 0 for a lobe that the tracer skipped.
+		// The diffuse hit distance has the roughness 1.
+		float diff_norm = hit_dist.x > 0 ? nrd_reblur_get_norm_hit_dist(hit_dist.x, view_z, nrd_pc.hit_dist_params.xyz, 1.0) : 0.0;
+		float spec_norm = hit_dist.y > 0 ? nrd_reblur_get_norm_hit_dist(hit_dist.y, view_z, nrd_pc.hit_dist_params.xyz, roughness) : 0.0;
+
+		imageStore(IMG_NRD_IN_DIFF, flat_pos, nrd_reblur_pack_radiance_and_norm_hit_dist(diffuse, diff_norm));
+		imageStore(IMG_NRD_IN_SPEC, flat_pos, nrd_reblur_pack_radiance_and_norm_hit_dist(specular, spec_norm));
+	}
+}

@@ -276,6 +276,10 @@ void NPC_ChoosePainAnimation( gentity_t *self, gentity_t *other, const vec3_t po
 		{
 			pain_chance = 1.0f;
 		}
+		else if ( mod == MOD_MELEE && other && !other->s.number )
+		{//the player's combo always staggers
+			pain_chance = 1.0f;
+		}
 		else if ( mod == MOD_MELEE )
 		{//higher in rank (skill) we are, less likely we are to be fazed by a punch
 			pain_chance = 1.0f - ((RANK_CAPTAIN-self->NPC->rank)/(float)RANK_CAPTAIN);
@@ -334,8 +338,9 @@ void NPC_ChoosePainAnimation( gentity_t *self, gentity_t *other, const vec3_t po
 					pain_anim = BOTH_PAIN1;
 				}
 				else if ( mod == MOD_MELEE )
-				{
-					pain_anim = PM_PickAnim( self, BOTH_PAIN2, BOTH_PAIN3 );
+				{//stagger: PAIN1, then NPC_Think chains PAIN18
+					pain_anim = BOTH_PAIN1;
+					TIMER_Set( self, "meleePainChain", PM_AnimLength( self->client->clientInfo.animFileIndex, BOTH_PAIN1 ) + 200 );
 				}
 				else if ( self->s.weapon == WP_SABER )
 				{//temp HACK: these are the only 2 pain anims that look good when holding a saber

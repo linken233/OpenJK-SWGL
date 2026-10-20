@@ -22,6 +22,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 */
 
 #include "g_local.h"
+#include "g_lightedit.h"
 #include "g_functions.h"
 #include "Q3_Interface.h"
 #include "g_nav.h"
@@ -318,6 +319,8 @@ extern void CP_FindCombatPointWaypoints( void );
 extern qboolean InFront( vec3_t spot, vec3_t from, vec3_t fromAngles, float threshHold = 0.0f );
 
 void G_RunFrame (int levelTime);
+void G_RunFrameBegin( int levelTime, int numSlices );
+qboolean G_RunFrameSlice( void );
 void PrintEntClassname( int gentNum );
 void ClearNPCGlobals( void );
 extern void AI_UpdateGroups( void );
@@ -752,7 +755,7 @@ void G_InitCvars( void ) {
 	g_subtitles = gi.cvar( "g_subtitles", "0", CVAR_ARCHIVE );
 	com_buildScript = gi.cvar ("com_buildscript", "0", 0);
 
-	g_saberAutoBlocking = gi.cvar( "g_saberAutoBlocking", "1", CVAR_CHEAT );//must press +block button to do any blocking
+	g_saberAutoBlocking = gi.cvar( "g_saberAutoBlocking", "1", CVAR_ARCHIVE );//0 = the player must press +block to block (set in the Setup menu)
 	g_saberRealisticCombat = gi.cvar( "g_saberMoreRealistic", "0", CVAR_ARCHIVE );//makes collision more precise, increases damage
 	debug_subdivision = gi.cvar( "debug_subdivision", "0", CVAR_ARCHIVE );//debug for dismemberment
 	g_dismemberProbabilities = gi.cvar ( "g_dismemberProbabilities", "1", CVAR_ARCHIVE );//0 = ignore probabilities, 1 = use probabilities
@@ -913,6 +916,7 @@ void InitGame(  const char *mapname, const char *spawntarget, int checkSum, cons
 	srand( randomSeed );
 
 	G_InitCvars();
+	G_LightEdit_Init();
 
 	G_InitMemory();
 
@@ -1076,6 +1080,8 @@ extern "C" Q_EXPORT game_export_t* QDECL GetGameAPI( game_import_t *import ) {
 	globals.ClientCommand = ClientCommand;
 
 	globals.RunFrame = G_RunFrame;
+	globals.RunFrameBegin = G_RunFrameBegin;
+	globals.RunFrameSlice = G_RunFrameSlice;
 	globals.ConnectNavs = G_ConnectNavs;
 
 	globals.ConsoleCommand = ConsoleCommand;
@@ -1618,6 +1624,11 @@ static inline qboolean G_RagWantsHumanoidsOnly( CGhoul2Info *ghlInfo )
 	{//only _humanoid skeleton is expected to have these
 		return qtrue;
 	}
+	// Animation override: "models/players/_humanoid_o_<key>/_humanoid" has the _humanoid skeleton.
+	if ( !Q_stricmpn( "models/players/_humanoid_o_", GLAName, 27 ) )
+	{
+		return qtrue;
+	}
 	if (!Q_stricmp("models/players/JK2anims/JK2anims", GLAName))
 	{//only _humanoid skeleton is expected to have these
 		return qtrue;
@@ -2155,10 +2166,14 @@ int navTime = 0;
 #endif//	AI_TIMERS
 
 
-void G_RunFrame( int levelTime ) {
-	int			i;
-	gentity_t	*ent;
-	int			ents_inuse=0; // someone's gonna be pissed I put this here...
+// Game frame in parts: G_RunFrameBegin, G_RunFrameSlice until it returns qtrue.
+// G_RunFrame does all the parts at once.
+static int	frameEntsInUse;		// entities in use, for g_numEntities
+static int	frameCursor = -1;	// next entity to think, -1 when no frame runs
+static int	frameClientsPerSlice;
+
+void G_RunFrameBegin( int levelTime, int numSlices ) {
+	int i;
 #if	AI_TIMERS
 	AITime = 0;
 	navTime = 0;
@@ -2189,131 +2204,146 @@ void G_RunFrame( int levelTime ) {
 	//Look to clear out old events
 	ClearPlayerAlertEvents();
 
-	//Run the frame for all entities
-//	for ( i = 0, ent = &g_entities[0]; i < globals.num_entities ; i++, ent++)
-	for ( i = 0; i < globals.num_entities ; i++)
+	// spread the clients (NPCs), which cost the most, over the slices
+	int numClients = 0;
+	for ( i = 1; i < globals.num_entities; i++ )
 	{
-//		if ( !ent->inuse )
-//			continue;
-
-		if(!PInUse(i))
-			continue;
-		ents_inuse++;
-		ent = &g_entities[i];
-
-		// clear events that are too old
-		if ( level.time - ent->eventTime > EVENT_VALID_MSEC ) {
-			if ( ent->s.event ) {
-				ent->s.event = 0;	// &= EV_EVENT_BITS;
-				if ( ent->client ) {
-					ent->client->ps.externalEvent = 0;
-				}
-			}
-			if ( ent->freeAfterEvent ) {
-				// tempEntities or dropped items completely go away after their event
-				G_FreeEntity( ent );
-				continue;
-			}
-			/*	// This is never set to true anywhere. Killing the field (BTO - VV)
-			else if ( ent->unlinkAfterEvent ) {
-				// items that will respawn will hide themselves after their pickup event
-				ent->unlinkAfterEvent = qfalse;
-				gi.unlinkentity( ent );
-			}
-			*/
-		}
-
-		// temporary entities don't think
-		if ( ent->freeAfterEvent )
-			continue;
-
-		G_CheckTasksCompleted(ent);
-
-		G_Roff( ent );
-
-		if( !ent->client )
-		{
-			if ( !(ent->svFlags & SVF_SELF_ANIMATING) )
-			{//FIXME: make sure this is done only for models with frames?
-				//Or just flag as animating?
-				if ( ent->s.eFlags & EF_ANIM_ONCE )
-				{
-					ent->s.frame++;
-				}
-				else if ( !(ent->s.eFlags & EF_ANIM_ALLFAST) )
-				{
-					G_Animate( ent );
-				}
-			}
-		}
-		G_CheckSpecialPersistentEvents( ent );
-
-		if ( ent->s.eType == ET_MISSILE )
-		{
-			G_RunMissile( ent );
-			continue;
-		}
-
-		if ( ent->s.eType == ET_ITEM )
-		{
-			G_RunItem( ent );
-			continue;
-		}
-
-		if ( ent->s.eType == ET_MOVER )
-		{
-			// FIXME string comparison in per-frame thinks wut???
-			if ( ent->model && Q_stricmp( "models/test/mikeg/tie_fighter.md3", ent->model ) == 0 )
-			{
-				TieFighterThink( ent );
-			}
-			G_RunMover( ent );
-			continue;
-		}
-
-		//The player
-		if ( i == 0 )
-		{
-			// decay batteries if the goggles are active
-			if ( cg.zoomMode == 1 && ent->client->ps.batteryCharge > 0 )
-			{
-				ent->client->ps.batteryCharge--;
-			}
-			else if ( cg.zoomMode == 3 && ent->client->ps.batteryCharge > 0 )
-			{
-				ent->client->ps.batteryCharge -= 2;
-
-				if ( ent->client->ps.batteryCharge < 0 )
-				{
-					ent->client->ps.batteryCharge = 0;
-				}
-			}
-
-			G_CheckEndLevelTimers( ent );
-			//Recalculate the nearest waypoint for the coming NPC updates
-			NAV::GetNearestNode( ent );
-
-
-			if( ent->m_iIcarusID != IIcarusInterface::ICARUS_INVALID && !stop_icarus )
-			{
-				IIcarusInterface::GetIcarus()->Update( ent->m_iIcarusID );
-			}
-			//dead
-			if ( ent->health <= 0 )
-			{
-				if ( ent->client->ps.groundEntityNum != ENTITYNUM_NONE )
-				{//on the ground
-					pitch_roll_for_slope( ent );
-				}
-			}
-
-			continue;	// players are ucmd driven
-		}
-
-		G_RunThink( ent );	// be aware that ent may be free after returning from here, at least one func frees them
-		ClearNPCGlobals();			//	but these 2 funcs are ok
-		//UpdateTeamCounters( ent );	//	   to call anyway on a freed ent.
+		if ( PInUse(i) && g_entities[i].client )
+			numClients++;
 	}
+	if ( numSlices < 1 )
+		numSlices = 1;
+	frameClientsPerSlice = ( numSlices > 1 ) ? ( numClients + numSlices - 1 ) / numSlices : 0;
+	frameEntsInUse = 0;
+	frameCursor = 0;
+}
+
+// Runs one entity of the frame: the body of the old G_RunFrame entity loop.
+static void G_RunEntityFrame( int i ) {
+	gentity_t *ent;
+
+	if(!PInUse(i))
+		return;
+	frameEntsInUse++;
+	ent = &g_entities[i];
+
+	// clear events that are too old
+	if ( level.time - ent->eventTime > EVENT_VALID_MSEC ) {
+		if ( ent->s.event ) {
+			ent->s.event = 0;	// &= EV_EVENT_BITS;
+			if ( ent->client ) {
+				ent->client->ps.externalEvent = 0;
+			}
+		}
+		if ( ent->freeAfterEvent ) {
+			// tempEntities or dropped items completely go away after their event
+			G_FreeEntity( ent );
+			return;
+		}
+		/*	// This is never set to true anywhere. Killing the field (BTO - VV)
+		else if ( ent->unlinkAfterEvent ) {
+			// items that will respawn will hide themselves after their pickup event
+			ent->unlinkAfterEvent = qfalse;
+			gi.unlinkentity( ent );
+		}
+		*/
+	}
+
+	// temporary entities don't think
+	if ( ent->freeAfterEvent )
+		return;
+
+	G_CheckTasksCompleted(ent);
+
+	G_Roff( ent );
+
+	if( !ent->client )
+	{
+		if ( !(ent->svFlags & SVF_SELF_ANIMATING) )
+		{//FIXME: make sure this is done only for models with frames?
+			//Or just flag as animating?
+			if ( ent->s.eFlags & EF_ANIM_ONCE )
+			{
+				ent->s.frame++;
+			}
+			else if ( !(ent->s.eFlags & EF_ANIM_ALLFAST) )
+			{
+				G_Animate( ent );
+			}
+		}
+	}
+	G_CheckSpecialPersistentEvents( ent );
+
+	if ( ent->s.eType == ET_MISSILE )
+	{
+		G_RunMissile( ent );
+		return;
+	}
+
+	if ( ent->s.eType == ET_ITEM )
+	{
+		G_RunItem( ent );
+		return;
+	}
+
+	if ( ent->s.eType == ET_MOVER )
+	{
+		// FIXME string comparison in per-frame thinks wut???
+		if ( ent->model && Q_stricmp( "models/test/mikeg/tie_fighter.md3", ent->model ) == 0 )
+		{
+			TieFighterThink( ent );
+		}
+		G_RunMover( ent );
+		return;
+	}
+
+	//The player
+	if ( i == 0 )
+	{
+		// decay batteries if the goggles are active
+		if ( cg.zoomMode == 1 && ent->client->ps.batteryCharge > 0 )
+		{
+			ent->client->ps.batteryCharge--;
+		}
+		else if ( cg.zoomMode == 3 && ent->client->ps.batteryCharge > 0 )
+		{
+			ent->client->ps.batteryCharge -= 2;
+
+			if ( ent->client->ps.batteryCharge < 0 )
+			{
+				ent->client->ps.batteryCharge = 0;
+			}
+		}
+
+		G_CheckEndLevelTimers( ent );
+		//Recalculate the nearest waypoint for the coming NPC updates
+		NAV::GetNearestNode( ent );
+
+
+		if( ent->m_iIcarusID != IIcarusInterface::ICARUS_INVALID && !stop_icarus )
+		{
+			IIcarusInterface::GetIcarus()->Update( ent->m_iIcarusID );
+		}
+		//dead
+		if ( ent->health <= 0 )
+		{
+			if ( ent->client->ps.groundEntityNum != ENTITYNUM_NONE )
+			{//on the ground
+				pitch_roll_for_slope( ent );
+			}
+		}
+
+		return;	// players are ucmd driven
+	}
+
+	G_RunThink( ent );	// be aware that ent may be free after returning from here, at least one func frees them
+	ClearNPCGlobals();			//	but these 2 funcs are ok
+	//UpdateTeamCounters( ent );	//	   to call anyway on a freed ent.
+}
+
+static void G_RunFrameEnd( void ) {
+	gentity_t	*ent;
+	const int	ents_inuse = frameEntsInUse;
 
 	// perform final fixups on the player
 	ent = &g_entities[0];
@@ -2372,6 +2402,42 @@ extern int delayedShutDown;
 		ValidateInUseBits();
 	}
 #endif
+}
+
+// Thinks about the next 1 / numSlices of the clients and the entities between them.
+// Returns qtrue when the frame is complete.
+qboolean G_RunFrameSlice( void ) {
+	int clientsDone = 0;
+
+	if ( frameCursor < 0 )
+		return qtrue;
+
+	while ( frameCursor < globals.num_entities )
+	{
+		const int i = frameCursor++;
+		const qboolean isClient = ( i > 0 && PInUse(i) && g_entities[i].client ) ? qtrue : qfalse;
+
+		if ( isClient && frameClientsPerSlice && clientsDone >= frameClientsPerSlice )
+		{
+			frameCursor--;	// first client of the next slice
+			return qfalse;
+		}
+
+		G_RunEntityFrame( i );
+
+		if ( isClient )
+			clientsDone++;
+	}
+
+	frameCursor = -1;
+	G_RunFrameEnd();
+	return qtrue;
+}
+
+void G_RunFrame( int levelTime ) {
+	G_RunFrameBegin( levelTime, 1 );
+	while ( !G_RunFrameSlice() )
+		;
 }
 
 

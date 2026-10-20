@@ -163,6 +163,13 @@ qboolean RE_RegisterModels_GetDiskFile( const char *psModelFileName, void **ppvB
 				return qtrue;
 			}
 
+			// _humanoid.gla and the animation override GLAs get merged frames.
+			if (R_LoadMergedGLA(sModelName, ppvBuffer))
+			{
+				*pqbAlreadyCached = qfalse;
+				return qtrue;
+			}
+
 		ri.FS_ReadFile( sModelName, ppvBuffer );
 		*pqbAlreadyCached = qfalse;
 
@@ -827,6 +834,19 @@ qhandle_t RE_RegisterModel( const char *name )
 	}
 
 	return q;
+}
+
+// Registers a GLA and returns its data in the model cache, or NULL (see tr_glamerge.cpp).
+const mdxaHeader_t *R_GetRegisteredGLA( const char *path )
+{
+	const qhandle_t handle = RE_RegisterModel( path );
+	if ( !handle )
+	{
+		return NULL;
+	}
+
+	const model_t *mod = R_GetModelByHandle( handle );
+	return mod->type == MOD_MDXA ? mod->mdxa : NULL;
 }
 
 

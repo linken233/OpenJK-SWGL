@@ -50,6 +50,9 @@ extern stringID_table_t animTable [MAX_ANIMATIONS+1];
 #include "../qcommon/q_shared.h"
 #include <string>
 #include "../qcommon/game_version.h"
+#include "../rd-common/mdx_merge.h"
+#include "../client/vmachine.h"
+#include "ui_lightedit.h"
 
 extern qboolean ItemParse_model_g2anim_go( itemDef_t *item, const char *animName );
 extern qboolean ItemParse_asset_model_go( itemDef_t *item, const char *name );
@@ -61,6 +64,12 @@ extern void Menu_SetItemText(const menuDef_t* menu, const char* itemName, const 
 extern void Menu_ShowItemByName(menuDef_t* menu, const char* p, qboolean bShow);
 
 extern qboolean PC_Script_Parse(const char **out);
+
+static int	uiCharConfigCount;
+static int	uiCharConfigSelected;
+static char	uiCharConfigs[64][MAX_QPATH];
+static int	uiCharConfigDeleteIndex = -1;	// configuration of the first Delete click
+static int	uiCharConfigDeleteTime;			// realTime limit of the second Delete click
 
 #define LISTBUFSIZE 10240
 
@@ -209,6 +218,20 @@ static void UI_SaveCharacterPowers(void);
 static void UI_LoadCharacterCfg(void);
 static void Com_FlushCharacterFile(void);
 static void UI_LoadCharacterDefaultCfg(void);
+static void UI_RefreshCharConfigs(const char *select);
+static void UI_RefreshAnimOverrides(void);
+
+// Arguments of "animoverride" for FEEDER_ANIM_OVERRIDES: "none", "default", then the override folders.
+static std::vector<std::string> uiAnimOverrides;
+
+// FEEDER_AMMO: the ammo types of the player (ammoData index) and their translated names, from the cgame.
+static void UI_RefreshAmmoTypes(void);
+static void UI_SelectAmmoType(int index);
+static std::vector<int> uiAmmoTypes;
+static std::vector<std::string> uiAmmoNames;
+static void UI_SaveCharConfig(void);
+static void UI_LoadCharConfig(void);
+static void UI_DeleteCharConfig(void);
 
 // Movedata Sounds
 enum
@@ -902,6 +925,7 @@ vmCvar_t	ui_npc_sabertwo;
 vmCvar_t	ui_npc_sabertwocolor;
 vmCvar_t	ui_npc_weapon;
 vmCvar_t	ui_npc_weapon_label;
+vmCvar_t	ui_npc_random_weapon;
 vmCvar_t	ui_npc_spawnscript;
 vmCvar_t	ui_npc_fleescript;
 vmCvar_t	ui_npc_deathscript;
@@ -1057,9 +1081,9 @@ static cvarTable_t cvarTable[] =
 	{ &ui_saber_color,			"ui_saber_color",		"", NULL, 0},
 	{ &ui_saber2_color,			"ui_saber2_color",		"", NULL, 0},
 
-	{ &ui_char_color_red,		"ui_char_color_red",	"", NULL, 0},
-	{ &ui_char_color_green,		"ui_char_color_green",	"", NULL, 0},
-	{ &ui_char_color_blue,		"ui_char_color_blue",	"", NULL, 0},
+	{ &ui_char_color_red,		"ui_char_color_red",	"255", NULL, 0},
+	{ &ui_char_color_green,		"ui_char_color_green",	"255", NULL, 0},
+	{ &ui_char_color_blue,		"ui_char_color_blue",	"255", NULL, 0},
 
 	{ &ui_PrecacheModels,		"ui_PrecacheModels",	"1", NULL, CVAR_ARCHIVE},
 
@@ -1084,6 +1108,7 @@ static cvarTable_t cvarTable[] =
 	{ &ui_npc_sabertwocolor,	"ui_npc_sabertwocolor",	"red", NULL, CVAR_ARCHIVE},
 	{ &ui_npc_weapon,			"ui_npc_weapon",	"WP_BLASTER", NULL, CVAR_ARCHIVE},
 	{ &ui_npc_weapon_label,			"ui_npc_weapon_label",	"Blaster", NULL, CVAR_ARCHIVE},
+	{ &ui_npc_random_weapon,	"ui_npc_random_weapon",	"weapon_clonerandom", NULL, CVAR_ARCHIVE},	// random weapon of the NPC selector, set by npcSetRandomWeapon
 	{ &ui_lightning_color,		"ui_lightning_color",	"blue", NULL, CVAR_ARCHIVE},
 	{ &ui_npc_spawnscript,		"ui_npc_spawnscript",	"none", NULL, 0},
 	{ &ui_npc_fleescript,		"ui_npc_fleescript",	"none", NULL, 0},
@@ -1401,6 +1426,44 @@ const char *UI_FeederItemText(float feederID, int index, int column, qhandle_t *
 			return uiInfo.playerSpecies[index].Name;
 		}
 	}
+	else if (feederID == FEEDER_CHAR_CONFIGS)
+	{
+		return (index >= 0 && index < uiCharConfigCount) ? uiCharConfigs[index] : "";
+	}
+	else if (feederID == FEEDER_AMMO)
+	{
+		return (index >= 0 && index < (int)uiAmmoNames.size()) ? uiAmmoNames[index].c_str() : "";
+	}
+	else if (feederID == FEEDER_LIGHTEDIT)
+	{
+		return UI_LightEdit_FeederItemText(index, column);
+	}
+	else if (feederID == FEEDER_LIGHTEDIT_EMI)
+	{
+		return UI_LightEdit_EmiFeederItemText(index, column);
+	}
+	else if (feederID == FEEDER_ANIM_OVERRIDES)
+	{
+		if (index < 0 || index >= (int)uiAnimOverrides.size())
+		{
+			return "";
+		}
+		if (index == 0)
+		{
+			return "Model default";
+		}
+		if (index == 1)
+		{
+			return "Humanoid";
+		}
+		// "_plx1" and "plx1" are the same override.
+		const char *name = uiAnimOverrides[index].c_str();
+		while (*name == '_')
+		{
+			name++;
+		}
+		return name;
+	}
 	else if (feederID == FEEDER_LANGUAGES)
 	{
 #ifdef JK2_MODE
@@ -1630,6 +1693,10 @@ static qboolean UI_RunMenuScript ( const char **args )
 
 	if (String_Parse(args, &name))
 	{
+		if (UI_LightEdit_RunScript(name))
+		{
+			return qtrue;
+		}
 		if (Q_stricmp(name, "resetdefaults") == 0)
 		{
 			UI_ResetDefaults();
@@ -1783,44 +1850,155 @@ static qboolean UI_RunMenuScript ( const char **args )
 			Menus_ActivateByName("setup_menu2");
 			return qtrue;
 		}
-		else if (Q_stricmp(name, "Leave") == 0)
+		if (Q_stricmp(name, "Leave") == 0)
 		{
 			Cbuf_ExecuteText( EXEC_APPEND, "disconnect\n" );
 			trap_Key_SetCatcher( KEYCATCH_UI );
 			Menus_CloseAll();
 			//Menus_ActivateByName("mainMenu");
+			return qtrue;
 		}
-		else if (Q_stricmp(name, "getvideosetup") == 0)
+		if (Q_stricmp(name, "getvideosetup") == 0)
 		{
 			UI_GetVideoSetup ( );
+			return qtrue;
 		}
-		else if (Q_stricmp(name, "updatevideosetup") == 0)
+		if (Q_stricmp(name, "updatevideosetup") == 0)
 		{
 			UI_UpdateVideoSetup ( );
+			return qtrue;
 		}
-		else if (Q_stricmp(name, "nextDataPadForcePower") == 0)
+		if (Q_stricmp(name, "nextDataPadForcePower") == 0)
 		{
 			ui.Cmd_ExecuteText( EXEC_APPEND, "dpforcenext\n");
+			return qtrue;
 		}
-		else if (Q_stricmp(name, "prevDataPadForcePower") == 0)
+		if (Q_stricmp(name, "prevDataPadForcePower") == 0)
 		{
 			ui.Cmd_ExecuteText( EXEC_APPEND, "dpforceprev\n");
+			return qtrue;
 		}
-		else if (Q_stricmp(name, "nextDataPadWeapon") == 0)
+		if (Q_stricmp(name, "nextDataPadWeapon") == 0)
 		{
 			ui.Cmd_ExecuteText( EXEC_APPEND, "dpweapnext\n");
+			return qtrue;
 		}
-		else if (Q_stricmp(name, "loadoutSelectBaseWeapon") == 0)
+		if (Q_stricmp(name, "loadoutSelectBaseWeapon") == 0)
 		{
 			ui.Cmd_ExecuteText( EXEC_APPEND, "loadoutSelectBaseWeapon\n");
+			return qtrue;
 		}
-		else if (Q_stricmp(name, "loadoutSelectWeapon") == 0)
+		if (Q_stricmp(name, "loadoutSelectWeapon") == 0)
 		{
 			ui.Cmd_ExecuteText( EXEC_APPEND, "loadoutSelectWeapon\n");
+			return qtrue;
 		}
-		else if (Q_stricmp(name, "loadoutSwitchSelectWeapon") == 0)
+		if (Q_stricmp(name, "loadoutSwitchSelectWeapon") == 0)
 		{
 			ui.Cmd_ExecuteText( EXEC_APPEND, "loadoutSwitchSelectWeapon\n");
+			return qtrue;
+		}
+		if (Q_stricmp(name, "loadoutClearSlot") == 0)
+		{
+			ui.Cmd_ExecuteText( EXEC_APPEND, "loadoutClearSlot\n");
+			return qtrue;
+		}
+		if (Q_stricmp(name, "loadoutEscape") == 0)
+		{
+			ui.Cmd_ExecuteText( EXEC_APPEND, "loadoutEscape\n");
+			return qtrue;
+		}
+		if (Q_stricmp(name, "characterButtonClick") == 0)
+		{
+			ui.Cmd_ExecuteText( EXEC_APPEND, "characterButtonClick\n");
+			return qtrue;
+		}
+		if (Q_stricmp(name, "characterFactionClick") == 0)
+		{
+			const char *slot;
+			if (String_Parse(args, &slot))
+			{
+				ui.Cmd_ExecuteText( EXEC_APPEND, va("characterFactionClick %s\n", slot));
+			}
+			return qtrue;
+		}
+		if (Q_stricmp(name, "characterFactionPreviousPage") == 0)
+		{
+			ui.Cmd_ExecuteText( EXEC_APPEND, "characterFactionPreviousPage\n");
+			return qtrue;
+		}
+		if (Q_stricmp(name, "characterFactionNextPage") == 0)
+		{
+			ui.Cmd_ExecuteText( EXEC_APPEND, "characterFactionNextPage\n");
+			return qtrue;
+		}
+		if (Q_stricmp(name, "characterVariantClick") == 0)
+		{
+			const char *slot;
+			if (String_Parse(args, &slot))
+			{
+				ui.Cmd_ExecuteText( EXEC_APPEND, va("characterVariantClick %s\n", slot));
+			}
+			return qtrue;
+		}
+		if (Q_stricmp(name, "characterNextPage") == 0)
+		{
+			ui.Cmd_ExecuteText( EXEC_APPEND, "characterNextPage\n");
+			return qtrue;
+		}
+		if (Q_stricmp(name, "characterVariantPreviousPage") == 0)
+		{
+			ui.Cmd_ExecuteText( EXEC_APPEND, "characterVariantPreviousPage\n");
+			return qtrue;
+		}
+		if (Q_stricmp(name, "characterVariantNextPage") == 0)
+		{
+			ui.Cmd_ExecuteText( EXEC_APPEND, "characterVariantNextPage\n");
+			return qtrue;
+		}
+		if (Q_stricmp(name, "characterPreviousPage") == 0)
+		{
+			ui.Cmd_ExecuteText( EXEC_APPEND, "characterPreviousPage\n");
+			return qtrue;
+		}
+		if (Q_stricmp(name, "characterUpdateSearch") == 0)
+		{
+			ui.Cmd_ExecuteText( EXEC_APPEND, "characterUpdateSearch\n");
+		}
+		else if (Q_stricmp(name, "characterTagPreviousPage") == 0)
+		{
+			ui.Cmd_ExecuteText( EXEC_APPEND, "characterTagPreviousPage\n");
+		}
+		else if (Q_stricmp(name, "characterTagNextPage") == 0)
+		{
+			ui.Cmd_ExecuteText( EXEC_APPEND, "characterTagNextPage\n");
+		}
+		else if (Q_stricmp(name, "characterToggleTags") == 0)
+		{
+			ui.Cmd_ExecuteText( EXEC_APPEND, "characterToggleTags\n");
+		}
+		else if (Q_stricmp(name, "characterResetSearch") == 0)
+		{
+			ui.Cmd_ExecuteText( EXEC_APPEND, "characterResetSearch\n");
+		}
+		else if (Q_stricmp(name, "characterConfigsRefresh") == 0)
+		{
+			ui.Cmd_ExecuteText( EXEC_APPEND, "characterConfigsRefresh\n");
+		}
+		else if (Q_stricmp(name, "characterBack") == 0)
+		{
+			ui.Cmd_ExecuteText( EXEC_APPEND, "characterBack\n");
+		}
+		else if (Q_stricmp(name, "characterEscape") == 0)
+		{
+			// Escape does the action of the Back button of the shown screen: character screen -> grid, grid -> profile menu.
+			menuDef_t *charMenu = Menus_FindByName("IngameSWGLChars");
+			const char *backName = !Q_stricmp(Cvar_VariableString("ui_character_screen"), "character") ? "CharacterBack" : "SelectionBack";
+			itemDef_t *back = charMenu ? (itemDef_t *)Menu_FindItemByName(charMenu, backName) : NULL;
+			if (back && back->action)
+			{
+				Item_RunScript(back, back->action);
+			}
 		}
 		else if (Q_stricmpn(name, "uiPcWeaponNext", 14) == 0)
 		{
@@ -1858,6 +2036,11 @@ static qboolean UI_RunMenuScript ( const char **args )
 		else if (Q_stricmp(name, "uiNpcWeaponLabelUpd") == 0)
 		{
 			ui.Cmd_ExecuteText( EXEC_APPEND, "uiNpcWeaponLabelUpd\n");
+		}
+		else if (Q_stricmp(name, "npcSetRandomWeapon") == 0)
+		{
+			// The weapon of the NPC is the random weapon of the selector (the loadout menu lists the weapons of the player only).
+			Cvar_Set("ui_npc_weapon", Cvar_VariableString("ui_npc_random_weapon"));
 		}
 		else if (Q_stricmp(name, "loadoutNextPage") == 0)
 		{
@@ -2112,6 +2295,40 @@ static qboolean UI_RunMenuScript ( const char **args )
 		{
 			UI_LoadCharacterCfg();
 		}
+		else if (Q_stricmp(name, "charConfigRefresh") == 0)
+		{
+			UI_RefreshCharConfigs(NULL);
+		}
+		else if (Q_stricmp(name, "animOverrideRefresh") == 0)
+		{
+			UI_RefreshAnimOverrides();
+		}
+		else if (Q_stricmp(name, "ammoRefresh") == 0)
+		{
+			UI_RefreshAmmoTypes();
+		}
+		else if (Q_stricmp(name, "charConfigSave") == 0)
+		{
+			UI_SaveCharConfig();
+		}
+		else if (Q_stricmp(name, "charConfigLoad") == 0)
+		{
+			UI_LoadCharConfig();
+		}
+		else if (Q_stricmp(name, "charConfigLoadNamed") == 0)
+		{
+			// "My Characters" screen: select the configuration <name> of the current variant and load it.
+			const char *configName;
+			if (String_Parse(args, &configName))
+			{
+				UI_RefreshCharConfigs(configName);
+				UI_LoadCharConfig();
+			}
+		}
+		else if (Q_stricmp(name, "charConfigDelete") == 0)
+		{
+			UI_DeleteCharConfig();
+		}
 		else if (Q_stricmp(name, "resetCharacter") == 0)
 		{
 			UI_LoadCharacterDefaultCfg();
@@ -2302,7 +2519,11 @@ static qboolean UI_RunMenuScript ( const char **args )
 		{
 			ui.Cmd_ExecuteText(EXEC_NOW, va("playermodel %s\n", Cvar_VariableString("ui_npc_type")));
 			ui.Cmd_ExecuteText(EXEC_NOW, va("playermodel %s %s %s %s\n", Cvar_VariableString("ui_char_model"), Cvar_VariableString("ui_char_skin_head"), Cvar_VariableString("ui_char_skin_torso"), Cvar_VariableString("ui_char_skin_legs")));
-			ui.Cmd_ExecuteText(EXEC_NOW, va("playerteam %s\n", Cvar_VariableString("ui_team")));
+			// "Change team" off: the character keeps the current team.
+			if (Cvar_VariableIntegerValue("g_allowAlignmentChange"))
+			{
+				ui.Cmd_ExecuteText(EXEC_NOW, va("playerteam %s\n", Cvar_VariableString("ui_team")));
+			}
 			if (Cvar_VariableIntegerValue("g_adoptcharstats") >= 1)
 			{
 				ui.Cmd_ExecuteText(EXEC_NOW, va("give health %s\n", Cvar_VariableString("ui_health")));
@@ -3000,6 +3221,26 @@ static int UI_FeederCount(float feederID)
 	{
 		return uiInfo.languageCount;
 	}
+	else if (feederID == FEEDER_CHAR_CONFIGS)
+	{
+		return uiCharConfigCount;
+	}
+	else if (feederID == FEEDER_ANIM_OVERRIDES)
+	{
+		return (int)uiAnimOverrides.size();
+	}
+	else if (feederID == FEEDER_AMMO)
+	{
+		return (int)uiAmmoTypes.size();
+	}
+	else if (feederID == FEEDER_LIGHTEDIT)
+	{
+		return UI_LightEdit_FeederCount();
+	}
+	else if (feederID == FEEDER_LIGHTEDIT_EMI)
+	{
+		return UI_LightEdit_EmiFeederCount();
+	}
 	else if (feederID == FEEDER_PLAYER_SPECIES)
 	{
 		return uiInfo.playerSpeciesCount;
@@ -3034,6 +3275,46 @@ static int UI_FeederCount(float feederID)
 UI_FeederSelection
 =================
 */
+// A head, torso or lower skin needs the two other parts: after a full skin (model_*), their cvars
+// hold the name of that skin. A part that is not in the list of the species takes its first entry.
+static void UI_ValidSkinPart(const char *cvarName, const skinName_t *list, int count)
+{
+	if (count <= 0)
+	{
+		return;
+	}
+	const char *value = Cvar_VariableString(cvarName);
+	for (int i = 0; i < count; i++)
+	{
+		if (!Q_stricmp(list[i].name, value))
+		{
+			return;
+		}
+	}
+	Cvar_Set(cvarName, list[0].name);
+}
+
+static void UI_ValidSkinParts(void)
+{
+	const playerSpeciesInfo_t *species = &uiInfo.playerSpecies[uiInfo.playerSpeciesIndex];
+	UI_ValidSkinPart("ui_char_skin_head", species->SkinHead, species->SkinHeadCount);
+	UI_ValidSkinPart("ui_char_skin_torso", species->SkinTorso, species->SkinTorsoCount);
+	UI_ValidSkinPart("ui_char_skin_legs", species->SkinLeg, species->SkinLegCount);
+}
+
+// No color (empty cvars or 0 0 0): white, the color that does not change the skin.
+static void UI_DefaultCharacterColor(void)
+{
+	if (Cvar_VariableIntegerValue("ui_char_color_red") == 0
+		&& Cvar_VariableIntegerValue("ui_char_color_green") == 0
+		&& Cvar_VariableIntegerValue("ui_char_color_blue") == 0)
+	{
+		Cvar_Set("ui_char_color_red", "255");
+		Cvar_Set("ui_char_color_green", "255");
+		Cvar_Set("ui_char_color_blue", "255");
+	}
+}
+
 static void UI_FeederSelection(float feederID, int index, itemDef_t *item)
 {
 	if (feederID == FEEDER_SAVEGAMES)
@@ -3046,7 +3327,7 @@ static void UI_FeederSelection(float feederID, int index, itemDef_t *item)
 		itemDef_t *item;
 		menuDef_t *menu;
 		modelDef_t *modelPtr;
-		char skin[MAX_QPATH];
+		char skin[MAX_QPATH * 2];
 
 		menu = Menus_FindByName("datapadMovesMenu");
 
@@ -3211,11 +3492,38 @@ static void UI_FeederSelection(float feederID, int index, itemDef_t *item)
 	{
 		uiInfo.languageCountIndex = index;
 	}
+	else if (feederID == FEEDER_CHAR_CONFIGS)
+	{
+		// The name goes to the text field: Save with it overwrites this configuration.
+		uiCharConfigSelected = index;
+		Cvar_Set("ui_char_config_name", index > 0 && index < uiCharConfigCount ? uiCharConfigs[index] : "");
+	}
+	else if (feederID == FEEDER_ANIM_OVERRIDES)
+	{
+		if (index >= 0 && index < (int)uiAnimOverrides.size())
+		{
+			Cvar_Set("ui_animoverride", uiAnimOverrides[index].c_str());
+			ui.Cmd_ExecuteText(EXEC_APPEND, va("animoverride %s\n", uiAnimOverrides[index].c_str()));
+		}
+	}
+	else if (feederID == FEEDER_AMMO)
+	{
+		UI_SelectAmmoType(index);
+	}
+	else if (feederID == FEEDER_LIGHTEDIT)
+	{
+		UI_LightEdit_FeederSelection(index);
+	}
+	else if (feederID == FEEDER_LIGHTEDIT_EMI)
+	{
+		UI_LightEdit_EmiFeederSelection(index);
+	}
 	else if (feederID == FEEDER_PLAYER_SKIN_HEAD)
 	{
 		if (index >= 0 && index < uiInfo.playerSpecies[uiInfo.playerSpeciesIndex].SkinHeadCount)
 		{
 			Cvar_Set("ui_char_skin_head", uiInfo.playerSpecies[uiInfo.playerSpeciesIndex].SkinHead[index].name);
+			UI_ValidSkinParts();
 		}
 	}
 	else if (feederID == FEEDER_MODEL_SKINS)
@@ -3233,6 +3541,7 @@ static void UI_FeederSelection(float feederID, int index, itemDef_t *item)
 		if (index >= 0 && index < uiInfo.playerSpecies[uiInfo.playerSpeciesIndex].SkinTorsoCount)
 		{
 			Cvar_Set("ui_char_skin_torso", uiInfo.playerSpecies[uiInfo.playerSpeciesIndex].SkinTorso[index].name);
+			UI_ValidSkinParts();
 		}
 	}
 
@@ -3241,6 +3550,7 @@ static void UI_FeederSelection(float feederID, int index, itemDef_t *item)
 		if (index >= 0 && index < uiInfo.playerSpecies[uiInfo.playerSpeciesIndex].SkinLegCount)
 		{
 			Cvar_Set("ui_char_skin_legs", uiInfo.playerSpecies[uiInfo.playerSpeciesIndex].SkinLeg[index].name);
+			UI_ValidSkinParts();
 		}
 	}
 
@@ -3270,6 +3580,7 @@ extern void	Item_RunScript(itemDef_t *item, const char *s);		//from ui_shared;
 
 void Key_KeynumToStringBuf( int keynum, char *buf, int buflen );
 void Key_GetBindingBuf( int keynum, char *buf, int buflen );
+int Key_ComboKeynum( int modifier, int key );
 
 static qboolean UI_Crosshair_HandleKey(int flags, float *special, int key)
 {
@@ -3323,7 +3634,9 @@ static ui_animFileSet_t	ui_knownAnimFileSets[MAX_ANIM_FILES];
 
 int				ui_numKnownAnimFileSets;
 
-qboolean UI_ParseAnimationFile( const char *af_filename )
+// Parses af_filename into the new file set. frameOffset is added to each first frame (a merged GLA part).
+// initialize clears the file set first.
+static qboolean UI_ParseAnimationFileAt( const char *af_filename, int frameOffset, qboolean initialize )
 {
 	const char		*text_p;
 	int			len;
@@ -3351,7 +3664,7 @@ qboolean UI_ParseAnimationFile( const char *af_filename )
 	//FIXME: have some way of playing anims backwards... negative numFrames?
 
 	//initialize anim array so that from 0 to MAX_ANIMATIONS, set default values of 0 1 0 100
-	for(i = 0; i < MAX_ANIMATIONS; i++)
+	for(i = 0; initialize && i < MAX_ANIMATIONS; i++)
 	{
 		animations[i].firstFrame = 0;
 		animations[i].numFrames = 0;
@@ -3393,7 +3706,7 @@ qboolean UI_ParseAnimationFile( const char *af_filename )
 		{
 			break;
 		}
-		animations[animNum].firstFrame = atoi( token );
+		animations[animNum].firstFrame = atoi( token ) + frameOffset;
 
 		token = COM_Parse( &text_p );
 		if ( !token )
@@ -3435,6 +3748,108 @@ qboolean UI_ParseAnimationFile( const char *af_filename )
 	return qtrue;
 }
 
+qboolean UI_ParseAnimationFile( const char *af_filename )
+{
+	return UI_ParseAnimationFileAt( af_filename, 0, qtrue );
+}
+
+// Reads the header and skeleton of a GLA file, with the checks of the renderer (see mdx_merge.h).
+static const mdxaHeader_t *UI_ReadGLAHeader( const char *path, std::vector<byte> &buf )
+{
+	fileHandle_t	f;
+	mdxaHeader_t	header;
+
+	const int len = ui.FS_FOpenFile( path, &f, FS_READ );
+	if ( len <= 0 || !f )
+	{
+		return NULL;
+	}
+
+	// The skeleton is between the header and the frames.
+	const int skelEnd = ( len >= (int)sizeof( header ) && ui.FS_Read( &header, sizeof( header ), f ) == sizeof( header ) )
+		? LittleLong( header.ofsFrames ) : 0;
+	qboolean readOk = qfalse;
+	if ( skelEnd > (int)sizeof( header ) && skelEnd <= len && LittleLong( header.ofsEnd ) <= len )
+	{
+		buf.resize( skelEnd );
+		memcpy( buf.data(), &header, sizeof( header ) );
+		const int skelBytes = skelEnd - (int)sizeof( header );
+		readOk = (qboolean)( ui.FS_Read( buf.data() + sizeof( header ), skelBytes, f ) == skelBytes );
+	}
+	ui.FS_FCloseFile( f );
+
+	return readOk ? GLA_CheckHeader( buf.data(), skelEnd ) : NULL;
+}
+
+// Parses <dir>/<name>.cfg, else <dir>/animation.cfg, at frameOffset.
+static qboolean UI_ParseAnimationPart( const char *dir, const char *name, int frameOffset )
+{
+	char path[MAX_QPATH];
+
+	Com_sprintf( path, sizeof( path ), "%s/%s.cfg", dir, name );
+	if ( UI_ParseAnimationFileAt( path, frameOffset, qfalse ) )
+	{
+		return qtrue;
+	}
+	Com_sprintf( path, sizeof( path ), "%s/animation.cfg", dir );
+	return UI_ParseAnimationFileAt( path, frameOffset, qfalse );
+}
+
+/*
+=================
+UI_ParseMergedAnimations
+
+Parses the animations of the GLA parts that the renderer appends to the GLA of a skeleton (see mdx_merge.h):
+_weapons.gla if glaPath is a _humanoid*.gla file, then the GLA of the animation override if overrideKey is not NULL.
+The same frame offsets as G_ParseMergedAnimations in the game.
+=================
+*/
+static void UI_ParseMergedAnimations( const char *glaPath, const char *overrideKey )
+{
+	std::vector<byte> baseBuf, weaponsBuf, extraBuf;
+
+	if ( !overrideKey && !GLA_TakesWeapons( glaPath ) )
+	{
+		return;
+	}
+
+	const mdxaHeader_t *base = UI_ReadGLAHeader( glaPath, baseBuf );
+	if ( !base )
+	{
+		return;
+	}
+	int numFrames = LittleLong( base->numFrames );
+
+	const mdxaHeader_t *weapons = GLA_TakesWeapons( glaPath ) ? UI_ReadGLAHeader( GLA_WEAPONS_PATH, weaponsBuf ) : NULL;
+	if ( weapons && GLA_CanMerge( base, numFrames, weapons ) )
+	{
+		UI_ParseAnimationPart( GLA_WEAPONS_DIR, "_weapons", numFrames );
+		numFrames += LittleLong( weapons->numFrames );
+	}
+
+	if ( overrideKey )
+	{
+		// The override GLA is models/players/_<key>/_<key>.gla, else models/players/<key>/<key>.gla.
+		char overrideName[MAX_QPATH];
+		char overridePath[MAX_QPATH];
+		Com_sprintf( overrideName, sizeof( overrideName ), "_%s", overrideKey );
+		Com_sprintf( overridePath, sizeof( overridePath ), "models/players/%s/%s.gla", overrideName, overrideName );
+		const mdxaHeader_t *extra = UI_ReadGLAHeader( overridePath, extraBuf );
+		if ( !extra )
+		{
+			Q_strncpyz( overrideName, overrideKey, sizeof( overrideName ) );
+			Com_sprintf( overridePath, sizeof( overridePath ), "models/players/%s/%s.gla", overrideName, overrideName );
+			extra = UI_ReadGLAHeader( overridePath, extraBuf );
+		}
+		if ( extra && GLA_CanMerge( base, numFrames, extra ) )
+		{
+			char overrideDir[MAX_QPATH];
+			Com_sprintf( overrideDir, sizeof( overrideDir ), "models/players/%s", overrideName );
+			UI_ParseAnimationPart( overrideDir, overrideName, numFrames );
+		}
+	}
+}
+
 qboolean UI_ParseAnimFileSet( const char *animCFG, int *animFileIndex )
 { //Not going to bother parsing the sound config here.
 	char		afilename[MAX_QPATH];
@@ -3472,13 +3887,28 @@ qboolean UI_ParseAnimFileSet( const char *animCFG, int *animFileIndex )
 	//Okay, time to parse in a new one
 	Q_strncpyz( ui_knownAnimFileSets[ui_numKnownAnimFileSets].filename, strippedName, sizeof( ui_knownAnimFileSets[ui_numKnownAnimFileSets].filename ) );
 
+	// An animation override "_humanoid_o_<key>" is a virtual GLA: _humanoid.gla, _weapons.gla, then the override GLA.
+	char overrideKey[MAX_QPATH];
+	char glaPath[MAX_QPATH];
+	Com_sprintf( glaPath, sizeof( glaPath ), "%s/%s.gla", strippedName, COM_SkipPath( strippedName ) );
+	const qboolean isOverride = GLA_GetOverrideName( glaPath, overrideKey, sizeof( overrideKey ) );
+	if ( isOverride )
+	{
+		Q_strncpyz( glaPath, GLA_HUMANOID_PATH, sizeof( glaPath ) );
+	}
+	else
+	{
+		Com_sprintf( glaPath, sizeof( glaPath ), "%s.gla", animCFG );
+	}
+
 	// Load and parse animations.cfg file
-	Com_sprintf( afilename, sizeof( afilename ), "%s/animation.cfg", strippedName );
+	Com_sprintf( afilename, sizeof( afilename ), "%s/animation.cfg", isOverride ? GLA_HUMANOID_DIR : strippedName );
 	if ( !UI_ParseAnimationFile( afilename ) )
 	{
 		*animFileIndex = -1;
 		return qfalse;
 	}
+	UI_ParseMergedAnimations( glaPath, isOverride ? overrideKey : NULL );
 
 	//set index and increment
 	*animFileIndex = ui_numKnownAnimFileSets++;
@@ -3806,8 +4236,12 @@ static void UI_BuildPlayerModel_List(qboolean inGameLoad)
 				filelen = strlen(fileptr);
 				COM_StripExtension(fileptr, skinname, sizeof(skinname));
 
-				if (IsImageFile(dirptr, skinname, (qboolean)(building != 0)))
-				{ //if it exists
+				// The icon is optional: the skin list writes the name when it is missing.
+				if (building)
+				{
+					IsImageFile(dirptr, skinname, qtrue);
+				}
+				{
 					if (Q_stricmpn(skinname, "head_", 5) == 0)
 					{
 						if (species->SkinHeadCount >= species->SkinHeadMax)
@@ -3914,8 +4348,11 @@ static void UI_BuildPlayerModel_List(qboolean inGameLoad)
 				filelen = strlen(fileptr);
 				COM_StripExtension(fileptr, skinname, sizeof(skinname));
 
-				if (IsImageFile(dirptr, skinname, (qboolean)(building != 0)))
-				{ //if it exists
+				if (building)
+				{
+					IsImageFile(dirptr, skinname, qtrue);
+				}
+				{
 					if (Q_stricmpn(skinname, "model_", 6) == 0)
 					{
 						if (species->SkinCount >= species->SkinMax)
@@ -3955,6 +4392,15 @@ UI_Shutdown
 void UI_Shutdown( void )
 {
 	UI_FreeAllSpecies();
+}
+
+// Menu items set a latched cvar for the next restart (Cvar_SetLatched), so they show the latched value.
+static float UI_Cvar_PendingValue( const char *var_name )
+{
+	char buf[MAX_CVAR_VALUE_STRING];
+
+	Cvar_PendingStringBuffer( var_name, buf, sizeof( buf ) );
+	return atof( buf );
 }
 
 /*
@@ -4015,11 +4461,12 @@ void _UI_Init( qboolean inGameLoad )
 	uiInfo.uiDC.feederSelection		= &UI_FeederSelection;
 	uiInfo.uiDC.fillRect			= &UI_FillRect;
 	uiInfo.uiDC.getBindingBuf		= &Key_GetBindingBuf;
-	uiInfo.uiDC.getCVarString		= Cvar_VariableStringBuffer;
-	uiInfo.uiDC.getCVarValue		= trap_Cvar_VariableValue;
+	uiInfo.uiDC.getCVarString		= Cvar_PendingStringBuffer;
+	uiInfo.uiDC.getCVarValue		= UI_Cvar_PendingValue;
 	uiInfo.uiDC.getOverstrikeMode	= &trap_Key_GetOverstrikeMode;
 	uiInfo.uiDC.getValue			= &UI_GetValue;
 	uiInfo.uiDC.keynumToStringBuf	= &Key_KeynumToStringBuf;
+	uiInfo.uiDC.keyCombo			= &Key_ComboKeynum;
 	uiInfo.uiDC.modelBounds			= &trap_R_ModelBounds;
 	uiInfo.uiDC.ownerDrawVisible	= &UI_OwnerDrawVisible;
 	uiInfo.uiDC.ownerDrawWidth		= &UI_OwnerDrawWidth;
@@ -4034,7 +4481,7 @@ void _UI_Init( qboolean inGameLoad )
 	uiInfo.uiDC.deferScript			= &UI_DeferMenuScript;
 	uiInfo.uiDC.setBinding			= &trap_Key_SetBinding;
 	uiInfo.uiDC.setColor			= &UI_SetColor;
-	uiInfo.uiDC.setCVar				= Cvar_Set;
+	uiInfo.uiDC.setCVar				= Cvar_SetLatched;
 	uiInfo.uiDC.setOverstrikeMode	= &trap_Key_SetOverstrikeMode;
 	uiInfo.uiDC.startLocalSound		= &trap_S_StartLocalSound;
 	uiInfo.uiDC.stopCinematic		= &UI_StopCinematic;
@@ -4955,7 +5402,8 @@ _UI_DrawSides
 */
 void _UI_DrawSides(float x, float y, float w, float h, float size)
 {
-	size *= uiInfo.uiDC.xscale;
+	// size is in virtual units vertically; the 640x480 space is stretched, so scale it for the same thickness in pixels
+	size *= uiInfo.uiDC.yscale / uiInfo.uiDC.xscale;
 	trap_R_DrawStretchPic( x, y, size, h, 0, 0, 0, 0, uiInfo.uiDC.whiteShader );
 	trap_R_DrawStretchPic( x + w - size, y, size, h, 0, 0, 0, 0, uiInfo.uiDC.whiteShader );
 }
@@ -4967,7 +5415,6 @@ _UI_DrawTopBottom
 */
 void _UI_DrawTopBottom(float x, float y, float w, float h, float size)
 {
-	size *= uiInfo.uiDC.yscale;
 	trap_R_DrawStretchPic( x, y, w, size, 0, 0, 0, 0, uiInfo.uiDC.whiteShader );
 	trap_R_DrawStretchPic( x, y + h - size, w, size, 0, 0, 0, 0, uiInfo.uiDC.whiteShader );
 }
@@ -5186,34 +5633,39 @@ static void UI_OwnerDraw(float x, float y, float w, float h, float text_x, float
 			ui.Draw_DataPad(DP_LOADOUT);
 			break;
 
-		case UI_NPC_WEAPON_LABEL:
-			ui.Draw_DataPad(DP_NPC_WEAPON_LABEL);
+		// The icon of the weapon of a slot of the character menu, drawn by the cgame (it has the weapon data).
+		case UI_NPC_WEAPON_SLOT:
+			VM_Call(CG_DRAW_WEAPON_SLOT, (intptr_t)7, (intptr_t)x, (intptr_t)y, (intptr_t)w, (intptr_t)h);
 			UI_UpdateSaberVisibility();
 			break;
 
-		case UI_PLAYER_WEAPON_LABEL_1:
-			ui.Draw_DataPad(DP_PLAYER_WEAPON_LABEL_1);
-			UI_UpdateSaberVisibility();
+		case UI_PLAYER_WEAPON_SLOT_1:
+		case UI_PLAYER_WEAPON_SLOT_2:
+		case UI_PLAYER_WEAPON_SLOT_3:
+		case UI_PLAYER_WEAPON_SLOT_4:
+		case UI_PLAYER_WEAPON_SLOT_5:
+		case UI_PLAYER_WEAPON_SLOT_6:
+			VM_Call(CG_DRAW_WEAPON_SLOT, (intptr_t)(ownerDraw - UI_PLAYER_WEAPON_SLOT_1 + 1), (intptr_t)x, (intptr_t)y, (intptr_t)w, (intptr_t)h);
+			if (ownerDraw == UI_PLAYER_WEAPON_SLOT_1)
+			{
+				UI_UpdateSaberVisibility();
+			}
 			break;
 
-		case UI_PLAYER_WEAPON_LABEL_2:
-			ui.Draw_DataPad(DP_PLAYER_WEAPON_LABEL_2);
+		case UI_DATAPAD_CHARACTERS:
+			ui.Draw_DataPad(DP_CHARACTERS);
 			break;
 
-		case UI_PLAYER_WEAPON_LABEL_3:
-			ui.Draw_DataPad(DP_PLAYER_WEAPON_LABEL_3);
+		case UI_LIGHTEDIT_SWATCH:
+			UI_LightEdit_DrawSwatch(x, y, w, h);
 			break;
 
-		case UI_PLAYER_WEAPON_LABEL_4:
-			ui.Draw_DataPad(DP_PLAYER_WEAPON_LABEL_4);
+		case UI_LIGHTEDIT_STATS:
+			UI_LightEdit_DrawStats(x, y, scale, color, iFontIndex);
 			break;
 
-		case UI_PLAYER_WEAPON_LABEL_6:
-			ui.Draw_DataPad(DP_PLAYER_WEAPON_LABEL_6);
-			break;
-
-		case UI_PLAYER_WEAPON_LABEL_5:
-			ui.Draw_DataPad(DP_PLAYER_WEAPON_LABEL_5);
+		case UI_LIGHTEDIT_SKY:
+			UI_LightEdit_DrawSky(x, y, scale, color, iFontIndex);
 			break;
 
 		case UI_ALLMAPS_SELECTION://saved game thumbnail
@@ -5597,6 +6049,20 @@ you to discard your changes if you did something you didnt want
 */
 void UI_UpdateVideoSetup ( void )
 {
+	// Window mode: 0 windowed, 1 borderless window, 2 full screen.
+	const int windowMode = Cvar_VariableIntegerValue( "ui_r_windowmode" );
+	Cvar_Set ( "ui_r_fullscreen", windowMode == 2 ? "1" : "0" );
+	Cvar_Set ( "r_noborder", windowMode == 1 ? "1" : "0" );
+
+	// rd-vulkan takes the anisotropy level from r_ext_max_anisotropy. The other renderers
+	// take it from r_ext_texture_filter_anisotropic, which the menu sets.
+	char aniso[MAX_CVAR_VALUE_STRING];
+	Cvar_PendingStringBuffer( "r_ext_texture_filter_anisotropic", aniso, sizeof( aniso ) );
+	if ( atof( aniso ) >= 1.0f )
+	{
+		Cvar_Set ( "r_ext_max_anisotropy", va( "%d", Com_Clampi( 1, 16, (int)( atof( aniso ) + 0.5f ) ) ) );
+	}
+
 	Cvar_Set ( "r_mode", Cvar_VariableString ( "ui_r_mode" ) );
 	Cvar_Set ( "r_fullscreen", Cvar_VariableString ( "ui_r_fullscreen" ) );
 	Cvar_Set ( "r_colorbits", Cvar_VariableString ( "ui_r_colorbits" ) );
@@ -5632,6 +6098,7 @@ void UI_GetVideoSetup ( void )
 	// Make sure the cvars are registered as read only.
 	Cvar_Register ( NULL, "ui_r_mode",					"0", CVAR_ROM );
 	Cvar_Register ( NULL, "ui_r_fullscreen",			"0", CVAR_ROM );
+	Cvar_Register ( NULL, "ui_r_windowmode",			"0", CVAR_ROM );
 	Cvar_Register ( NULL, "ui_r_colorbits",				"0", CVAR_ROM );
 	Cvar_Register ( NULL, "ui_r_lodbias",				"0", CVAR_ROM );
 	Cvar_Register ( NULL, "ui_r_picmip",				"0", CVAR_ROM );
@@ -5651,6 +6118,8 @@ void UI_GetVideoSetup ( void )
 	Cvar_Set ( "ui_r_mode", Cvar_VariableString ( "r_mode" ) );
 	Cvar_Set ( "ui_r_colorbits", Cvar_VariableString ( "r_colorbits" ) );
 	Cvar_Set ( "ui_r_fullscreen", Cvar_VariableString ( "r_fullscreen" ) );
+	Cvar_Set ( "ui_r_windowmode", Cvar_VariableIntegerValue( "r_fullscreen" ) ? "2" :
+								  Cvar_VariableIntegerValue( "r_noborder" ) ? "1" : "0" );
 	Cvar_Set ( "ui_r_lodbias", Cvar_VariableString ( "r_lodbias" ) );
 	Cvar_Set ( "ui_r_picmip", Cvar_VariableString ( "r_picmip" ) );
 	Cvar_Set ( "ui_r_texturebits", Cvar_VariableString ( "r_texturebits" ) );
@@ -5738,6 +6207,9 @@ static void UI_UpdateCharacterCvars(void)
 static void UI_UpdateNPCCvars()
 {
 	Cvar_Set("g_NPCtype", Cvar_VariableString("ui_npc_type"));
+	// Character variant of the NPC: its random parts (.cha) are picked at the spawn.
+	Cvar_Set("g_NPCcharKey", Cvar_VariableString("g_charKey"));
+	Cvar_Set("g_NPCvariant", Cvar_VariableString("ui_variant_code"));
 	Cvar_Set("g_NPCmodel", Cvar_VariableString("ui_char_model"));
 	Cvar_Set("g_NPChead", Cvar_VariableString("ui_char_skin_head"));
 	Cvar_Set("g_NPCtorso", Cvar_VariableString("ui_char_skin_torso"));
@@ -8554,14 +9026,14 @@ static void UI_CharacterDefaultSkin(const char* otherSkin)
 
 	auto ShowCustomizationUI = [&](bool hasCustomParts)
 		{
-			Menu_ShowItemByName(menu, "heads", hasCustomParts ? qtrue : qfalse);
-			Menu_ShowItemByName(menu, "torso", hasCustomParts ? qtrue : qfalse);
-			Menu_ShowItemByName(menu, "lower", hasCustomParts ? qtrue : qfalse);
-			Menu_ShowItemByName(menu, "Customization", hasCustomParts ? qtrue : qfalse);
-			Menu_ShowItemByName(menu, "Presets", hasCustomParts ? qtrue : qfalse);
-			Menu_ShowItemByName(menu, "SkinTitle", hasCustomParts ? qfalse : qtrue);
-			Menu_ShowItemByName(menu, "SkinList", hasCustomParts ? qfalse : qtrue);
-			Menu_ShowItemByName(menu, "Skins", qfalse);
+			if (hasCustomParts)
+			{
+				UI_DefaultCharacterColor();
+			}
+			Menu_ShowItemByName(menu, "skinTabCustom", qfalse);
+			Menu_ShowItemByName(menu, "skinTabPresets", hasCustomParts ? qtrue : qfalse);
+			Menu_ShowItemByName(menu, "skinTabPresetsOnly", hasCustomParts ? qfalse : qtrue);
+			Menu_ShowItemByName(menu, "skinList", qtrue);
 		};
 
 	// Parse head|torso|lower
@@ -9057,14 +9529,141 @@ void ReadSaveDirectory (void)
 
 }
 
+// Write the character cvars (powers, weapons, sabers, colors, stats) as "<cvar> <value>" lines.
+static void UI_WriteCharacterCvars(fileHandle_t file)
+{
+	// list of UI power cvars to write
+	const char* cvars[] =
+	{
+		"ui_jump_level",
+		"ui_push_level",
+		"ui_pull_level",
+		"ui_speed_level",
+		"ui_sense_level",
+
+		"ui_absorb_level",
+		"ui_heal_level",
+		"ui_protect_level",
+		"ui_mindtrick_level",
+		"ui_stasis_level",
+		"ui_grasp_level",
+		"ui_blast_level",
+
+		"ui_grip_level",
+		"ui_lightning_level",
+		"ui_drain_level",
+		"ui_rage_level",
+		"ui_destruction_level",
+		"ui_fear_level",
+		"ui_strike_level",
+
+		"ui_saboff_level",
+		"ui_sabdef_level",
+		"ui_sabthrow_level",
+
+
+		"ui_npc_weapon",
+		"ui_weaponOne",
+		"ui_weaponTwo",
+		"ui_weaponThree",
+		"ui_weaponFour",
+		"ui_weaponFive",
+		"ui_weaponSix",
+
+		"ui_saber",
+		"ui_saber_color",
+		"ui_saber2",
+		"ui_saber2_color",
+
+		"ui_lightning_color",
+		"ui_char_color_red",
+		"ui_char_color_green",
+		"ui_char_color_blue",
+
+		"ui_health",
+		"ui_force",
+		"ui_team",
+		"ui_npc_type",
+		"ui_saber_styles",
+	};
+
+	const size_t count = sizeof(cvars) / sizeof(cvars[0]);
+
+	for (size_t i = 0; i < count; ++i)
+	{
+		const char* value = Cvar_VariableString(cvars[i]);
+
+		// Don't write secondary saber cvars if they are empty (or set to the placeholder "empty")
+		if ((Q_stricmp(cvars[i], "ui_saber2") == 0 || Q_stricmp(cvars[i], "ui_saber2_color") == 0))
+		{
+			if (!value || value[0] == '\0' || !Q_stricmp(value, "empty"))
+			{
+				if ((Q_stricmp(cvars[i], "ui_saber2") == 0))
+				{
+					value = "empty";
+					Cvar_Set("ui_saber2_color", "blue");
+				}
+				else
+				{
+					value = "blue";
+				}
+			}
+		}
+
+		if (Q_stricmp(cvars[i], "ui_saber_color") == 0)
+		{
+			if (TranslateSaberColor(Cvar_VariableString("ui_saber_color")) >= SABER_RGB)
+			{
+				char rgbColor[8];
+
+				if (Cvar_VariableIntegerValue("ui_rgb_saber_red") < 0)
+					Cvar_Set("ui_rgb_saber_red", 0);
+				if (Cvar_VariableIntegerValue("ui_rgb_saber_green") < 0)
+					Cvar_Set("ui_rgb_saber_green", 0);
+				if (Cvar_VariableIntegerValue("ui_rgb_saber_blue") < 0)
+					Cvar_Set("ui_rgb_saber_blue", 0);
+
+				Com_sprintf(rgbColor, 8, "x%02x%02x%02x", Cvar_VariableIntegerValue("ui_rgb_saber_red"),
+					(Cvar_VariableIntegerValue("ui_rgb_saber_green")),
+					(Cvar_VariableIntegerValue("ui_rgb_saber_blue")));
+
+				value = rgbColor;
+			}
+		}
+
+		if (Q_stricmp(cvars[i], "ui_saber2_color") == 0)
+		{
+			if (TranslateSaberColor(Cvar_VariableString("ui_saber2_color")) >= SABER_RGB)
+			{
+				char rgbColor[8];
+
+				if (Cvar_VariableIntegerValue("ui_rgb_saber2_red") < 0)
+					Cvar_Set("ui_rgb_saber2_red", 0);
+				if (Cvar_VariableIntegerValue("ui_rgb_saber2_green") < 0)
+					Cvar_Set("ui_rgb_saber2_green", 0);
+				if (Cvar_VariableIntegerValue("ui_rgb_saber2_blue") < 0)
+					Cvar_Set("ui_rgb_saber2_blue", 0);
+
+				Com_sprintf(rgbColor, 8, "x%02x%02x%02x", Cvar_VariableIntegerValue("ui_rgb_saber2_red"),
+					(Cvar_VariableIntegerValue("ui_rgb_saber2_green")),
+					(Cvar_VariableIntegerValue("ui_rgb_saber2_blue")));
+
+				value = rgbColor;
+			}
+		}
+
+
+		// write as: <cvar> <value>\n
+		FS_Printf(file, "%s %s\n", cvars[i], value);
+	}
+}
+
 static void UI_SaveCharacterPowers(void)
 {
 	static char characterName[MAX_QPATH];
-	char faction[64];
 	char code[64];
 	char variant[64];
 
-	strncpy(faction, UI_Cvar_VariableString("ui_char_faction"), sizeof(faction));
 	strncpy(code, UI_Cvar_VariableString("g_charKey"), sizeof(code));
 	strncpy(variant, UI_Cvar_VariableString("ui_variant_code"), sizeof(variant));
 
@@ -9073,141 +9672,17 @@ static void UI_SaveCharacterPowers(void)
 	{
 		// NOTE: always saves in working dir if using one...
 		if (Cvar_VariableIntegerValue("ui_npc_menu"))
-			Com_sprintf(characterName, MAX_QPATH, "ext_data/characters/%s_%s_%s_NPC.cfg", faction, code, variant);
+			Com_sprintf(characterName, MAX_QPATH, "ext_data/characters/%s_%s_NPC.cfg", code, variant);
 		else
-			Com_sprintf(characterName, MAX_QPATH, "ext_data/characters/%s_%s_%s.cfg", faction, code, variant);
+			Com_sprintf(characterName, MAX_QPATH, "ext_data/characters/%s_%s.cfg", code, variant);
 		characterfile = FS_FOpenFileWrite(characterName);
 	}
 
 	if (characterfile)
 	{
-		// list of UI power cvars to write
-		const char* cvars[] =
-		{
-			"ui_jump_level",
-			"ui_push_level",
-			"ui_pull_level",
-			"ui_speed_level",
-			"ui_sense_level",
-
-			"ui_absorb_level",
-			"ui_heal_level",
-			"ui_protect_level",
-			"ui_mindtrick_level",
-			"ui_stasis_level",
-			"ui_grasp_level",
-			"ui_blast_level",
-
-			"ui_grip_level",
-			"ui_lightning_level",
-			"ui_drain_level",
-			"ui_rage_level",
-			"ui_destruction_level",
-			"ui_fear_level",
-			"ui_strike_level",
-
-			"ui_saboff_level",
-			"ui_sabdef_level",
-			"ui_sabthrow_level",
-
-
-			"ui_npc_weapon",
-			"ui_weaponOne",
-			"ui_weaponTwo",
-			"ui_weaponThree",
-			"ui_weaponFour",
-			"ui_weaponFive",
-			"ui_weaponSix",
-
-			"ui_saber",
-			"ui_saber_color",
-			"ui_saber2",
-			"ui_saber2_color",
-
-			"ui_lightning_color",
-			"ui_char_color_red",
-			"ui_char_color_green",
-			"ui_char_color_blue",
-
-			"ui_health",
-			"ui_force",
-			"ui_team",
-			"ui_npc_type",
-			"ui_saber_styles",
-		};
-
-		const size_t count = sizeof(cvars) / sizeof(cvars[0]);
-
 		// write header so file is easier to read
 		FS_Printf(characterfile, "// character abilities saved by UI\n");
-
-		for (size_t i = 0; i < count; ++i)
-		{
-			const char* value = Cvar_VariableString(cvars[i]);
-
-			// Don't write secondary saber cvars if they are empty (or set to the placeholder "empty")
-			if ((Q_stricmp(cvars[i], "ui_saber2") == 0 || Q_stricmp(cvars[i], "ui_saber2_color") == 0))
-			{
-				if (!value || value[0] == '\0' || !Q_stricmp(value, "empty"))
-				{
-					if ((Q_stricmp(cvars[i], "ui_saber2") == 0))
-					{
-						value = "empty";
-						Cvar_Set("ui_saber2_color", "blue");
-					}
-					else
-					{
-						value = "blue";
-					}
-				}
-			}
-
-			if (Q_stricmp(cvars[i], "ui_saber_color") == 0)
-			{
-				if (TranslateSaberColor(Cvar_VariableString("ui_saber_color")) >= SABER_RGB)
-				{
-					char rgbColor[8];
-
-					if (Cvar_VariableIntegerValue("ui_rgb_saber_red") < 0)
-						Cvar_Set("ui_rgb_saber_red", 0);
-					if (Cvar_VariableIntegerValue("ui_rgb_saber_green") < 0)
-						Cvar_Set("ui_rgb_saber_green", 0);
-					if (Cvar_VariableIntegerValue("ui_rgb_saber_blue") < 0)
-						Cvar_Set("ui_rgb_saber_blue", 0);
-
-					Com_sprintf(rgbColor, 8, "x%02x%02x%02x", Cvar_VariableIntegerValue("ui_rgb_saber_red"),
-						(Cvar_VariableIntegerValue("ui_rgb_saber_green")),
-						(Cvar_VariableIntegerValue("ui_rgb_saber_blue")));
-
-					value = rgbColor;
-				}
-			}
-
-			if (Q_stricmp(cvars[i], "ui_saber2_color") == 0)
-			{
-				if (TranslateSaberColor(Cvar_VariableString("ui_saber2_color")) >= SABER_RGB)
-				{
-					char rgbColor[8];
-
-					if (Cvar_VariableIntegerValue("ui_rgb_saber2_red") < 0)
-						Cvar_Set("ui_rgb_saber2_red", 0);
-					if (Cvar_VariableIntegerValue("ui_rgb_saber2_green") < 0)
-						Cvar_Set("ui_rgb_saber2_green", 0);
-					if (Cvar_VariableIntegerValue("ui_rgb_saber2_blue") < 0)
-						Cvar_Set("ui_rgb_saber2_blue", 0);
-
-					Com_sprintf(rgbColor, 8, "x%02x%02x%02x", Cvar_VariableIntegerValue("ui_rgb_saber2_red"),
-						(Cvar_VariableIntegerValue("ui_rgb_saber2_green")),
-						(Cvar_VariableIntegerValue("ui_rgb_saber2_blue")));
-
-					value = rgbColor;
-				}
-			}
-
-
-			// write as: <cvar> <value>\n
-			FS_Printf(characterfile, "%s %s\n", cvars[i], value);
-		}
+		UI_WriteCharacterCvars(characterfile);
 	}
 
 #ifdef DEBUG
@@ -9218,11 +9693,9 @@ static void UI_SaveCharacterPowers(void)
 
 void Com_FlushCharacterFile()
 {
-	char faction[64];
 	char code[64];
 	char variant[64];
 
-	strncpy(faction, UI_Cvar_VariableString("ui_char_faction"), sizeof(faction));
 	strncpy(code, UI_Cvar_VariableString("g_charKey"), sizeof(code));
 	strncpy(variant, UI_Cvar_VariableString("ui_variant_code"), sizeof(variant));
 	if (!characterfile)
@@ -9237,11 +9710,136 @@ void Com_FlushCharacterFile()
 
 	static	char	flushedCharactername[MAX_QPATH];
 	if (Cvar_VariableIntegerValue("ui_npc_menu"))
-		Com_sprintf(flushedCharactername, MAX_QPATH, "ext_data/characters/%s_%s_%s_NPC.cfg", faction, code, variant);
+		Com_sprintf(flushedCharactername, MAX_QPATH, "ext_data/characters/%s_%s_NPC.cfg", code, variant);
 	else
-		Com_sprintf(flushedCharactername, MAX_QPATH, "ext_data/characters/%s_%s_%s.cfg", faction, code, variant);
+		Com_sprintf(flushedCharactername, MAX_QPATH, "ext_data/characters/%s_%s.cfg", code, variant);
 
 	Com_Printf("saved Character stats to %s\n", flushedCharactername);
+}
+
+// Execute the "<cvar> <value>" lines of a character cfg, then update the hilts and the model.
+// Return qfalse if the file does not exist.
+static qboolean UI_ExecCharacterCfgFile(const char *tryFile)
+{
+	char* buf = NULL;
+	int len = ui.FS_ReadFile(tryFile, (void**)&buf);
+
+	if (len > 0 && buf)
+	{
+		// Convert file contents to std::string
+		std::string content(buf, len);
+		ui.FS_FreeFile(buf);
+		buf = NULL;
+
+		//
+		// Parse file line-by-line and execute commands synchronously
+		//
+		size_t pos = 0;
+		while (pos < content.size())
+		{
+			size_t lineEnd = content.find_first_of("\r\n", pos);
+			std::string line;
+
+			if (lineEnd == std::string::npos)
+			{
+				line = content.substr(pos);
+				pos = content.size();
+			}
+			else
+			{
+				line = content.substr(pos, lineEnd - pos);
+				pos = lineEnd;
+				while (pos < content.size() && (content[pos] == '\r' || content[pos] == '\n'))
+					pos++;
+			}
+
+			// Trim whitespace
+			size_t start = 0;
+			while (start < line.size() && (line[start] == ' ' || line[start] == '\t'))
+				start++;
+
+			size_t end = line.size();
+			while (end > start && (line[end - 1] == ' ' || line[end - 1] == '\t'))
+				end--;
+
+			if (end <= start)
+				continue;
+
+			std::string cmd = line.substr(start, end - start);
+
+			// Skip // comments
+			if (cmd.size() >= 2 && cmd[0] == '/' && cmd[1] == '/')
+				continue;
+
+			// Skip empty/semicolon-only lines
+			bool allWhitespaceOrSemicolon = true;
+			for (char c : cmd)
+			{
+				if (c != ' ' && c != '\t' && c != ';')
+				{
+					allWhitespaceOrSemicolon = false;
+					break;
+				}
+			}
+			if (allWhitespaceOrSemicolon)
+				continue;
+
+			ui.Cmd_ExecuteText(EXEC_NOW, va("%s\n", cmd.c_str()));
+		}
+#ifdef DEBUG
+	Com_Printf("UI_LoadCharacterCfg: executed %s\n", tryFile);
+#endif
+
+		
+
+		//
+		// Update saber/hilt UI
+		//
+		UI_UpdateSaberHilt(qfalse);
+		UI_UpdateSaberHilt(qtrue);
+
+		itemDef_t* item;
+		menuDef_t* menu;
+		modelDef_t* modelPtr;
+		char skin[128];
+
+		uiInfo.movesTitleIndex = 0;
+		uiInfo.movesBaseAnim = "BOTH_STAND1IDLE1";
+
+		menu = Menus_FindByName("IngameSWGLChars");
+
+		if (menu)
+		{
+			item = (itemDef_s*)Menu_FindItemByName((menuDef_t*)menu, "character");
+			if (item)
+			{
+				modelPtr = (modelDef_t*)item->typeData;
+				if (modelPtr)
+				{
+					ItemParse_model_g2anim_go(item, uiInfo.movesBaseAnim);
+					uiInfo.moveAnimTime = 2000;
+
+					Com_sprintf(skin, sizeof(skin), "models/players/%s/|%s|%s|%s",
+						Cvar_VariableString("ui_char_model"),
+						Cvar_VariableString("ui_char_skin_head"),
+						Cvar_VariableString("ui_char_skin_torso"),
+						Cvar_VariableString("ui_char_skin_legs")
+					);
+
+					UI_SaberAttachToChar(item);
+				}
+			}
+		}
+
+		return qtrue;
+	}
+
+	if (buf)
+	{
+		ui.FS_FreeFile(buf);
+		buf = NULL;
+	}
+	return qfalse;
 }
 
 void UI_LoadCharacterCfg(void)
@@ -9250,11 +9848,9 @@ void UI_LoadCharacterCfg(void)
 	char* buf = NULL;
 	int len = 0;
 
-	char faction[64];
 	char code[64];
 	char variant[64];
 
-	Q_strncpyz(faction, UI_Cvar_VariableString("ui_char_faction"), sizeof(faction));
 	Q_strncpyz(code, UI_Cvar_VariableString("g_charKey"), sizeof(code));
 	Q_strncpyz(variant, UI_Cvar_VariableString("ui_variant_code"), sizeof(variant));
 
@@ -9264,20 +9860,20 @@ void UI_LoadCharacterCfg(void)
 	static char file1[MAX_QPATH];
 	static char file2[MAX_QPATH];
 
-	// 1. faction_code_variant.cfg
+	// 1. code_variant.cfg
 	if (Cvar_VariableIntegerValue("ui_npc_menu"))
 		Com_sprintf(file1, sizeof(file1),
-			"ext_data/characters/%s_%s_%s_NPC.cfg",
-			faction, code, variant);
+			"ext_data/characters/%s_%s_NPC.cfg",
+			code, variant);
 	else
 		Com_sprintf(file1, sizeof(file1),
-			"ext_data/characters/%s_%s_%s.cfg",
-			faction, code, variant);
+			"ext_data/characters/%s_%s.cfg",
+			code, variant);
 
-	// 2. faction_code_variant_default.cfg
+	// 2. code_variant_default.cfg
 	Com_sprintf(file2, sizeof(file2),
-		"ext_data/characters/%s_%s_%s_def.cfg",
-		faction, code, variant);
+		"ext_data/characters_conf/%s_%s_def.cfg",
+		code, variant);
 
 	const char* candidates[3] = {
 		file1,
@@ -9285,135 +9881,16 @@ void UI_LoadCharacterCfg(void)
 		"ext_data/characters/default.cfg"
 	};
 
-	//
-	// Try each file in priority order
-	//
 	for (int i = 0; i < 3; i++)
 	{
-		const char* tryFile = candidates[i];
-
-		buf = NULL;
-		len = ui.FS_ReadFile(tryFile, (void**)&buf);
-
-		if (len > 0 && buf)
+		if (UI_ExecCharacterCfgFile(candidates[i]))
 		{
-			// Convert file contents to std::string
-			std::string content(buf, len);
-			ui.FS_FreeFile(buf);
-			buf = NULL;
-
-			//
-			// Parse file line-by-line and execute commands synchronously
-			//
-			size_t pos = 0;
-			while (pos < content.size())
-			{
-				size_t lineEnd = content.find_first_of("\r\n", pos);
-				std::string line;
-
-				if (lineEnd == std::string::npos)
-				{
-					line = content.substr(pos);
-					pos = content.size();
-				}
-				else
-				{
-					line = content.substr(pos, lineEnd - pos);
-					pos = lineEnd;
-					while (pos < content.size() && (content[pos] == '\r' || content[pos] == '\n'))
-						pos++;
-				}
-
-				// Trim whitespace
-				size_t start = 0;
-				while (start < line.size() && (line[start] == ' ' || line[start] == '\t'))
-					start++;
-
-				size_t end = line.size();
-				while (end > start && (line[end - 1] == ' ' || line[end - 1] == '\t'))
-					end--;
-
-				if (end <= start)
-					continue;
-
-				std::string cmd = line.substr(start, end - start);
-
-				// Skip // comments
-				if (cmd.size() >= 2 && cmd[0] == '/' && cmd[1] == '/')
-					continue;
-
-				// Skip empty/semicolon-only lines
-				bool allWhitespaceOrSemicolon = true;
-				for (char c : cmd)
-				{
-					if (c != ' ' && c != '\t' && c != ';')
-					{
-						allWhitespaceOrSemicolon = false;
-						break;
-					}
-				}
-				if (allWhitespaceOrSemicolon)
-					continue;
-
-				ui.Cmd_ExecuteText(EXEC_NOW, va("%s\n", cmd.c_str()));
-			}
-#ifdef DEBUG
-		Com_Printf("UI_LoadCharacterCfg: executed %s\n", tryFile);
-#endif
-
-			
-
-			//
-			// Update saber/hilt UI
-			//
-			UI_UpdateSaberHilt(qfalse);
-			UI_UpdateSaberHilt(qtrue);
-
-			itemDef_t* item;
-			menuDef_t* menu;
-			modelDef_t* modelPtr;
-			char skin[128];
-
-			uiInfo.movesTitleIndex = 0;
-			uiInfo.movesBaseAnim = "BOTH_STAND1IDLE1";
-
-			menu = Menus_FindByName("IngameSWGLChars");
-
-			if (menu)
-			{
-				item = (itemDef_s*)Menu_FindItemByName((menuDef_t*)menu, "character");
-				if (item)
-				{
-					modelPtr = (modelDef_t*)item->typeData;
-					if (modelPtr)
-					{
-						ItemParse_model_g2anim_go(item, uiInfo.movesBaseAnim);
-						uiInfo.moveAnimTime = 2000;
-
-						Com_sprintf(skin, sizeof(skin), "models/players/%s/|%s|%s|%s",
-							Cvar_VariableString("ui_char_model"),
-							Cvar_VariableString("ui_char_skin_head"),
-							Cvar_VariableString("ui_char_skin_torso"),
-							Cvar_VariableString("ui_char_skin_legs")
-						);
-
-						UI_SaberAttachToChar(item);
-					}
-				}
-			}
-
 			return;
-		}
-
-		if (buf)
-		{
-			ui.FS_FreeFile(buf);
-			buf = NULL;
 		}
 	}
 
-	Com_Printf("UI_LoadCharacterCfg: no character cfg found for faction '%s' code '%s'\n",
-		faction, code);
+	Com_Printf("UI_LoadCharacterCfg: no character cfg found for code '%s' variant '%s'\n",
+		code, variant);
 }
 
 void UI_LoadCharacterDefaultCfg(void)
@@ -9422,11 +9899,9 @@ void UI_LoadCharacterDefaultCfg(void)
 	char* buf = NULL;
 	int len = 0;
 
-	char faction[64];
 	char code[64];
 	char variant[64];
 
-	Q_strncpyz(faction, UI_Cvar_VariableString("ui_char_faction"), sizeof(faction));
 	Q_strncpyz(code, UI_Cvar_VariableString("g_charKey"), sizeof(code));
 	Q_strncpyz(variant, UI_Cvar_VariableString("ui_variant_code"), sizeof(variant));
 
@@ -9435,143 +9910,338 @@ void UI_LoadCharacterDefaultCfg(void)
 	//
 	static char file[MAX_QPATH];
 
-	// 2. faction_code_variant_default.cfg
+	// 2. code_variant_default.cfg
 	Com_sprintf(file, sizeof(file),
-		"ext_data/characters/%s_%s_%s_def.cfg",
-		faction, code, variant);
+		"ext_data/characters_conf/%s_%s_def.cfg",
+		code, variant);
 
 	const char* candidates[2] = {
 		file,
 		"ext_data/characters/default.cfg"
 	};
 
-	//
-	// Try each file in priority order
-	//
 	for (int i = 0; i < 2; i++)
 	{
-		const char* tryFile = candidates[i];
-
-		buf = NULL;
-		len = ui.FS_ReadFile(tryFile, (void**)&buf);
-
-		if (len > 0 && buf)
+		if (UI_ExecCharacterCfgFile(candidates[i]))
 		{
-			// Convert file contents to std::string
-			std::string content(buf, len);
-			ui.FS_FreeFile(buf);
-			buf = NULL;
-
-			//
-			// Parse file line-by-line and execute commands synchronously
-			//
-			size_t pos = 0;
-			while (pos < content.size())
-			{
-				size_t lineEnd = content.find_first_of("\r\n", pos);
-				std::string line;
-
-				if (lineEnd == std::string::npos)
-				{
-					line = content.substr(pos);
-					pos = content.size();
-				}
-				else
-				{
-					line = content.substr(pos, lineEnd - pos);
-					pos = lineEnd;
-					while (pos < content.size() && (content[pos] == '\r' || content[pos] == '\n'))
-						pos++;
-				}
-
-				// Trim whitespace
-				size_t start = 0;
-				while (start < line.size() && (line[start] == ' ' || line[start] == '\t'))
-					start++;
-
-				size_t end = line.size();
-				while (end > start && (line[end - 1] == ' ' || line[end - 1] == '\t'))
-					end--;
-
-				if (end <= start)
-					continue;
-
-				std::string cmd = line.substr(start, end - start);
-
-				// Skip // comments
-				if (cmd.size() >= 2 && cmd[0] == '/' && cmd[1] == '/')
-					continue;
-
-				// Skip empty/semicolon-only lines
-				bool allWhitespaceOrSemicolon = true;
-				for (char c : cmd)
-				{
-					if (c != ' ' && c != '\t' && c != ';')
-					{
-						allWhitespaceOrSemicolon = false;
-						break;
-					}
-				}
-				if (allWhitespaceOrSemicolon)
-					continue;
-
-				ui.Cmd_ExecuteText(EXEC_NOW, va("%s\n", cmd.c_str()));
-			}
-
-#ifdef DEBUG
-			Com_Printf("UI_LoadCharacterCfg: executed %s\n", tryFile);
-#endif 			
-
-			//
-			// Update saber/hilt UI
-			//
-			UI_UpdateSaberHilt(qfalse);
-			UI_UpdateSaberHilt(qtrue);
-
-			itemDef_t* item;
-			menuDef_t* menu;
-			modelDef_t* modelPtr;
-			char skin[128];
-
-			uiInfo.movesTitleIndex = 0;
-			uiInfo.movesBaseAnim = "BOTH_STAND1IDLE1";
-
-			menu = Menus_FindByName("IngameSWGLChars");
-
-			if (menu)
-			{
-				item = (itemDef_s*)Menu_FindItemByName((menuDef_t*)menu, "character");
-				if (item)
-				{
-					modelPtr = (modelDef_t*)item->typeData;
-					if (modelPtr)
-					{
-						ItemParse_model_g2anim_go(item, uiInfo.movesBaseAnim);
-						uiInfo.moveAnimTime = 2000;
-
-						Com_sprintf(skin, sizeof(skin), "models/players/%s/|%s|%s|%s",
-							Cvar_VariableString("ui_char_model"),
-							Cvar_VariableString("ui_char_skin_head"),
-							Cvar_VariableString("ui_char_skin_torso"),
-							Cvar_VariableString("ui_char_skin_legs")
-						);
-
-						UI_SaberAttachToChar(item);
-					}
-				}
-			}
-
 			UI_SaveCharacterPowers();
 			return;
 		}
+	}
 
-		if (buf)
+	Com_Printf("UI_LoadCharacterCfg: no character cfg found for code '%s' variant '%s'\n",
+		code, variant);
+}
+
+/*
+=================
+Character configurations (character menu, "Configurations" box)
+
+The configurations belong to a variant. The list holds "default configuration" first, then the files
+characters_configs/<g_charKey>_<ui_variant_code>/<name>.cfg. Save writes the character cvars to
+characters_configs/<g_charKey>_<ui_variant_code>/<ui_char_config_name>.cfg (it
+overwrites a file with the same name). An error goes to the cvar ui_char_config_error as
+"<serial>|<message>": the cgame ownerdraw shows it for 3 seconds.
+=================
+*/
+#define MAX_CHAR_CONFIGS		64
+#define CHAR_CONFIG_DEFAULT		"default configuration"
+#define CHAR_CONFIG_NAME_LEN	48
+
+
+// Path of a configuration of the current variant; an empty name gives the folder.
+static const char *UI_CharConfigPath(const char *name)
+{
+	// Not UI_Cvar_VariableString: it has one static buffer, so the second call overwrites the first.
+	const char *folder = va("characters_configs/%s_%s", Cvar_VariableString("g_charKey"), Cvar_VariableString("ui_variant_code"));
+	return name[0] ? va("%s/%s.cfg", folder, name) : folder;
+}
+
+static void UI_CharConfigError(const char *message)
+{
+	static int serial;
+	Cvar_Set("ui_char_config_error", va("%d|%s", ++serial, message));
+}
+
+// Select a line of the list, and show it in the list box of the menu.
+static void UI_SelectCharConfig(int index)
+{
+	uiCharConfigSelected = index;
+	Cvar_Set("ui_char_config_name", index > 0 ? uiCharConfigs[index] : "");
+
+	menuDef_t *menu = Menus_FindByName("IngameSWGLChars");
+	itemDef_t *item = menu ? (itemDef_t *)Menu_FindItemByName(menu, "charConfigList") : NULL;
+	if (item)
+	{
+		item->cursorPos = index;
+	}
+}
+
+// Read the list again. Select the configuration "select" if it is in the list, else the default one.
+static void UI_RefreshCharConfigs(const char *select)
+{
+	char list[8192];
+	const int count = ui.FS_GetFileList(UI_CharConfigPath(""), ".cfg", list, sizeof(list));
+	const char *name = list;
+
+	uiCharConfigCount = 0;
+	Q_strncpyz(uiCharConfigs[uiCharConfigCount++], CHAR_CONFIG_DEFAULT, MAX_QPATH);
+	for (int i = 0; i < count && uiCharConfigCount < MAX_CHAR_CONFIGS; i++, name += strlen(name) + 1)
+	{
+		COM_StripExtension(name, uiCharConfigs[uiCharConfigCount++], MAX_QPATH);
+	}
+
+	int selected = 0;
+	for (int i = 0; select && i < uiCharConfigCount; i++)
+	{
+		if (!Q_stricmp(uiCharConfigs[i], select))
 		{
-			ui.FS_FreeFile(buf);
-			buf = NULL;
+			selected = i;
+		}
+	}
+	UI_SelectCharConfig(selected);
+}
+
+/*
+=================
+UI_RefreshAnimOverrides
+
+Lists the animation overrides for FEEDER_ANIM_OVERRIDES: each models/players/<name>/<name>.gla
+that the renderer can append to _humanoid.gla (see mdx_merge.h). Selects the value of ui_animoverride.
+=================
+*/
+static void UI_RefreshAnimOverrides(void)
+{
+	std::vector<byte> baseBuf, weaponsBuf, extraBuf;
+	std::vector<std::string> names;
+
+	const mdxaHeader_t *base = UI_ReadGLAHeader(GLA_HUMANOID_PATH, baseBuf);
+	if (base)
+	{
+		// The override frames come after the frames of _humanoid.gla and _weapons.gla.
+		int numFrames = LittleLong(base->numFrames);
+		const mdxaHeader_t *weapons = UI_ReadGLAHeader(GLA_WEAPONS_PATH, weaponsBuf);
+		if (weapons && GLA_CanMerge(base, numFrames, weapons))
+		{
+			numFrames += LittleLong(weapons->numFrames);
+		}
+
+		std::vector<char> dirList(256 * 1024);
+		const int numDirs = ui.FS_GetFileList("models/players", "/", dirList.data(), (int)dirList.size());
+		const char *dir = dirList.data();
+		for (int i = 0; i < numDirs; i++, dir += strlen(dir) + 1)
+		{
+			char name[MAX_QPATH];
+			Q_strncpyz(name, dir, sizeof(name));
+			const size_t len = strlen(name);
+			if (len && name[len - 1] == '/')
+			{
+				name[len - 1] = 0;
+			}
+			// _humanoid*.gla are skeletons, not overrides.
+			if (!name[0] || name[0] == '.' || !Q_stricmpn(name, "_humanoid", 9))
+			{
+				continue;
+			}
+
+			char path[MAX_QPATH];
+			Com_sprintf(path, sizeof(path), "models/players/%s/%s.gla", name, name);
+			const mdxaHeader_t *extra = UI_ReadGLAHeader(path, extraBuf);
+			if (extra && GLA_CanMerge(base, numFrames, extra))
+			{
+				names.push_back(name);
+			}
+		}
+	}
+	std::sort(names.begin(), names.end(), [](const std::string &a, const std::string &b) { return Q_stricmp(a.c_str(), b.c_str()) < 0; });
+
+	uiAnimOverrides.clear();
+	uiAnimOverrides.push_back("none");
+	uiAnimOverrides.push_back("default");
+	uiAnimOverrides.insert(uiAnimOverrides.end(), names.begin(), names.end());
+
+	int selected = 0;
+	const char *current = UI_Cvar_VariableString("ui_animoverride");
+	for (int i = 0; i < (int)uiAnimOverrides.size(); i++)
+	{
+		if (!Q_stricmp(uiAnimOverrides[i].c_str(), current))
+		{
+			selected = i;
 		}
 	}
 
-	Com_Printf("UI_LoadCharacterCfg: no character cfg found for faction '%s' code '%s'\n",
-		faction, code);
+	menuDef_t *menu = Menus_FindByName("IngameSWGLCheat");
+	itemDef_t *item = menu ? (itemDef_t *)Menu_FindItemByName(menu, "animOverrideList") : NULL;
+	if (item)
+	{
+		item->cursorPos = selected;
+	}
+}
+
+// Selects a line of FEEDER_AMMO: ui_cheats_ammoType gets its ammo type, ui_cheats_ammo the ammo of the player.
+static void UI_SelectAmmoType(int index)
+{
+	if (index < 0 || index >= (int)uiAmmoTypes.size())
+	{
+		return;
+	}
+	const int ammoType = uiAmmoTypes[index];
+	Cvar_Set("ui_cheats_ammoType", va("%d", ammoType));
+
+	const client_t *cl = &svs.clients[0];	// 0 because only ever us as a player
+	if (cl->gentity && cl->gentity->client)
+	{
+		Cvar_Set("ui_cheats_ammo", va("%d", cl->gentity->client->ammo[ammoType]));
+	}
+}
+
+/*
+=================
+UI_RefreshAmmoTypes
+
+Lists the ammo types of the player for FEEDER_AMMO. The ammo data and the names come from the cgame (CG_GET_AMMO_NAME).
+Selects the value of ui_cheats_ammoType.
+=================
+*/
+static void UI_RefreshAmmoTypes(void)
+{
+	uiAmmoTypes.clear();
+	uiAmmoNames.clear();
+	for (int i = 0; i < MAX_AMMO; i++)
+	{
+		char name[128];
+		if (VM_Call(CG_GET_AMMO_NAME, (intptr_t)i, (intptr_t)name, (intptr_t)sizeof(name)) == qtrue)
+		{
+			uiAmmoTypes.push_back(i);
+			uiAmmoNames.push_back(name);
+		}
+	}
+
+	int selected = 0;
+	const int current = Cvar_VariableIntegerValue("ui_cheats_ammoType");
+	for (int i = 0; i < (int)uiAmmoTypes.size(); i++)
+	{
+		if (uiAmmoTypes[i] == current)
+		{
+			selected = i;
+		}
+	}
+	UI_SelectAmmoType(selected);
+
+	menuDef_t *menu = Menus_FindByName("IngameSWGLCheat");
+	itemDef_t *item = menu ? (itemDef_t *)Menu_FindItemByName(menu, "ammoList") : NULL;
+	if (item)
+	{
+		item->cursorPos = selected;
+	}
+}
+
+// A name is valid when it can be a file name on all systems.
+static qboolean UI_ValidCharConfigName(const char *name)
+{
+	const size_t len = strlen(name);
+	if (len >= CHAR_CONFIG_NAME_LEN || name[0] == '.' || name[len - 1] == '.')
+	{
+		return qfalse;
+	}
+	for (const char *c = name; *c; c++)
+	{
+		if ((unsigned char)*c < 32 || strchr("\\/:*?\"<>|", *c))
+		{
+			return qfalse;
+		}
+	}
+	return qtrue;
+}
+
+static void UI_SaveCharConfig(void)
+{
+	char name[MAX_QPATH];
+	Q_strncpyz(name, UI_Cvar_VariableString("ui_char_config_name"), sizeof(name));
+
+	// Remove the spaces at the start and at the end.
+	char *start = name;
+	while (*start == ' ')
+	{
+		start++;
+	}
+	size_t len = strlen(start);
+	while (len > 0 && start[len - 1] == ' ')
+	{
+		start[--len] = '\0';
+	}
+
+	if (!start[0])
+	{
+		UI_CharConfigError("Enter a configuration name");
+		return;
+	}
+	if (!Q_stricmp(start, CHAR_CONFIG_DEFAULT))
+	{
+		UI_CharConfigError("This name is reserved");
+		return;
+	}
+	if (!UI_ValidCharConfigName(start))
+	{
+		UI_CharConfigError("Invalid configuration name");
+		return;
+	}
+
+	fileHandle_t file = FS_FOpenFileWrite(UI_CharConfigPath(start));
+	if (!file)
+	{
+		UI_CharConfigError("Cannot write this configuration");
+		return;
+	}
+	FS_Printf(file, "// character configuration saved by UI\n");
+	UI_WriteCharacterCvars(file);
+	// The skin of the character menu: model skin, or head / torso / lower parts.
+	FS_Printf(file, "ui_char_skin_head %s\n", Cvar_VariableString("ui_char_skin_head"));
+	FS_Printf(file, "ui_char_skin_torso %s\n", Cvar_VariableString("ui_char_skin_torso"));
+	FS_Printf(file, "ui_char_skin_legs %s\n", Cvar_VariableString("ui_char_skin_legs"));
+	FS_FCloseFile(file);
+
+	UI_RefreshCharConfigs(start);
+}
+
+static void UI_LoadCharConfig(void)
+{
+	if (uiCharConfigSelected <= 0 || uiCharConfigSelected >= uiCharConfigCount)
+	{
+		UI_LoadCharacterDefaultCfg();
+		// Default skin of the model, as a character change.
+		UI_RunMenuCommand("uiScript \"char_default_skin\" \"model_default\"");
+	}
+	else
+	{
+		UI_ExecCharacterCfgFile(UI_CharConfigPath(uiCharConfigs[uiCharConfigSelected]));
+	}
+
+	// Same updates as a character change, after its cfg.
+	UI_RunMenuCommand("uiScript char_skin");
+	UI_RunMenuCommand("uiScript getsaberstyle");
+	UI_RunMenuCommand("uiScript rgbsabercvars");
+	UI_RunMenuCommand("uiScript char_weapon");
+}
+
+// The first click asks for a confirmation; a second click on the same configuration in 3 seconds deletes it.
+static void UI_DeleteCharConfig(void)
+{
+	const int confirmTime = 3000;
+
+	if (uiCharConfigSelected <= 0 || uiCharConfigSelected >= uiCharConfigCount)
+	{
+		UI_CharConfigError("The default configuration cannot be deleted");
+		return;
+	}
+	if (uiCharConfigDeleteIndex != uiCharConfigSelected || uiInfo.uiDC.realTime >= uiCharConfigDeleteTime)
+	{
+		uiCharConfigDeleteIndex = uiCharConfigSelected;
+		uiCharConfigDeleteTime = uiInfo.uiDC.realTime + confirmTime;
+		UI_CharConfigError("Click Delete one more time to confirm");
+		return;
+	}
+	uiCharConfigDeleteIndex = -1;
+	FS_DeleteUserGenFile(UI_CharConfigPath(uiCharConfigs[uiCharConfigSelected]));
+	UI_RefreshCharConfigs(NULL);
 }

@@ -248,6 +248,8 @@ void CG_SetGhoul2Info( refEntity_t *ent, centity_t *cent)
 	VectorCopy( cent->currentState.modelScale, ent->modelScale);
 	ent->radius = cent->currentState.radius;
 	VectorCopy (cent->lerpAngles, ent->angles);
+
+	ent->id = cent->currentState.number + 1;
 }
 
 
@@ -465,7 +467,7 @@ const weaponData_t  *wData = NULL;
 				wData = &weaponData[cc->currentState.weapon];
 			}
 
-			if ( !( cc->currentState.eFlags & EF_FIRING ) && !( cc->currentState.eFlags & EF_ALT_FIRING ))
+			if ( !( cc->currentState.eFlags & EF_FIRING ) )
 			{
 				// not animating..pausing was leaving the barrels in a bad state
 				gi.G2API_PauseBoneAnim( &cent->gent->ghoul2[cent->gent->playerModel], "model_root", cg.time );
@@ -510,7 +512,7 @@ const weaponData_t  *wData = NULL;
 
 				cc->muzzleFlashTime = 0;
 
-				if ( cc->currentState.eFlags & EF_FIRING || cc->currentState.eFlags & EF_ALT_FIRING )
+				if ( cc->currentState.eFlags & EF_FIRING )
 				{
 					if ( cent->gent->bounceCount )
 					{//EWeb
@@ -791,7 +793,7 @@ Ghoul2 Insert End
 		theFxScheduler.PlayEffect( "tripMine/glowBit", beamOrg, ent.axis[0] );
 	}
 
-	if ( s1->eFlags & EF_ALT_FIRING )
+	if ( s1->eFlags & EF_LIGHT_CONE )
 	{
 		// hack for the spotlight
 		vec3_t	org, axis[3], dir;
@@ -1095,6 +1097,7 @@ static void CG_Missile( centity_t *cent ) {
 	entityState_t		*s1;
 	const weaponInfo_t	*weapon;
 	const weaponData_t  *wData;
+	SFxTransientScope	transientFx;	// projectile effects play again every frame: keep the short ones out of the pool
 
 	if ( !cent->gent->inuse )
 		return;
@@ -1192,20 +1195,20 @@ static void CG_Missile( centity_t *cent ) {
 	else
 	{
 		// add trails
-		if ( weapon->weaponAttacksInfo[cent->gent->alt_fire].missileTrailFunc )
-			weapon->weaponAttacksInfo[cent->gent->alt_fire].missileTrailFunc( cent, weapon );
+		if ( weapon->weaponAttacksInfo[cent->gent->attack_index].missileTrailFunc )
+			weapon->weaponAttacksInfo[cent->gent->attack_index].missileTrailFunc( cent, weapon );
 
 		// add dynamic light
-		if ( wData->attackData[cent->gent->alt_fire].missileDlight )
-			cgi_R_AddLightToScene(cent->lerpOrigin, wData->attackData[cent->gent->alt_fire].missileDlight,
-				wData->attackData[cent->gent->alt_fire].missileDlightColor[0], wData->attackData[cent->gent->alt_fire].missileDlightColor[1], wData->attackData[cent->gent->alt_fire].missileDlightColor[2] );
+		if ( wData->attackData[cent->gent->attack_index].missileDlight )
+			cgi_R_AddLightToScene(cent->lerpOrigin, wData->attackData[cent->gent->attack_index].missileDlight,
+				wData->attackData[cent->gent->attack_index].missileDlightColor[0], wData->attackData[cent->gent->attack_index].missileDlightColor[1], wData->attackData[cent->gent->attack_index].missileDlightColor[2] );
 
 		// add missile sound
-		if ( weapon->weaponAttacksInfo[cent->gent->alt_fire].missileSound )
-			cgi_S_AddLoopingSound( cent->currentState.number, cent->lerpOrigin, vec3_origin, weapon->weaponAttacksInfo[cent->gent->alt_fire].missileSound );
+		if ( weapon->weaponAttacksInfo[cent->gent->attack_index].missileSound )
+			cgi_S_AddLoopingSound( cent->currentState.number, cent->lerpOrigin, vec3_origin, weapon->weaponAttacksInfo[cent->gent->attack_index].missileSound );
 
 		//Don't draw something without a model
-		if ( weapon->weaponAttacksInfo[cent->gent->alt_fire].missileModel == NULL_HANDLE )
+		if ( weapon->weaponAttacksInfo[cent->gent->attack_index].missileModel == NULL_HANDLE )
 			return;
 	}
 
@@ -1229,7 +1232,7 @@ Ghoul2 Insert End
 	if ( s1->otherEntityNum2 && g_vehWeaponInfo[s1->otherEntityNum2].iModel && cgs.model_draw[g_vehWeaponInfo[s1->otherEntityNum2].iModel] != NULL_HANDLE)
 		ent.hModel = cgs.model_draw[g_vehWeaponInfo[s1->otherEntityNum2].iModel];
 	else
-		ent.hModel = weapon->weaponAttacksInfo[cent->gent->alt_fire].missileModel;
+		ent.hModel = weapon->weaponAttacksInfo[cent->gent->attack_index].missileModel;
 
 	// spin as it moves
 	if ( s1->apos.trType != TR_INTERPOLATE )

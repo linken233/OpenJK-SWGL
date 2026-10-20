@@ -157,6 +157,7 @@ public:
 	inline void AddFlags( int flags )		{ mFlags |= flags;				}
 	inline void ClearFlags( int flags )		{ mFlags &= ~flags;				}
 	inline void SetOrigin1( const vec3_t org )	{ if(org){VectorCopy(org,mOrigin1);}else{VectorClear(mOrigin1);}	}
+	inline int	GetTimeStart() const		{ return mTimeStart; }
 	inline void SetTimeStart( int time )	{ mTimeStart = time; if (mFlags&FX_SET_SHADER_TIME) { mRefEnt.shaderTime = cg.time * 0.001f; }}
 	inline void	SetTimeEnd( int time )		{ mTimeEnd = time;				}
 	inline void SetImpactFxID( int id )		{ mImpactFxID = id;				}

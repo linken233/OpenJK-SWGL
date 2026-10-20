@@ -38,7 +38,6 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #define ITEM_TYPE_SLIDER_INTEGER	15
 #define ITEM_TYPE_SLIDER_ROTATE     16
 
-
 #define ITEM_ALIGN_LEFT 0                 // left alignment
 #define ITEM_ALIGN_CENTER 1               // center alignment
 #define ITEM_ALIGN_RIGHT 2                // right alignment
@@ -63,6 +62,11 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #define WINDOW_STYLE_SHADER   3           // gradient bar based on background color
 #define WINDOW_STYLE_TEAMCOLOR 4          // team color
 #define WINDOW_STYLE_CINEMATIC 5          // cinematic
+
+// how a WINDOW_STYLE_SHADER background is fitted to the item rectangle
+#define BACKGROUND_NONE 0                    // stretch the whole shader over the rectangle
+#define BACKGROUND_NINE_PATCH_STRETCH 1      // keep the borders, stretch the edges and the center
+#define BACKGROUND_NINE_PATCH_REPEAT 2       // keep the borders, tile the edges and the center
 
 #define MENU_TRUE 1                       // uh.. true
 #define MENU_FALSE 0                      // and false
@@ -104,6 +108,11 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #define FEEDER_MISSION						0x1a			// Mission List
 #define FEEDER_ATTR_DISABLED				0x1b			// Disabled Npc Attributes
 #define FEEDER_ATTR_ENABLED 				0x1c			// Enabled Npc Attributes
+#define FEEDER_CHAR_CONFIGS					0x1d			// Saved configurations of the character (character menu)
+#define FEEDER_ANIM_OVERRIDES				0x1e			// Animation overrides of the player (cheat menu)
+#define FEEDER_AMMO							0x1f			// Ammo types of the player (cheat menu)
+#define FEEDER_LIGHTEDIT					0x20			// Lights of the light edit menu
+#define FEEDER_LIGHTEDIT_EMI				0x21			// Emissive shaders of the light edit menu
 
 #define UI_VERSION				200
 #define UI_HANDICAP				200
@@ -164,10 +173,14 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #define UI_STARTMAPCINEMATIC	255
 #define UI_MAPS_SELECTION		256
 #define UI_DATAPAD_LOADOUT		257
-#define UI_NPC_WEAPON_LABEL		258
-#define UI_PLAYER_WEAPON_LABEL_1 259
-#define UI_PLAYER_WEAPON_LABEL_2 260
-#define UI_PLAYER_WEAPON_LABEL_3 261
-#define UI_PLAYER_WEAPON_LABEL_4 262
-#define UI_PLAYER_WEAPON_LABEL_5 263
-#define UI_PLAYER_WEAPON_LABEL_6 264
+#define UI_NPC_WEAPON_SLOT		258
+#define UI_PLAYER_WEAPON_SLOT_1 259
+#define UI_PLAYER_WEAPON_SLOT_2 260
+#define UI_PLAYER_WEAPON_SLOT_3 261
+#define UI_PLAYER_WEAPON_SLOT_4 262
+#define UI_PLAYER_WEAPON_SLOT_5 263
+#define UI_PLAYER_WEAPON_SLOT_6 264
+#define UI_DATAPAD_CHARACTERS	 265
+#define UI_LIGHTEDIT_SWATCH		266		// colour swatch of the light edit menu
+#define UI_LIGHTEDIT_STATS		267		// map name and counters of the light edit menu
+#define UI_LIGHTEDIT_SKY		268		// sky and sun in effect, in the light edit menu

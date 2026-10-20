@@ -177,7 +177,8 @@ void SV_Startup( void ) {
 	}
 
 	svs.clients = (struct client_s *) Z_Malloc ( sizeof(client_t) * 1, TAG_CLIENTS, qtrue );
-	svs.numSnapshotEntities = 2 * 4 * 64;
+	// Room for the delta source of a client some snapshots behind, at 1000 entities per snapshot.
+	svs.numSnapshotEntities = 8192;
 	svs.initialized = qtrue;
 
 	Cvar_Set( "sv_running", "1" );
@@ -373,7 +374,7 @@ void SV_SpawnServer( const char *server, ForceReload_e eForceReload, qboolean bA
 }
 
 #define G2_VERT_SPACE_SIZE 256
-#define G2_MINIHEAP_SIZE	G2_VERT_SPACE_SIZE*2048
+#define G2_MINIHEAP_SIZE	G2_VERT_SPACE_SIZE*4096
 
 /*
 ===============
@@ -395,6 +396,7 @@ void SV_Init (void) {
 
 	// server vars
 	sv_fps = Cvar_Get ("sv_fps", "20", CVAR_TEMP );
+	sv_frameSlices = Cvar_Get ("sv_frameSlices", "4", CVAR_ARCHIVE );
 	sv_timeout = Cvar_Get ("sv_timeout", "120", CVAR_TEMP );
 	sv_zombietime = Cvar_Get ("sv_zombietime", "2", CVAR_TEMP );
 	Cvar_Get ("nextmap", "", CVAR_TEMP );

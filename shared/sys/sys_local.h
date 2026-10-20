@@ -27,6 +27,7 @@ void 		IN_Init( void *windowData );
 void 		IN_Frame( void );
 void 		IN_Shutdown( void );
 void 		IN_Restart( void );
+void 		IN_SetWindow( void *windowData );	// move input to another window, text input stays on
 
 void		Sys_PlatformInit( int argc, char *argv[] );
 void		Sys_PlatformExit( void );

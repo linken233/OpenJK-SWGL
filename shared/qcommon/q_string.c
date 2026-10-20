@@ -65,6 +65,8 @@ qboolean Q_isanumber( const char *s )
 	if( *s == '\0' )
 		return qfalse;
 
+	// strtod sets errno only on error: clear the value of an earlier call.
+	errno = 0;
 	ret = strtod( s, &p );
 
 	if ( ret == HUGE_VAL || errno == ERANGE )

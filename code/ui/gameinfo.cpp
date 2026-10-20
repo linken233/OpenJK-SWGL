@@ -28,6 +28,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 #include "gameinfo.h"
 #include "../game/weapons.h"
+#include "../game/g_characters.h"
 
 /* Define the differents data associated with weapons */
 int weaponCount;
@@ -38,6 +39,9 @@ weaponData_t weaponData[MAX_WEAPONS];
 ammoData_t ammoData[MAX_AMMO];
 
 extern void WP_LoadWeaponParms (void);
+extern void CHA_ParseFactionFiles();
+extern void CHA_ParseCharacterFiles();
+
 
 //
 // Initialization - Read in files and parse into infos
@@ -50,5 +54,13 @@ GI_Init
 */
 void GI_Init( gameinfo_import_t *import ) {
 
+	/* Load Weapons*/
 	WP_LoadWeaponParms ();
+
+	/* Load Factions */
+	CHA_ParseFactionFiles();
+
+	/* Load Characters */
+	CHA_ParseCharacterFiles();
+
 }

@@ -2518,6 +2518,11 @@ void CL_InitRef( void ) {
 	ri.GL_GetProcAddress = WIN_GL_GetProcAddress;
 	ri.GL_ExtensionSupported = WIN_GL_ExtensionSupported;
 
+	ri.VK_GetInstanceProcAddress = WIN_VK_GetInstanceProcAddress;
+	ri.VK_createSurfaceImpl = WIN_VK_createSurfaceImpl;
+	ri.VK_destroyWindow = WIN_VK_destroyWindow;
+	ri.VK_IsMinimized = WIN_VK_IsMinimized;
+
 	ri.CM_GetCachedMapDiskImage = CM_GetCachedMapDiskImage;
 	ri.CM_SetCachedMapDiskImage = CM_SetCachedMapDiskImage;
 	ri.CM_SetUsingCache = CM_SetUsingCache;

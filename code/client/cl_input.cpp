@@ -79,7 +79,6 @@ extern cvar_t* j_yaw_axis;
 extern cvar_t* j_forward_axis;
 extern cvar_t* j_side_axis;
 extern cvar_t* j_up_axis;
-extern cvar_t* j_sensitivity;
 
 static void IN_UseGivenForce(void)
 {
@@ -500,10 +499,8 @@ void CL_JoystickEvent( int axis, int value, int time ) {
 		Com_Error( ERR_DROP, "CL_JoystickEvent: bad axis %i", axis );
 	}
 
-	if (Key_GetCatcher() & (KEYCATCH_UI)) {
-		return;
-	}
-
+	// always store; CL_JoystickMove ignores the axes while a menu is up,
+	// so a stick released inside a menu does not stay stuck afterwards
 	cl.joystickAxis[axis] = value;
 }
 
@@ -515,24 +512,19 @@ CL_JoystickMove
 void CL_JoystickMove(usercmd_t* cmd) {
 	float	anglespeed;
 
-	if (!in_joystick->integer)
+	if (!in_joystick->integer || (Key_GetCatcher() & KEYCATCH_UI))
 	{
 		return;
 	}
 
-	float yaw = j_yaw->value * cl.joystickAxis[j_yaw_axis->integer];
-	float right = j_side->value * cl.joystickAxis[j_side_axis->integer];
-	float forward = j_forward->value * cl.joystickAxis[j_forward_axis->integer];
-	float pitch = j_pitch->value * cl.joystickAxis[j_pitch_axis->integer];
-	float up = j_up->value * cl.joystickAxis[j_up_axis->integer];
+	// axis values are +-32767; 64 maps a full deflection at the default j_forward/j_side (0.25) to 127
+	const float moveScale = 1.0f / 64.0f;
 
-	if (!(in_speed.active ^ cl_run->integer)) {
-		cmd->buttons |= BUTTON_WALKING;
-	}
-	else if (pitch <= 180 && pitch >= -180 && pitch != 0)
-	{
-		cmd->buttons |= BUTTON_WALKING;
-	}
+	float yaw = j_yaw->value * cl.joystickAxis[j_yaw_axis->integer];
+	float right = j_side->value * moveScale * cl.joystickAxis[j_side_axis->integer];
+	float forward = j_forward->value * moveScale * cl.joystickAxis[j_forward_axis->integer];
+	float pitch = j_pitch->value * cl.joystickAxis[j_pitch_axis->integer];
+	float up = j_up->value * moveScale * cl.joystickAxis[j_up_axis->integer];
 
 	if (in_speed.active) {
 		anglespeed = 0.001 * cls.frametime * cl_anglespeedkey->value;
@@ -548,32 +540,33 @@ void CL_JoystickMove(usercmd_t* cmd) {
 		}
 		else
 		{
-			cl.viewangles[YAW] += anglespeed * (yaw * j_sensitivity->value);
+			cl.viewangles[YAW] += anglespeed * yaw;
 		}
 		cmd->rightmove = ClampCharMove(cmd->rightmove + (int)right);
 	}
 	else {
 		cl.viewangles[YAW] += anglespeed * right;
-		cmd->rightmove = ClampCharMove(cmd->rightmove + (int)yaw);
+		cmd->rightmove = ClampCharMove(cmd->rightmove + (int)(yaw * moveScale));
 	}
 
-	if (in_mlooking || cl_freelook->integer) {
-		if (cl_mPitchOverride)
-		{
-			cl.viewangles[PITCH] += 5.0f * cl_mPitchOverride * forward;
-		}
-		else
-		{
-			cl.viewangles[PITCH] -= anglespeed * ((forward/11.38)*j_sensitivity->value);
-		}
-		cmd->forwardmove = ClampCharMove(cmd->forwardmove - (int)pitch);
+	// the pitch axis always looks and the forward axis always moves
+	if (cl_mPitchOverride)
+	{
+		cl.viewangles[PITCH] += 5.0f * cl_mPitchOverride * pitch;
 	}
-	else {
+	else
+	{
 		cl.viewangles[PITCH] += anglespeed * pitch;
-		cmd->forwardmove = ClampCharMove(cmd->forwardmove + (int)forward);
 	}
+	cmd->forwardmove = ClampCharMove(cmd->forwardmove + (int)forward);
 
 	cmd->upmove = ClampCharMove(cmd->upmove + (int)up);
+
+	// a partial stick deflection walks, like the walk key
+	const int moveMax = Q_max(abs(cmd->forwardmove), abs(cmd->rightmove));
+	if (moveMax > 0 && moveMax <= 64) {
+		cmd->buttons |= BUTTON_WALKING;
+	}
 
 #if 0
 	if (!in_strafe.active) {

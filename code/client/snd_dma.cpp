@@ -210,7 +210,7 @@ typedef struct
 	qboolean	bRelative;
 } loopSound_t;
 
-#define	MAX_LOOP_SOUNDS		64
+#define	MAX_LOOP_SOUNDS		256
 int			numLoopSounds;
 loopSound_t	loopSounds[MAX_LOOP_SOUNDS];
 

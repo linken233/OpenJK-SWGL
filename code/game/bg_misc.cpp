@@ -478,6 +478,11 @@ qboolean	BG_CanItemBeGrabbed( const entityState_t *ent, const playerState_t *ps 
 
 
 	case IT_HOLDABLE:
+		if ( G_IsFuelItemTag( item->giTag ) )
+		{
+			// Touch_Item decides when a fuel item is swapped or refilled
+			return qtrue;
+		}
 		if ( item->giTag >= INV_ELECTROBINOCULARS && item->giTag <= INV_SENTRY )
 		{
 			// hardcoded--can only pick up five of any holdable

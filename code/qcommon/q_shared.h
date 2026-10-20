@@ -1994,7 +1994,9 @@ public:
 #endif // !JK2_MODE
 	int			shotsRemaining;
 
-	int8_t		firing_attack;
+	int			firing_attack;		// attack index locked while a burst runs, -1 otherwise
+	int			attack_index;		// attack resolved from the buttons: 0 main, 1 alt, 2 scoped_main, 3 scoped_alt
+	int			meleeCombo;			// last main melee move picked, so the next one differs
 
 
 	void sg_export(
@@ -2169,7 +2171,9 @@ public:
 		saved_game.write<int32_t>(stasisTime);
 #endif // !JK2_MODE
 		saved_game.write<int32_t>(shotsRemaining);
-		saved_game.write<int8_t>(firing_attack);
+		saved_game.write<int32_t>(firing_attack);
+		saved_game.write<int32_t>(attack_index);
+		saved_game.write<int32_t>(meleeCombo);
 
 		saved_game.write<int32_t>(forceUpperAnim);
 		saved_game.write<int32_t>(forceLowerAnim);
@@ -2350,7 +2354,9 @@ public:
 		saved_game.read<int32_t>(electrifyTime);
 		saved_game.read<int32_t>(stasisTime);
 		saved_game.read<int32_t>(shotsRemaining);
-		saved_game.read<int8_t>(firing_attack);
+		saved_game.read<int32_t>(firing_attack);
+		saved_game.read<int32_t>(attack_index);
+		saved_game.read<int32_t>(meleeCombo);
 		saved_game.read<int32_t>(forceUpperAnim);
 		saved_game.read<int32_t>(forceLowerAnim);
 		saved_game.read<int32_t>(forceUpperAnimTimer);

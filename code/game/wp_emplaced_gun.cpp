@@ -94,7 +94,7 @@ void WP_EmplacedFire( gentity_t *ent )
 
 	if ( missile->owner->e_UseFunc == useF_eweb_use )
 	{
-		missile->alt_fire = qtrue;
+		missile->attack_index = 1;	// the eweb always uses its second attack for the effects and sounds
 	}
 
 	VectorSet( missile->maxs, EMPLACED_SIZE, EMPLACED_SIZE, EMPLACED_SIZE );

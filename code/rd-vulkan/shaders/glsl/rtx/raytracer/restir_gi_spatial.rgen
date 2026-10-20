@@ -1,0 +1,101 @@
+/*
+===========================================================================
+Copyright (C) 1999 - 2005, Id Software, Inc.
+Copyright (C) 2000 - 2013, Raven Software, Inc.
+Copyright (C) 2001 - 2013, Activision, Inc.
+Copyright (C) 2013 - 2015, OpenJK contributors
+
+This file is part of the OpenJK source code.
+
+OpenJK is free software; you can redistribute it and/or modify it
+under the terms of the GNU General Public License version 2 as
+published by the Free Software Foundation.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program; if not, see <http://www.gnu.org/licenses/>.
+===========================================================================
+*/
+
+// ========================================================================== //
+// The spatial step of ReSTIR GI (pt_restir_gi 2). It runs after the first bounce pass.
+// The bounce pass has left the reservoir of each pixel after the temporal step in the
+// images of this frame, and has not added the static part of the bounce light to the LF
+// channel. This pass resamples the reservoir with those of the neighbours, traces one
+// visibility ray for a sample of a neighbour, and adds the light to the LF channel.
+// It does not write reservoirs.
+//
+// See `restir_gi.h` for the estimator and the Jacobian.
+// ========================================================================== //
+
+#version 460
+#extension GL_GOOGLE_include_directive    : enable
+#pragma optionNV(unroll all)
+
+#include "../path_tracer_rgen.h"
+#include "../restir_gi.h"
+
+void
+main()
+{
+	ivec2 ipos = ivec2(gl_LaunchIDEXT.xy);
+	if(gl_LaunchIDEXT.z != 0)
+		ipos.x += global_ubo.width / 2;
+
+	if(!restir_gi_spatial_enabled())
+		return;
+
+	// Only a pixel that traced a diffuse ray in the bounce pass takes the light of a sample.
+	if((texelFetch(TEX_PT_RESTIR_GI_RAD_A, ipos, 0).y & RESTIR_GI_RAY_BIT) == 0u)
+		return;
+
+	rng_seed = texelFetch(TEX_PT_RNG_SEED_A, ipos, 0).r;
+
+	vec4 position_material = texelFetch(TEX_PT_SHADING_POSITION, ipos, 0);
+	uint material_id = floatBitsToUint(position_material.w);
+
+	vec4 view_direction = texelFetch(TEX_PT_VIEW_DIRECTION, ipos, 0);
+	vec3 normal = decode_normal(texelFetch(TEX_PT_NORMAL_A, ipos, 0).x);
+	vec3 geo_normal = decode_normal(texelFetch(TEX_PT_GEO_NORMAL_A, ipos, 0).x);
+	vec4 primary_base_color = texelFetch(TEX_PT_BASE_COLOR_A, ipos, 0);
+	vec2 metal_rough = texelFetch(TEX_PT_METALLIC_A, ipos, 0).xy;
+
+	vec3 primary_albedo, primary_base_reflectivity;
+	get_reflectivity(primary_base_color.rgb, metal_rough.x, primary_albedo, primary_base_reflectivity);
+
+	float specular_pdf = first_bounce_specular_pdf(metal_rough.x, metal_rough.y);
+	if(specular_pdf >= 1.0)
+		return;
+
+	GiPrimary p;
+	p.ipos = ipos;
+	p.position = position_material.xyz;
+	p.view_direction = view_direction.xyz;
+	p.bounce_direction = vec3(0);
+	p.normal = normal;
+	p.basis_normal = restir_gi_basis_normal(normal, geo_normal);
+	p.throughput = texelFetch(TEX_PT_BOUNCE_THROUGHPUT, ipos, 0).rgb / (1.0 - specular_pdf);
+	p.base_reflectivity = primary_base_reflectivity;
+	p.specular_factor = primary_base_color.a;
+	p.shadow_cull_mask = SHADOW_RAY_CULL_MASK | get_viewer_cull_flags(material_id);
+	p.is_gradient = false;
+	p.view_depth = texelFetch(TEX_PT_VIEW_DEPTH_A, ipos, 0).x;
+	p.object = restir_object(texelFetch(TEX_PT_VISBUF_PRIM_A, ipos, 0).x, false);
+	p.split_surface = bitCount(int(view_direction.w) & CHECKERBOARD_FLAG_FIELD_MASK) > 1;
+
+	vec3 direction;
+	vec3 contrib = clamp_output(restir_gi_spatial(p, direction));
+
+	if(all(equal(contrib, vec3(0))) || any(isnan(direction)) || any(isinf(direction)))
+		return;
+
+	SH low_freq = load_SH(TEX_PT_COLOR_LF_SH, TEX_PT_COLOR_LF_COCG, ipos);
+
+	accumulate_lf(low_freq, contrib, direction);
+
+	STORE_SH(IMG_PT_COLOR_LF_SH, IMG_PT_COLOR_LF_COCG, ipos, low_freq);
+}

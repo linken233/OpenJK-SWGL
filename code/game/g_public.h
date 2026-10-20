@@ -25,7 +25,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #define __G_PUBLIC_H__
 // g_public.h -- game module information visible to server
 
-#define	GAME_API_VERSION	10
+#define	GAME_API_VERSION	11	// 11: snapshot_t holds 1024 entities
 
 // entity->svFlags
 // the server does not know how to interpret most of the values
@@ -335,6 +335,7 @@ Ghoul2 Insert Start
 								   const int flags, qhandle_t *modelList, int blendTime, int currentTime);
 	qboolean	(*G2API_SetAnimIndex)(CGhoul2Info *ghlInfo, const int index);
 	int			(*G2API_GetAnimIndex)(CGhoul2Info *ghlInfo);
+	qboolean	(*G2API_SetAnimOverride)(CGhoul2Info *ghlInfo, const char *glaName);
 	void		(*G2API_SaveGhoul2Models)(CGhoul2Info_v &ghoul2);
 	void		(*G2API_LoadGhoul2Models)(CGhoul2Info_v &ghoul2, char *buffer);
 	void		(*G2API_LoadSaveCodeDestructGhoul2Info)(CGhoul2Info_v &ghoul2);
@@ -417,6 +418,10 @@ typedef struct {
 	void		(*ClientThink)( int clientNum, usercmd_t *cmd );
 
 	void		(*RunFrame)( int levelTime );
+	// RunFrame in parts, over several client frames: RunFrameBegin, then RunFrameSlice
+	// until it returns qtrue. Each slice thinks about 1 / numSlices of the clients.
+	void		(*RunFrameBegin)( int levelTime, int numSlices );
+	qboolean	(*RunFrameSlice)( void );
 	void		(*ConnectNavs)( const char *mapname, int checkSum );
 
 	// ConsoleCommand will be called when a command has been issued

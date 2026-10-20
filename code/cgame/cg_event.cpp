@@ -537,23 +537,11 @@ void CG_EntityEvent( centity_t *cent, vec3_t position ) {
 		break;
 
 	case EV_FIRE_WEAPON:
+	case EV_FIRE_WEAPON_ATTACK1:
+	case EV_FIRE_WEAPON_ATTACK2:
+	case EV_FIRE_WEAPON_ATTACK3:
 		DEBUGNAME("EV_FIRE_WEAPON");
-		CG_FireWeapon( cent, qfalse );
-		break;
-
-	case EV_ALT_FIRE:
-		DEBUGNAME("EV_ALT_FIRE");
-		CG_FireWeapon( cent, qtrue );
-		break;
-
-	case EV_SCOPED_FIRE:
-		DEBUGNAME("EV_SCOPED_FIRE");
-		CG_FireWeapon( cent, qtrue );
-		break;
-
-	case EV_SCOPED_ALT_FIRE:
-		DEBUGNAME("EV_SCOPED_ALT_FIRE");
-		CG_FireWeapon( cent, qtrue );
+		CG_FireWeapon( cent, event - EV_FIRE_WEAPON );
 		break;
 
 	case EV_DISRUPTOR_MAIN_SHOT:
@@ -601,7 +589,7 @@ void CG_EntityEvent( centity_t *cent, vec3_t position ) {
 
 	case EV_DISRUPTOR_SNIPER_SHOT:
 		DEBUGNAME("EV_DISRUPTOR_SNIPER_SHOT");
-		FX_DisruptorAltShot( cent->currentState.origin2, cent->lerpOrigin, (qboolean) cent->gent->alt_fire);
+		FX_DisruptorAltShot( cent->currentState.origin2, cent->lerpOrigin, (qboolean) (cent->gent->count != 0) );
 		break;
 
 	case EV_DISRUPTOR_SNIPER_MISS:
@@ -788,7 +776,7 @@ void CG_EntityEvent( centity_t *cent, vec3_t position ) {
 		}
 		else
 		{
-			CG_MissileHitPlayer( cent, es->weapon, position, cent->gent->pos1, cent->gent->alt_fire );
+			CG_MissileHitPlayer( cent, es->weapon, position, cent->gent->pos1, cent->gent->attack_index );
 		}
 		break;
 
@@ -799,7 +787,7 @@ void CG_EntityEvent( centity_t *cent, vec3_t position ) {
 		}
 		else
 		{
-			CG_MissileHitWall( cent, es->weapon, position, cent->gent->pos1, cent->gent->alt_fire);
+			CG_MissileHitWall( cent, es->weapon, position, cent->gent->pos1 );
 		}
 		break;
 

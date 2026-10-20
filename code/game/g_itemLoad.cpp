@@ -50,6 +50,10 @@ static void IT_PickupSound (const char **holdBuf);
 static void IT_Tag (const char **holdBuf);
 static void IT_Type (const char **holdBuf);
 static void IT_WorldModel (const char **holdBuf);
+static void IT_WornModel (const char **holdBuf);
+static void IT_FuelDrain (const char **holdBuf);
+static void IT_JetThrust (const char **holdBuf);
+static void IT_FlameWeapon (const char **holdBuf);
 
 
 typedef struct
@@ -59,7 +63,7 @@ typedef struct
 } itemParms_t;
 
 
-#define IT_PARM_MAX 10
+#define IT_PARM_MAX 16
 
 itemParms_t ItemParms[IT_PARM_MAX] =
 {
@@ -73,6 +77,12 @@ itemParms_t ItemParms[IT_PARM_MAX] =
 	{ "tag",				IT_Tag },
 	{ "type",				IT_Type },
 	{ "worldmodel",			IT_WorldModel },
+	{ "wornmodel",			IT_WornModel },
+	{ "jetmodel",			IT_WornModel },		// older name of wornmodel
+	{ "fueldrain",			IT_FuelDrain },
+	{ "jetdrain",			IT_FuelDrain },		// older name of fueldrain
+	{ "jetthrust",			IT_JetThrust },
+	{ "flameweapon",		IT_FlameWeapon },
 };
 
 static void IT_SetDefaults()
@@ -346,6 +356,52 @@ static void IT_WorldModel(const char **holdBuf)
 
 }
 
+static void IT_WornModel(const char **holdBuf)
+{
+	const char	*tokenStr;
+
+	if (COM_ParseString(holdBuf,&tokenStr))
+	{
+		return;
+	}
+	bg_itemlist[itemParms.itemNum].wornModel = G_NewString(tokenStr);
+}
+
+static void IT_FlameWeapon(const char **holdBuf)
+{
+	const char	*tokenStr;
+
+	if (COM_ParseString(holdBuf,&tokenStr))
+	{
+		return;
+	}
+	bg_itemlist[itemParms.itemNum].flameWeapon = G_NewString(tokenStr);
+}
+
+static void IT_FuelDrain(const char **holdBuf)
+{
+	int		tokenInt;
+
+	if (COM_ParseInt(holdBuf,&tokenInt))
+	{
+		SkipRestOfLine(holdBuf);
+		return;
+	}
+	bg_itemlist[itemParms.itemNum].fuelDrain = tokenInt;
+}
+
+static void IT_JetThrust(const char **holdBuf)
+{
+	float	tokenFloat;
+
+	if (COM_ParseFloat(holdBuf,&tokenFloat))
+	{
+		SkipRestOfLine(holdBuf);
+		return;
+	}
+	bg_itemlist[itemParms.itemNum].jetThrust = tokenFloat;
+}
+
 static void IT_Tag(const char **holdBuf)
 {
 	int tag;
@@ -569,6 +625,14 @@ static void IT_Tag(const char **holdBuf)
 	else if (!Q_stricmp(tokenStr,"INV_SECURITY_KEY"))
 	{
 		tag = INV_SECURITY_KEY;
+	}
+	else if (!Q_stricmp(tokenStr,"INV_JETPACK"))
+	{
+		tag = INV_JETPACK;
+	}
+	else if (!Q_stricmp(tokenStr,"INV_WRIST_FLAMER"))
+	{
+		tag = INV_WRIST_FLAMER;
 	}
 	else if (!Q_stricmp(tokenStr,"ITM_MEDPAK_PICKUP"))
 	{

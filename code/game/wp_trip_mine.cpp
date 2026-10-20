@@ -278,7 +278,7 @@ static void WP_RemoveOldTraps( gentity_t *ent )
 }
 
 //---------------------------------------------------------
-void WP_PlaceLaserTrap( gentity_t *ent, qboolean alt_fire )
+void WP_PlaceLaserTrap( gentity_t *ent, qboolean proximity )
 //---------------------------------------------------------
 {
 	vec3_t		start;
@@ -305,7 +305,7 @@ void WP_PlaceLaserTrap( gentity_t *ent, qboolean alt_fire )
 		laserTrap->s.pos.trType = TR_GRAVITY;
 		VectorScale( forwardVec, LT_VELOCITY, laserTrap->s.pos.trDelta );
 
-		if ( alt_fire )
+		if ( proximity )
 		{
 			laserTrap->count = PROXIMITY_STYLE;
 			laserTrap->delay = level.time + 40000; // will auto-blow in 40 seconds.

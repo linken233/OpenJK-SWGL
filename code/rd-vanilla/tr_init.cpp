@@ -100,6 +100,7 @@ cvar_t	*r_DynamicGlowIntensity;
 cvar_t	*r_DynamicGlowSoft;
 cvar_t	*r_DynamicGlowWidth;
 cvar_t	*r_DynamicGlowHeight;
+cvar_t	*r_DynamicGlowScale;
 
 cvar_t	*r_ignoreGLErrors;
 cvar_t	*r_logFile;
@@ -1512,6 +1513,7 @@ static consoleCommand_t	commands[] = {
 	{ "screenshot",			R_ScreenShot_f },
 	{ "screenshot_png",		R_ScreenShotPNG_f },
 	{ "screenshot_tga",		R_ScreenShotTGA_f },
+	{ "r_capturePortrait",	R_CapturePortrait_f },
 	{ "gfxinfo",			GfxInfo_f },
 	{ "r_atihack",			R_AtiHackToggle_f },
 	{ "r_we",				R_WorldEffect_f },
@@ -1560,8 +1562,9 @@ void R_Register( void )
 	r_DynamicGlowDelta  = ri.Cvar_Get( "r_DynamicGlowDelta", "0.8f", CVAR_ARCHIVE_ND );
 	r_DynamicGlowIntensity = ri.Cvar_Get( "r_DynamicGlowIntensity", "1.13f", CVAR_ARCHIVE_ND );
 	r_DynamicGlowSoft = ri.Cvar_Get( "r_DynamicGlowSoft", "1", CVAR_ARCHIVE_ND );
-	r_DynamicGlowWidth = ri.Cvar_Get( "r_DynamicGlowWidth", "320", CVAR_ARCHIVE_ND | CVAR_LATCH );
-	r_DynamicGlowHeight = ri.Cvar_Get( "r_DynamicGlowHeight", "240", CVAR_ARCHIVE_ND | CVAR_LATCH );
+	r_DynamicGlowWidth = ri.Cvar_Get( "r_DynamicGlowWidth", "0", CVAR_ARCHIVE_ND | CVAR_LATCH );
+	r_DynamicGlowHeight = ri.Cvar_Get( "r_DynamicGlowHeight", "0", CVAR_ARCHIVE_ND | CVAR_LATCH );
+	r_DynamicGlowScale = ri.Cvar_Get( "r_DynamicGlowScale", "0.25", CVAR_ARCHIVE_ND | CVAR_LATCH );
 
 	r_picmip = ri.Cvar_Get ("r_picmip", "0", CVAR_ARCHIVE | CVAR_LATCH );
 	ri.Cvar_CheckRange( r_picmip, 0, 16, qtrue );
@@ -1879,6 +1882,8 @@ void RE_Shutdown( qboolean destroyWindow, qboolean restarting ) {
 
 	// shut down platform specific OpenGL stuff
 	if ( destroyWindow ) {
+		extern void RB_ResetSoftwareGamma( void );
+		RB_ResetSoftwareGamma();	// the GL context goes with the window
 		ri.WIN_Shutdown();
 	}
 	tr.registered = qfalse;
@@ -2007,6 +2012,7 @@ extern void G2API_SetRagDoll(CGhoul2Info_v &ghoul2,CRagDollParams *parms);
 extern void G2Time_ResetTimers(void);
 extern void G2Time_ReportTimers(void);
 #endif
+void RE_CaptureNextFrame( byte *rgba, int width, int height );
 extern IGhoul2InfoArray &TheGhoul2InfoArray();
 
 #ifdef JK2_MODE
@@ -2014,6 +2020,11 @@ unsigned int AnyLanguage_ReadCharFromString_JK2 ( char **text, qboolean *pbIsTra
 	return AnyLanguage_ReadCharFromString (text, pbIsTrailingPunctuation);
 }
 #endif
+
+// This renderer has no extension tables.
+static void *RE_GetExtension( const char *name ) {
+	return NULL;
+}
 
 extern "C" Q_EXPORT refexport_t* QDECL GetRefAPI ( int apiVersion, refimport_t *refimp ) {
 	static refexport_t	re;
@@ -2184,6 +2195,7 @@ extern "C" Q_EXPORT refexport_t* QDECL GetRefAPI ( int apiVersion, refimport_t *
 	G2EX(RemoveSurface);
 	G2EX(SaveGhoul2Models);
 	G2EX(SetAnimIndex);
+	G2EX(SetAnimOverride);
 	G2EX(SetBoneAnim);
 	G2EX(SetBoneAnimIndex);
 	G2EX(SetBoneAngles);
@@ -2214,6 +2226,9 @@ extern "C" Q_EXPORT refexport_t* QDECL GetRefAPI ( int apiVersion, refimport_t *
 	re.G2Time_ReportTimers = G2Time_ReportTimers;
 	re.G2Time_ResetTimers = G2Time_ResetTimers;
 #endif
+
+	re.CaptureNextFrame = RE_CaptureNextFrame;
+	re.GetExtension = RE_GetExtension;
 
 	//Swap_Init();
 

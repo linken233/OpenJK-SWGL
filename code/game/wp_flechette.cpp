@@ -257,10 +257,10 @@ static void WP_FlechetteAltFire( gentity_t *self )
 }
 
 //---------------------------------------------------------
-void WP_FireFlechette( gentity_t *ent, qboolean alt_fire )
+void WP_FireFlechette( gentity_t *ent, qboolean explosive )
 //---------------------------------------------------------
 {
-	if ( alt_fire )
+	if ( explosive )
 	{
 		WP_FlechetteAltFire( ent );
 	}

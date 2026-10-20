@@ -46,6 +46,7 @@ CPrimitiveTemplate::CPrimitiveTemplate()
 	// We never start out as a copy or with a name
 	mCopy = false;
 	mName[0] = 0;
+	mEffectID = 0;
 	mCullRange = 0;
 
 	mFlags = mSpawnFlags = 0;
@@ -92,6 +93,7 @@ void CPrimitiveTemplate::operator=(const CPrimitiveTemplate &that)
 	// I'm assuming that doing a memcpy wouldn't work here
 	// If you are looking at this and know a better way to do this, please tell me.
 	strcpy( mName, that.mName );
+	mEffectID			= that.mEffectID;
 
 	mType				= that.mType;
 

@@ -23,6 +23,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include <SDL_syswm.h>
 #include "qcommon/qcommon.h"
 #include "rd-common/tr_types.h"
+#include <SDL_vulkan.h>		
 #include "sys/sys_local.h"
 #include "sdl_icon.h"
 
@@ -36,8 +37,15 @@ enum rserr_t
 	RSERR_UNKNOWN
 };
 
-static SDL_Window *screen = NULL;
-static SDL_GLContext opengl_context;
+// g_FastRendererSwitch loads two renderers. Each renderer has its own window in a slot.
+// win_slot is the slot of the renderer that runs now. The client sets it before each call.
+static SDL_Window *win_screens[2];
+static SDL_GLContext win_contexts[2];
+static int win_slot;
+static int win_shownSlot;
+static qboolean win_dual;
+#define screen			win_screens[win_slot]
+#define opengl_context	win_contexts[win_slot]
 static float displayAspect;
 
 cvar_t *r_sdlDriver;
@@ -145,6 +153,12 @@ void GLimp_Minimize(void)
 
 void WIN_Present( window_t *window )
 {
+	// g_FastRendererSwitch: the frame of the hidden window is only read back, never presented.
+	if ( win_dual && win_slot != win_shownSlot )
+	{
+		return;
+	}
+
 	if ( window->api == GRAPHICS_API_OPENGL )
 	{
 		SDL_GL_SwapWindow(screen);
@@ -157,6 +171,13 @@ void WIN_Present( window_t *window )
 				Com_DPrintf( "SDL_GL_SetSwapInterval failed: %s\n", SDL_GetError() );
 			}
 		}
+	}
+
+	// g_FastRendererSwitch: no real fullscreen (see GLimp_SetMode). A toggle here makes the window
+	// exclusive fullscreen, and at the next switch it minimizes and its GL frames read back empty.
+	if ( r_fullscreen->modified && win_dual )
+	{
+		r_fullscreen->modified = qfalse;
 	}
 
 	if ( r_fullscreen->modified )
@@ -323,7 +344,17 @@ static rserr_t GLimp_SetMode(glconfig_t *glConfig, const windowDesc_t *windowDes
 	int samples;
 	int i = 0;
 	SDL_Surface *icon = NULL;
-	Uint32 flags = SDL_WINDOW_SHOWN;
+	// The window of the renderer that is not on screen is created hidden.
+	const qboolean hidden = (qboolean)( win_slot != win_shownSlot );
+	Uint32 flags = hidden ? SDL_WINDOW_HIDDEN : SDL_WINDOW_SHOWN;
+
+	// g_FastRendererSwitch: no real fullscreen. A switch between two fullscreen windows
+	// minimizes them and resizes the hidden one. Both windows are borderless and cover the display.
+	const qboolean fakeFullscreen = (qboolean)( win_dual && fullscreen );
+	if ( fakeFullscreen ) {
+		noborder = qtrue;
+		fullscreen = qfalse;
+	}
 	SDL_DisplayMode desktopMode;
 	int display = 0;
 	int x = SDL_WINDOWPOS_UNDEFINED, y = SDL_WINDOWPOS_UNDEFINED;
@@ -331,6 +362,10 @@ static rserr_t GLimp_SetMode(glconfig_t *glConfig, const windowDesc_t *windowDes
 	if ( windowDesc->api == GRAPHICS_API_OPENGL )
 	{
 		flags |= SDL_WINDOW_OPENGL;
+	}
+	else if ( windowDesc->api == GRAPHICS_API_VULKAN )
+	{
+		flags |= SDL_WINDOW_VULKAN;
 	}
 
 	Com_Printf( "Initializing display\n");
@@ -349,9 +384,10 @@ static rserr_t GLimp_SetMode(glconfig_t *glConfig, const windowDesc_t *windowDes
 		);
 
 	// If a window exists, note its display index
-	if ( screen != NULL )
+	SDL_Window *displayWindow = screen ? screen : win_screens[win_shownSlot];
+	if ( displayWindow != NULL )
 	{
-		display = SDL_GetWindowDisplayIndex( screen );
+		display = SDL_GetWindowDisplayIndex( displayWindow );
 		if ( display < 0 )
 		{
 			Com_DPrintf( "SDL_GetWindowDisplayIndex() failed: %s\n", SDL_GetError() );
@@ -420,6 +456,24 @@ static rserr_t GLimp_SetMode(glconfig_t *glConfig, const windowDesc_t *windowDes
 		screen = NULL;
 	}
 
+	// A borderless window has no title bar to move it, so center it on its display.
+	// At the desktop resolution it then covers the display.
+	if ( noborder && !fullscreen && !fakeFullscreen )
+	{
+		x = y = SDL_WINDOWPOS_CENTERED_DISPLAY( display >= 0 ? display : 0 );
+	}
+
+	if ( fakeFullscreen )
+	{
+		SDL_Rect bounds;
+		if ( SDL_GetDisplayBounds( display >= 0 ? display : 0, &bounds ) == 0 )
+		{
+			x = bounds.x;
+			y = bounds.y;
+		}
+	}
+
+
 	if( fullscreen )
 	{
 #ifdef MACOS_X
@@ -434,7 +488,7 @@ static rserr_t GLimp_SetMode(glconfig_t *glConfig, const windowDesc_t *windowDes
 		if( noborder )
 			flags |= SDL_WINDOW_BORDERLESS;
 
-		glConfig->isFullscreen = qfalse;
+		glConfig->isFullscreen = fakeFullscreen;
 	}
 
 	colorBits = r_colorbits->integer;
@@ -732,8 +786,11 @@ static qboolean GLimp_StartDriverAndSetMode(glconfig_t *glConfig, const windowDe
 
 window_t WIN_Init( const windowDesc_t *windowDesc, glconfig_t *glConfig )
 {
-	Cmd_AddCommand("modelist", R_ModeList_f);
-	Cmd_AddCommand("minimize", GLimp_Minimize);
+	if ( !win_screens[win_slot ^ 1] )
+	{
+		Cmd_AddCommand("modelist", R_ModeList_f);
+		Cmd_AddCommand("minimize", GLimp_Minimize);
+	}
 
 	r_sdlDriver			= Cvar_Get( "r_sdlDriver",			"",			CVAR_ROM );
 	r_allowSoftwareGL	= Cvar_Get( "r_allowSoftwareGL",	"0",		CVAR_ARCHIVE_ND|CVAR_LATCH );
@@ -779,7 +836,10 @@ window_t WIN_Init( const windowDesc_t *windowDesc, glconfig_t *glConfig )
 		(qboolean)(!r_ignorehwgamma->integer && SDL_SetWindowBrightness( screen, 1.0f ) >= 0);
 
 	// This depends on SDL_INIT_VIDEO, hence having it here
-	IN_Init( screen );
+	if ( win_slot == win_shownSlot )
+	{
+		IN_Init( screen );
+	}
 
 	// window_t is only really useful for Windows if the renderer wants to create a D3D context.
 	window_t window = {};
@@ -813,10 +873,18 @@ GLimp_Shutdown
 */
 void WIN_Shutdown( void )
 {
-	Cmd_RemoveCommand("modelist");
-	Cmd_RemoveCommand("minimize");
+	const qboolean lastWindow = (qboolean)( win_screens[win_slot ^ 1] == NULL );
 
-	IN_Shutdown();
+	if ( lastWindow )
+	{
+		Cmd_RemoveCommand("modelist");
+		Cmd_RemoveCommand("minimize");
+	}
+
+	if ( win_slot == win_shownSlot )
+	{
+		IN_Shutdown();
+	}
 
 	if (opengl_context) {
 		SDL_GL_DeleteContext(opengl_context);
@@ -828,7 +896,85 @@ void WIN_Shutdown( void )
 		screen = NULL;
 	}
 
-	SDL_QuitSubSystem( SDL_INIT_VIDEO );
+	if ( lastWindow )
+	{
+		win_shownSlot = 0;
+		SDL_QuitSubSystem( SDL_INIT_VIDEO );
+	}
+	else if ( win_slot == win_shownSlot )
+	{
+		// The window of the other renderer is left. The next window of this slot is hidden.
+		win_shownSlot ^= 1;
+	}
+}
+
+qboolean WIN_GammaInSoftware( void )
+{
+	return win_dual;
+}
+
+void WIN_SetDual( qboolean dual )
+{
+	win_dual = dual;
+
+	// A fullscreen window that loses the focus to the other window must not minimize.
+	SDL_SetHint( SDL_HINT_VIDEO_MINIMIZE_ON_FOCUS_LOSS, dual ? "0" : NULL );	// NULL: SDL default
+}
+
+void WIN_SelectSlot( int slot )
+{
+	win_slot = slot;
+
+	if ( win_contexts[slot] && SDL_GL_GetCurrentContext() != win_contexts[slot] )
+	{
+		SDL_GL_MakeCurrent( win_screens[slot], win_contexts[slot] );
+	}
+}
+
+// Puts the window of the given slot on screen in place of the other one, and moves input to it.
+void WIN_ShowSlot( int slot )
+{
+	SDL_Window *oldWindow = win_screens[win_shownSlot];
+	SDL_Window *newWindow = win_screens[slot];
+
+	if ( slot == win_shownSlot || !newWindow )
+	{
+		return;
+	}
+
+	if ( !oldWindow )
+	{
+		SDL_ShowWindow( newWindow );
+		win_shownSlot = slot;
+		IN_Init( newWindow );
+		return;
+	}
+
+	int x, y;
+	const Uint32 fullscreenFlags = SDL_GetWindowFlags( oldWindow ) & ( SDL_WINDOW_FULLSCREEN | SDL_WINDOW_FULLSCREEN_DESKTOP );
+
+	// Show the new window before the old one goes, so the game keeps the foreground.
+	SDL_GetWindowPosition( oldWindow, &x, &y );
+	SDL_SetWindowPosition( newWindow, x, y );
+	SDL_ShowWindow( newWindow );
+	if ( SDL_GetWindowFlags( newWindow ) & SDL_WINDOW_MINIMIZED )
+	{
+		SDL_RestoreWindow( newWindow );
+	}
+	if ( fullscreenFlags )
+	{
+		SDL_SetWindowFullscreen( newWindow, fullscreenFlags );
+	}
+	SDL_RaiseWindow( newWindow );
+
+	if ( fullscreenFlags )
+	{
+		SDL_SetWindowFullscreen( oldWindow, 0 );
+	}
+	SDL_HideWindow( oldWindow );
+
+	win_shownSlot = slot;
+	IN_SetWindow( newWindow );
 }
 
 void GLimp_EnableLogging( qboolean enable )
@@ -845,6 +991,11 @@ void WIN_SetGamma( glconfig_t *glConfig, byte red[256], byte green[256], byte bl
 	int i, j;
 
 	if( !glConfig->deviceSupportsGamma || r_ignorehwgamma->integer > 0 )
+		return;
+
+	// g_FastRendererSwitch: the ramp is display-wide and a screenshot never shows it. The
+	// renderer applies it to its own frame instead (WIN_GammaInSoftware).
+	if ( win_dual )
 		return;
 
 	for (i = 0; i < 256; i++)
@@ -901,4 +1052,58 @@ void *WIN_GL_GetProcAddress( const char *proc )
 qboolean WIN_GL_ExtensionSupported( const char *extension )
 {
 	return SDL_GL_ExtensionSupported( extension ) == SDL_TRUE ? qtrue : qfalse;
+}
+
+void *WIN_VK_GetInstanceProcAddress( void )
+{
+	if ( SDL_Vulkan_LoadLibrary( NULL ) != 0 )
+	{
+		Com_Printf( "SDL_Vulkan_LoadLibrary() failed: %s\n", SDL_GetError() );
+		return NULL;
+	}
+
+	return SDL_Vulkan_GetVkGetInstanceProcAddr();
+}
+
+qboolean WIN_VK_createSurfaceImpl( VkInstance instance, VkSurfaceKHR *surface )
+{
+	if ( !screen )
+	{
+		return qfalse;
+	}
+
+	if ( SDL_Vulkan_CreateSurface( screen, (SDL_vulkanInstance)instance, (SDL_vulkanSurface *)surface ) == SDL_FALSE )
+	{
+		Com_Printf( "SDL_Vulkan_CreateSurface() failed: %s\n", SDL_GetError() );
+		return qfalse;
+	}
+
+	return qtrue;
+}
+
+void WIN_VK_destroyWindow( void )
+{
+	WIN_Shutdown();
+	SDL_Vulkan_UnloadLibrary();
+}
+
+qboolean WIN_VK_IsMinimized( void )
+{
+	Uint32 flags;
+
+	if ( !screen )
+	{
+		return qfalse;
+	}
+
+	// The hidden window of the second renderer must still render, for g_ShowSplit.
+	if ( win_dual )
+	{
+		SDL_Window *shown = win_screens[win_shownSlot];
+		return ( shown && ( SDL_GetWindowFlags( shown ) & SDL_WINDOW_MINIMIZED ) ) ? qtrue : qfalse;
+	}
+
+	flags = SDL_GetWindowFlags( screen );
+
+	return ( ( flags & SDL_WINDOW_MINIMIZED ) || ( flags & SDL_WINDOW_HIDDEN ) ) ? qtrue : qfalse;
 }

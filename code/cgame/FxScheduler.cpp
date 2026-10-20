@@ -349,7 +349,7 @@ void CFxScheduler::Clean(bool bRemoveTemplates /*= true*/, int idToPreserve /*= 
 		next = itr;
 		++next;
 
-		mScheduledEffectsPool.Free (*itr);
+		mScheduledEffectsPool.Free (itr->second);
 		mFxSchedule.erase(itr);
 
 		itr = next;
@@ -577,8 +577,17 @@ void CFxScheduler::AddPrimitiveToEffect( SEffectTemplate *fx, CPrimitiveTemplate
 	}
 	else
 	{
+		prim->mEffectID = (short)( fx - mEffectTemplates );
 		fx->mPrimitives[ct] = prim;
 		fx->mPrimitiveCount++;
+	}
+}
+
+void CFxScheduler::CountScheduledFx( int *counts ) const
+{
+	for ( TScheduledEffect::const_iterator itr = mFxSchedule.begin(); itr != mFxSchedule.end(); ++itr )
+	{
+		counts[itr->second->mpTemplate->mEffectID]++;
 	}
 }
 
@@ -922,7 +931,7 @@ void CFxScheduler::PlayEffect( const char *file, int clientID, bool isPortal )
 					sfx->mPortalEffect = false;
 				}
 
-				mFxSchedule.push_front( sfx );
+				mFxSchedule.insert( TScheduledEffect::value_type( sfx->mStartTime, sfx ) );
 			}
 		}
 	}
@@ -952,6 +961,7 @@ bool gEffectsInPortal = false; //this is just because I don't want to have to ad
 //------------------------------------------------------
 void CFxScheduler::CreateEffect( CPrimitiveTemplate *fx, int clientID, int delay )
 {
+	SFxTallyScope tally( fx->mEffectID );
 	vec3_t	sRGB, eRGB;
 	vec3_t	vel, accel;
 	vec3_t	org,org2;
@@ -1267,7 +1277,7 @@ void CFxScheduler::PlayEffect( int id, vec3_t origin, vec3_t axis[3], const int 
 					sfx->mStartTime++;
 				}
 
-				mFxSchedule.push_front( sfx );
+				mFxSchedule.insert( TScheduledEffect::value_type( sfx->mStartTime, sfx ) );
 			}
 		}
 	}
@@ -1352,6 +1362,8 @@ void CFxScheduler::PlayEffect( const char *file, vec3_t origin, vec3_t forward, 
 //------------------------------------------------------
 void CFxScheduler::AddScheduledEffects( bool portal )
 {
+	FXS_START( createStart );
+
 	TScheduledEffect::iterator	itr, next;
 	vec3_t						origin;
 	vec3_t						axis[3];
@@ -1367,11 +1379,22 @@ void CFxScheduler::AddScheduledEffects( bool portal )
 		AddLoopedEffects();
 	}
 
-	for ( itr = mFxSchedule.begin(); itr != mFxSchedule.end(); /* do nothing */ )
+	// Collect the due effects first. Effects scheduled while these are created wait for the next pass.
+	static std::vector<TScheduledEffect::iterator> due;
+	due.clear();
+	for ( itr = mFxSchedule.begin(); itr != mFxSchedule.end() && itr->first <= theFxHelper.mTime; ++itr )
 	{
-		SScheduledEffect *effect = *itr;
+		if ( itr->second->mPortalEffect == portal )
+		{
+			due.push_back( itr );
+		}
+	}
 
-		if (portal == effect->mPortalEffect && effect->mStartTime <= theFxHelper.mTime )
+	for ( size_t d = 0; d < due.size(); d++ )
+	{
+		itr = due[d];
+		SScheduledEffect *effect = itr->second;
+
 		{
 			if ( effect->mClientID >= 0 )
 			{
@@ -1385,7 +1408,7 @@ void CFxScheduler::AddScheduledEffects( bool portal )
 					// Find out where the entity currently is
 					CreateEffect( effect->mpTemplate,
 								cg_entities[effect->mEntNum].lerpOrigin, effect->mAxis,
-								theFxHelper.mTime - (*itr)->mStartTime );
+								theFxHelper.mTime - effect->mStartTime );
 				}
 				else
 				{
@@ -1435,16 +1458,16 @@ void CFxScheduler::AddScheduledEffects( bool portal )
 			}
 
 			mScheduledEffectsPool.Free( effect );
-			itr = mFxSchedule.erase( itr );
-		}
-		else
-		{
-			++itr;
+			mFxSchedule.erase( itr );
 		}
 	}
 
+	FXS_STOP( createStart, create );
+
 	// Add all active effects into the scene
+	FXS_START( updateStart );
 	FX_Add(portal);
+	FXS_STOP( updateStart, update );
 
 	gEffectsInPortal = false;
 }
@@ -1471,6 +1494,7 @@ void CFxScheduler::CreateEffect( CPrimitiveTemplate *fx, const vec3_t origin, ve
 				ax[3];
 	trace_t	tr;
 	int		emitterModel;
+	SFxTallyScope tally( fx->mEffectID );
 
 	// We may modify the axis, so make a work copy
 	AxisCopy( axis, ax );

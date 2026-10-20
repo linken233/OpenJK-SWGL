@@ -199,3 +199,18 @@ compile_commands.json
 #############
 [Bb]uild*/
 cmake-build-*
+
+#############
+## Claude Code
+#############
+.claude/
+
+#############
+## Shader compiler tools (rebuilt from the .c/.cpp next to them)
+#############
+code/rd-vulkan/shaders/tools/bindshader.exe
+codemp/rd-vulkan/shaders/tools/compile_threaded.exe
+codemp/rd-vulkan/shaders/tools/*.obj
+code/rd-vulkan/shaders/tools/compile_threaded.exe
+code/rd-vulkan/shaders/tools/*.obj
+/sandbox/

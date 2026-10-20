@@ -62,15 +62,17 @@ Ghoul2 Insert End
 	CG_DRAW_DATAPAD_FORCEPOWERS,
 	CG_DRAW_DATAPAD_LOADOUT,
 	CG_DRAW_DATAPAD_LOADOUT_FRAME,
-	CG_DRAW_NPC_WEAPON_LABEL,
-	CG_DRAW_PLAYER_WEAPON_LABEL_1,
-	CG_DRAW_PLAYER_WEAPON_LABEL_2,
-	CG_DRAW_PLAYER_WEAPON_LABEL_3,
-	CG_DRAW_PLAYER_WEAPON_LABEL_4,
-	CG_DRAW_PLAYER_WEAPON_LABEL_5,
-	CG_DRAW_PLAYER_WEAPON_LABEL_6
-
+	CG_DRAW_WEAPON_SLOT,		// ( int slot, int x, int y, int w, int h ): icon of the weapon of a slot, 1-6 a player weapon, 7 the NPC weapon
+	CG_DRAW_CHARACTERS,
+	CG_GET_AMMO_NAME,	// ( int ammoIndex, char *name, int nameSize ): qtrue if the player uses this ammo type
+	CG_KEY_EVENT		// ( int key, qboolean down, int mods ): 1 when the cgame consumes the key
 } cgameExport_t;
+
+// Modifier mask of CG_KEY_EVENT.
+#define CG_KEYMOD_CTRL		1
+#define CG_KEYMOD_SHIFT		2
+#define CG_KEYMOD_ALT		4
+#define CG_KEYMOD_REPEAT	8	// a down event that repeats
 
 /*
 ==============================================================

@@ -188,6 +188,7 @@ public:
 									//	hit zero, we are no longer used and so we can just free ourselves
 
 	char			mName[FX_MAX_PRIM_NAME];
+	short			mEffectID;		// effect template that owns this primitive, for the fxpool report
 
 	EPrimType		mType;
 
@@ -643,7 +644,8 @@ private:
 	// this makes looking up the index based on the string name much easier
 	typedef std::map<fxString_t, int>			TEffectID;
 
-	typedef std::list<SScheduledEffect*>			TScheduledEffect;
+	// Sorted by start time, so AddScheduledEffects only visits the effects that are due.
+	typedef std::multimap<int, SScheduledEffect*>	TScheduledEffect;
 
 	// Effects
 	SEffectTemplate		mEffectTemplates[FX_MAX_EFFECTS];
@@ -690,6 +692,8 @@ public:
 	void	AddScheduledEffects( bool portal );								// call once per CGame frame [rww ammendment - twice now actually, but first only renders portal effects]
 
 	int		NumScheduledFx()	{ return (int)mFxSchedule.size();	}
+	void	CountScheduledFx( int *counts ) const;	// adds the scheduled primitives of each effect ID to counts[FX_MAX_EFFECTS]
+	const char *GetEffectName( int id ) const	{ return ( id > 0 && id < FX_MAX_EFFECTS ) ? mEffectTemplates[id].mEffectName : "(code)"; }
 	void	Clean(bool bRemoveTemplates = true, int idToPreserve = 0);	// clean out the system
 
 	// FX Override functions

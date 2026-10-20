@@ -98,7 +98,6 @@ typedef enum {
 	WEAPON_DROPPING,
 	WEAPON_FIRING,
 	WEAPON_CHARGING,
-	WEAPON_CHARGING_ALT,
 	WEAPON_IDLE, //lowered
 } weaponstate_t;
 
@@ -217,7 +216,7 @@ typedef enum {
 #define EF_MISSILE_STICK		0x00000040	// missiles that stick to the wall.
 #define	EF_NODRAW				0x00000080	// may have an event, but no model (unspawned items)
 #define	EF_FIRING				0x00000100	// for lightning gun
-#define EF_ALT_FIRING			0x00000200	// for alt-fires, mostly for lightning guns though
+#define EF_LIGHT_CONE			0x00000200	// spotlight entity: the cgame draws the interpolated light cone
 #define	EF_VEH_BOARDING			0x00000400	// Whether a vehicle is being boarded or not.
 #define	EF_AUTO_SIZE			0x00000800	// CG_Ents will create the mins & max itself based on model bounds
 #define	EF_BOUNCE_SHRAPNEL		0x00001000	// special shrapnel flag
@@ -318,10 +317,10 @@ typedef enum {
 
 	EV_NOAMMO,
 	EV_CHANGE_WEAPON,
-	EV_FIRE_WEAPON,
-	EV_ALT_FIRE,
-	EV_SCOPED_FIRE,
-	EV_SCOPED_ALT_FIRE,
+	EV_FIRE_WEAPON,			// EV_FIRE_WEAPON + attack index (0..3) fires that attack
+	EV_FIRE_WEAPON_ATTACK1,
+	EV_FIRE_WEAPON_ATTACK2,
+	EV_FIRE_WEAPON_ATTACK3,
 	EV_POWERUP_SEEKER_FIRE,
 	EV_POWERUP_BATTLESUIT,
 	EV_USE,
@@ -533,7 +532,7 @@ public:
 #define	AED_EFFECT_PROBABILITY		2
 #define	AED_MODELINDEX				3
 //indices for AEV_FIRE data
-#define	AED_FIRE_ALT				0
+#define	AED_FIRE_ATTACK				0
 #define	AED_FIRE_PROBABILITY		1
 //indices for AEV_MOVE data
 #define	AED_MOVE_FWD				0
@@ -554,7 +553,7 @@ typedef enum
 	AEV_SOUND,		//# animID AEV_SOUND framenum soundpath randomlow randomhi chancetoplay
 	AEV_FOOTSTEP,	//# animID AEV_FOOTSTEP framenum footstepType chancetoplay
 	AEV_EFFECT,		//# animID AEV_EFFECT framenum effectpath boltName chancetoplay
-	AEV_FIRE,		//# animID AEV_FIRE framenum altfire chancetofire
+	AEV_FIRE,		//# animID AEV_FIRE framenum attackindex chancetofire
 	AEV_MOVE,		//# animID AEV_MOVE framenum forwardpush rightpush uppush
 	AEV_SOUNDCHAN,  //# animID AEV_SOUNDCHAN framenum CHANNEL soundpath randomlow randomhi chancetoplay
 	AEV_SABER_SWING,  //# animID AEV_SABER_SWING framenum CHANNEL randomlow randomhi chancetoplay
@@ -642,6 +641,12 @@ typedef struct gitem_s {
 	const char	*sounds;		// string of all sounds this item will use
 	vec3_t		mins;			// Bbox
 	vec3_t		maxs;			// Bbox
+
+	// Fuel items (tags INV_JETPACK and INV_WRIST_FLAMER), set from the item file; 0 or NULL = default
+	const char	*wornModel;		// ghoul2 model worn by the player
+	int			fuelDrain;		// msec per unit of fuel used
+	float		jetThrust;		// jetpack: vertical speed added per frame while thrusting
+	const char	*flameWeapon;	// wrist flamethrower: weapon whose main attack gives the flame (damage, range, sounds)
 } gitem_t;
 
 // included in both the game dll and the client

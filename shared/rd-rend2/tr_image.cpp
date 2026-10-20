@@ -148,11 +148,13 @@ void GL_TextureMode( const char *string ) {
 			qglTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, gl_filter_min);
 			qglTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, gl_filter_max);
 
-			if ( r_ext_texture_filter_anisotropic->value > 0.0f )
+			// Same as the texture creation: off (0 or 1) goes back to 1, GL refuses a value below 1.
+			if ( glConfig.maxTextureFilterAnisotropy > 0.0f )
 			{
-				if ( glConfig.maxTextureFilterAnisotropy > 1.0f )
+				if ( r_ext_texture_filter_anisotropic->value > 1.0f )
 				{
-					qglTexParameterf (GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, r_ext_texture_filter_anisotropic->value);
+					qglTexParameterf (GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT,
+									  Com_Clamp( 1.0f, glConfig.maxTextureFilterAnisotropy, r_ext_texture_filter_anisotropic->value ));
 				}
 				else
 				{

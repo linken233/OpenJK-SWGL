@@ -304,6 +304,7 @@ void SV_Player_EndOfLevelSave(void)
 						);
 #endif
 		Cvar_Set( sCVARNAME_PLAYERSAVE, s );
+		Cvar_Set( "playermaxhealth", va("%i", pState->stats[STAT_MAX_HEALTH]) );
 
 #ifndef JK2_MODE
 		s2 = "";
@@ -380,6 +381,9 @@ static void SV_Map_f( void )
 {
 	Cvar_Set( sCVARNAME_PLAYERSAVE, "");
 	Cvar_Set( "playerweaps", "");
+	Cvar_Set( "playermaxhealth", "");
+	Cvar_Set( "playerlightning", "");
+	Cvar_Set( "playerscale", "");
 	Cvar_Set( "spawntarget", "" );
 	Cvar_Set("tier_storyinfo", "0");
 	Cvar_Set("tiers_complete", "");

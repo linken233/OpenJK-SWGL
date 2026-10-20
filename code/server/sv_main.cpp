@@ -39,6 +39,7 @@ server_t		sv;					// local server
 game_export_t	*ge;
 
 cvar_t	*sv_fps;				// time rate for running non-clients
+cvar_t	*sv_frameSlices;		// max client frames that one game frame is spread over, 1 = off
 cvar_t	*sv_timeout;			// seconds without any message
 cvar_t	*sv_zombietime;			// seconds to sink messages after disconnect
 cvar_t	*sv_reconnectlimit;		// minimum seconds between connect messages
@@ -427,6 +428,56 @@ Player movement occurs as a result of packet events, which
 happen before SV_Frame is called
 ==================
 */
+// Adds the time of the scope to the game time of com_perflog.
+struct svPerfGameScope {
+	double	start;
+
+	svPerfGameScope() : start( PerfLog_Now() ) {}
+	~svPerfGameScope() { PerfLog_AddGame( PerfLog_Now() - start ); }
+};
+
+/*
+==================
+SV_FinishSlicedFrame
+
+Runs the remaining slices of the game frame in progress, if there is one.
+==================
+*/
+void SV_FinishSlicedFrame( void ) {
+	if ( !sv.frameSliced || sv.inFrameSlice ) {
+		return;
+	}
+
+	sv.inFrameSlice = qtrue;
+	while ( !ge->RunFrameSlice() ) {
+	}
+	sv.inFrameSlice = qfalse;
+	sv.frameSliced = qfalse;
+}
+
+/*
+==================
+SV_GameFrameSlices
+
+How many client frames the next game frame can be spread over. All the slices must
+end in half a game frame, so that the frame ends before the next one is due.
+==================
+*/
+static int SV_GameFrameSlices( int msec, int frameMsec ) {
+	int numSlices;
+
+	if ( !sv_frameSlices || sv_frameSlices->integer <= 1 ) {
+		return 1;
+	}
+
+	numSlices = frameMsec / ( 2 * ( msec > 0 ? msec : 1 ) );
+	if ( numSlices > sv_frameSlices->integer ) {
+		numSlices = sv_frameSlices->integer;
+	}
+
+	return numSlices > 1 ? numSlices : 1;
+}
+
 extern cvar_t	*cl_newClock;
 void SV_Frame( int msec,float fractionMsec ) {
 	int		frameMsec;
@@ -473,6 +524,40 @@ void SV_Frame( int msec,float fractionMsec ) {
 			sv.timeResidual++;
 		}
 	}
+	// a game frame runs in slices: run the next one, or all of them when the next game
+	// frame is due. The snapshot goes out when the frame is complete.
+	if ( sv.frameSliced ) {
+		if ( com_speeds->integer ) {
+			startTime = Sys_Milliseconds ();
+		}
+
+		{
+			svPerfGameScope perfGame;
+
+			if ( sv.timeResidual >= frameMsec ) {
+				SV_FinishSlicedFrame();
+			} else {
+				sv.inFrameSlice = qtrue;
+				if ( ge->RunFrameSlice() ) {
+					sv.frameSliced = qfalse;
+				}
+				sv.inFrameSlice = qfalse;
+			}
+		}
+
+		if ( com_speeds->integer ) {
+			time_game = Sys_Milliseconds () - startTime;
+		}
+
+		if ( sv.frameSliced ) {
+			return;
+		}
+
+		SG_TestSave();
+		SV_CheckTimeouts();
+		SV_SendClientMessages ();
+	}
+
 	if ( sv.timeResidual < frameMsec ) {
 		return;
 	}
@@ -504,10 +589,21 @@ void SV_Frame( int msec,float fractionMsec ) {
 //	SV_BotFrame( sv.time );
 
 	// run the game simulation in chunks
+	svPerfGameScope perfGame;
 	while ( sv.timeResidual >= frameMsec ) {
 		sv.timeResidual -= frameMsec;
 		sv.time += frameMsec;
 		re.G2API_SetTime(sv.time,G2T_SV_TIME);
+
+		// the last due game frame: spread it over the next client frames
+		const int numSlices = SV_GameFrameSlices( msec, frameMsec );
+		if ( numSlices > 1 && sv.timeResidual < frameMsec ) {
+			ge->RunFrameBegin( sv.time, numSlices );
+			sv.inFrameSlice = qtrue;
+			sv.frameSliced = ge->RunFrameSlice() ? qfalse : qtrue;
+			sv.inFrameSlice = qfalse;
+			break;
+		}
 
 		// let everything in the world think and move
 		ge->RunFrame( sv.time );
@@ -515,6 +611,10 @@ void SV_Frame( int msec,float fractionMsec ) {
 
 	if ( com_speeds->integer ) {
 		time_game = Sys_Milliseconds () - startTime;
+	}
+
+	if ( sv.frameSliced ) {
+		return;
 	}
 
 	SG_TestSave();	// returns immediately if not active, used for fake-save-every-cycle to test (mainly) Icarus disk code

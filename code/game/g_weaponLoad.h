@@ -252,6 +252,11 @@ void ATK_NpcVelocity(const char** holdBuf);
 void ATK_FiringLogic(const char** holdBuf);
 void ATK_Blockability(const char** holdBuf);
 void ATK_EffectDuration(const char** holdBuf);
+void ATK_BeamRadius(const char** holdBuf);
+void ATK_SelfKnockback(const char** holdBuf);
+void ATK_PushForce(const char** holdBuf);
+void ATK_KnockdownForce(const char** holdBuf);
+void ATK_BeamTrailEffect(const char** holdBuf);
 
 // Legacy weapons.dat force fields
 void WPN_FuncSkip(const char** holdBuf);
@@ -315,6 +320,11 @@ wpnParms_t AttackDataParms[] =
 	{ "spread",				ATK_Spread },
 	{ "fireOptions",		ATK_FireOptions},
 	{ "effectDuration",		ATK_EffectDuration},
+	{ "beamRadius",			ATK_BeamRadius},
+	{ "selfKnockback",		ATK_SelfKnockback},
+	{ "pushForce",			ATK_PushForce},
+	{ "knockdownForce",		ATK_KnockdownForce},
+	{ "beamTrailEffect",	ATK_BeamTrailEffect},
 };
 
 wpnParms_t WpnParms[] =

@@ -33,12 +33,35 @@ struct SEffectList
 	CEffect *mEffect;
 	int		mKillTime;
 	bool	mPortal;
+	short	mEffectID;		// effect template ID, 0 = made by code
 };
+
+// fxpool report counters, per effect ID, since the last report.
+int				gFxTallyID = 0;
+static int		fxPoolSpawned[FX_MAX_EFFECTS];
+static int		fxPoolEvicted[FX_MAX_EFFECTS];
+static int		fxPoolTransient[FX_MAX_EFFECTS];
+static int		fxPoolEvictedNew;		// evicted in the same frame they were made
+static int		fxPoolSince;			// theFxHelper.mTime of the last report
+
+// Transient primitives (see FX_TRANSIENT_LIFE): drawn once by the next FX_Add, then deleted.
+bool			gFxTransient = false;
+static std::vector<SEffectList>	fxTransient;
+
+static void FX_FreeTransient( void )
+{
+	for ( size_t i = 0; i < fxTransient.size(); i++ )
+	{
+		delete fxTransient[i].mEffect;
+	}
+	fxTransient.clear();
+}
 
 #define PI		3.14159f
 
 SEffectList		effectList[MAX_EFFECTS];
-SEffectList		*nextValidEffect;
+static int		fxAllocCursor = 0;	// next slot FX_GetValidEffect tries
+static SEffectList	*fxUpdating = NULL;	// slot that FX_Add updates or frees now
 SFxHelper		theFxHelper;
 
 int				activeFx = 0;
@@ -50,6 +73,9 @@ int				mOParticles;
 int				mLines;
 int				mTails;
 qboolean		fxInitialized = qfalse;
+
+SFxSpeeds		fxSpeeds;
+bool			fxSpeedsOn = false;
 
 //-------------------------
 // FX_Free
@@ -69,6 +95,7 @@ bool FX_Free( void )
 	}
 
 	activeFx = 0;
+	FX_FreeTransient();
 
 	theFxScheduler.Clean();
 	return true;
@@ -92,6 +119,7 @@ void FX_Stop( void )
 	}
 
 	activeFx = 0;
+	FX_FreeTransient();
 
 	theFxScheduler.Clean(false);
 }
@@ -118,7 +146,7 @@ int	FX_Init( void )
 	mMax = 0;
 	mMaxTime = 0;
 
-	nextValidEffect = &effectList[0];
+	fxAllocCursor = 0;
 	theFxHelper.Init();
 
 	// ( nothing to see here, go away )
@@ -139,9 +167,6 @@ static void FX_FreeMember( SEffectList *obj )
 	delete obj->mEffect;
 	obj->mEffect = 0;
 
-	// May as well mark this to be used next
-	nextValidEffect = obj;
-
 	activeFx--;
 }
 
@@ -149,40 +174,72 @@ static void FX_FreeMember( SEffectList *obj )
 //-------------------------
 // FX_GetValidEffect
 //
-// Finds an unused effect slot
-//
-// Note - in the editor, this function may return NULL, indicating that all
-// effects are being stopped.
+// Finds an unused effect slot. The pool is used as a ring: slots are given in cursor order,
+// so when the pool is full the slot at the cursor holds an effect at least one lap old.
+// The old code evicted slot 0 every time, so each new effect killed the one made just before.
 //-------------------------
 static SEffectList *FX_GetValidEffect()
 {
-	if ( nextValidEffect->mEffect == 0 )
+	if ( activeFx < MAX_EFFECTS )
 	{
-		return nextValidEffect;
-	}
-
-	int			i;
-	SEffectList	*ef;
-
-	// Blah..plow through the list till we find something that is currently untainted
-	for ( i = 0, ef = effectList; i < MAX_EFFECTS; i++, ef++ )
-	{
-		if ( ef->mEffect == 0 )
+		for ( int i = 0; i < MAX_EFFECTS; i++ )
 		{
-			return ef;
+			SEffectList *ef = &effectList[fxAllocCursor];
+
+			if ( ++fxAllocCursor == MAX_EFFECTS )
+			{
+				fxAllocCursor = 0;
+			}
+			if ( ef->mEffect == 0 )
+			{
+				return ef;
+			}
 		}
 	}
 
-	// report the error.
+	// Report the error, but at most once a second. Once the pool is full this is reached on
+	// every single allocation, and the formatting plus the console write cost far more than
+	// the exhaustion being reported - enough to dominate a profile taken in a build that
+	// still compiles this in.
 #ifndef FINAL_BUILD
-	theFxHelper.Print( "FX system out of effects\n" );
+	static int nextOutOfEffectsPrint = 0;
+
+	if ( theFxHelper.mTime >= nextOutOfEffectsPrint
+		|| theFxHelper.mTime + 1000 < nextOutOfEffectsPrint )	// map change, time went back
+	{
+		nextOutOfEffectsPrint = theFxHelper.mTime + 1000;
+		theFxHelper.Print( "FX system out of effects\n" );
+	}
 #endif
 
-	// Hmmm.. just trashing the first effect in the list is a poor approach
-	FX_FreeMember( &effectList[0] );
+	// Evict the effect at the cursor. Its Die() can spawn death effects, which evict further on.
+	// Do not evict the effect that FX_Add updates: its code continues on the freed object.
+	SEffectList *victim = &effectList[fxAllocCursor];
 
-	// Recursive call
-	return nextValidEffect;
+	if ( ++fxAllocCursor == MAX_EFFECTS )
+	{
+		fxAllocCursor = 0;
+	}
+
+	if ( victim == fxUpdating )
+	{
+		victim = &effectList[fxAllocCursor];
+
+		if ( ++fxAllocCursor == MAX_EFFECTS )
+		{
+			fxAllocCursor = 0;
+		}
+	}
+
+	FXS_COUNT( evicted );
+	fxPoolEvicted[victim->mEffectID]++;
+	if ( victim->mEffect->GetTimeStart() == theFxHelper.mTime )
+	{
+		fxPoolEvictedNew++;
+	}
+	FX_FreeMember( victim );
+
+	return victim;
 }
 
 
@@ -194,6 +251,11 @@ static SEffectList *FX_GetValidEffect()
 bool FX_ActiveFx(void)
 {
 	return ((activeFx > 0) || (theFxScheduler.NumScheduledFx() > 0));
+}
+
+int FX_ActiveCount( void )
+{
+	return activeFx;
 }
 
 
@@ -224,6 +286,7 @@ void FX_Add( bool portal )
 				continue;	//this one does not render in this scene
 			}
 			// Effect is active
+			fxUpdating = ef;
 			if ( theFxHelper.mTime > ef->mKillTime )
 			{
 				// Clean up old effects, calling any death effects as needed
@@ -237,11 +300,35 @@ void FX_Add( bool portal )
 				{
 					// We've been marked for death
 					FX_FreeMember( ef );
-					continue;
 				}
 			}
+			fxUpdating = NULL;
 		}
 	}
+
+	// Transient primitives: draw once, then delete. The main pass deletes any that are left.
+	for ( size_t t = 0; t < fxTransient.size(); t++ )
+	{
+		CEffect *effect = fxTransient[t].mEffect;
+
+		if ( effect == 0 || ( portal != fxTransient[t].mPortal && portal ) )
+		{
+			continue;
+		}
+		fxTransient[t].mEffect = 0;
+		if ( portal == fxTransient[t].mPortal )
+		{
+			effect->Update();
+		}
+		effect->ClearFlags( FX_KILL_ON_IMPACT );
+		effect->Die();
+		delete effect;
+	}
+	if ( !portal )
+	{
+		fxTransient.clear();
+	}
+
 	if ( fx_debug.integer == 2 && !portal )
 	{
 		if (theFxHelper.mFrameTime > 100 || theFxHelper.mFrameTime < 5)
@@ -386,9 +473,29 @@ void FX_Add( bool portal )
 extern bool gEffectsInPortal;	//from FXScheduler.cpp so i don't have to pass it in on EVERY FX_ADD*
 void FX_AddPrimitive( CEffect *pEffect, int killTime )
 {
+	if ( gFxTransient && killTime <= FX_TRANSIENT_LIFE )
+	{
+		SEffectList transient;
+
+		transient.mEffect = pEffect;
+		transient.mKillTime = theFxHelper.mTime + killTime;
+		transient.mPortal = gEffectsInPortal;
+		transient.mEffectID = (short)gFxTallyID;
+		fxTransient.push_back( transient );
+		FXS_COUNT( transient );
+		fxPoolTransient[gFxTallyID]++;
+
+		pEffect->SetTimeStart( theFxHelper.mTime );
+		pEffect->SetTimeEnd( theFxHelper.mTime + killTime );
+		return;
+	}
+
 	SEffectList *item = FX_GetValidEffect();
+	FXS_COUNT( spawned );
+	fxPoolSpawned[gFxTallyID]++;
 
 	item->mEffect = pEffect;
+	item->mEffectID = (short)gFxTallyID;
 	item->mKillTime = theFxHelper.mTime + killTime;
 	item->mPortal = gEffectsInPortal;	//global set in AddScheduledEffects
 
@@ -397,6 +504,95 @@ void FX_AddPrimitive( CEffect *pEffect, int killTime )
 	// Stash these in the primitive so it has easy access to the vals
 	pEffect->SetTimeStart( theFxHelper.mTime );
 	pEffect->SetTimeEnd( theFxHelper.mTime + killTime );
+}
+
+//-------------------------
+// FX_PoolReport
+//
+// "fxpool" command: per effect file, the primitives spawned and evicted per second since the
+// last call, and the primitives live and scheduled now. Prints the top effects by spawn rate
+// and by live count.
+//-------------------------
+static void FX_PoolPrintTop( const char *title, const int *key, const int *live, const int *sched, float perSec )
+{
+	static const int TOP = 12;
+	int order[TOP];
+	int n = 0;
+
+	for ( int id = 0; id < FX_MAX_EFFECTS; id++ )
+	{
+		if ( key[id] <= 0 )
+		{
+			continue;
+		}
+		// Insertion into the sorted top list
+		int pos = ( n < TOP ) ? n++ : TOP;
+		while ( pos > 0 && key[order[pos - 1]] < key[id] )
+		{
+			if ( pos < TOP )
+			{
+				order[pos] = order[pos - 1];
+			}
+			pos--;
+		}
+		if ( pos < TOP )
+		{
+			order[pos] = id;
+		}
+	}
+
+	CG_Printf( "%s\n   spawn/s   trans/s   evict/s    live   sched  effect\n", title );
+	for ( int i = 0; i < n; i++ )
+	{
+		const int id = order[i];
+		CG_Printf( "  %8.0f  %8.0f  %8.0f  %6i  %6i  %s\n",
+			fxPoolSpawned[id] * perSec, fxPoolTransient[id] * perSec, fxPoolEvicted[id] * perSec, live[id], sched[id],
+			theFxScheduler.GetEffectName( id ) );
+	}
+}
+
+void FX_PoolReport( void )
+{
+	static int live[FX_MAX_EFFECTS], sched[FX_MAX_EFFECTS], made[FX_MAX_EFFECTS];
+	int totalSpawned = 0, totalTransient = 0, totalEvicted = 0, totalSched = 0;
+
+	memset( live, 0, sizeof( live ) );
+	memset( sched, 0, sizeof( sched ) );
+
+	for ( int i = 0; i < MAX_EFFECTS; i++ )
+	{
+		if ( effectList[i].mEffect )
+		{
+			live[effectList[i].mEffectID]++;
+		}
+	}
+	theFxScheduler.CountScheduledFx( sched );
+
+	for ( int id = 0; id < FX_MAX_EFFECTS; id++ )
+	{
+		made[id] = fxPoolSpawned[id] + fxPoolTransient[id];
+		totalSpawned += fxPoolSpawned[id];
+		totalTransient += fxPoolTransient[id];
+		totalEvicted += fxPoolEvicted[id];
+		totalSched += sched[id];
+	}
+
+	const int elapsed = theFxHelper.mTime - fxPoolSince;
+	const float perSec = ( elapsed > 0 ) ? 1000.0f / elapsed : 0.0f;
+
+	CG_Printf( "fxpool over %.1f s: live %i/%i  scheduled %i  spawned %.0f/s  transient %.0f/s  evicted %.0f/s (%i in their first frame)\n",
+		elapsed * 0.001f, activeFx, MAX_EFFECTS, totalSched,
+		totalSpawned * perSec, totalTransient * perSec, totalEvicted * perSec, fxPoolEvictedNew );
+	FX_PoolPrintTop( "top by spawn rate (pool + transient):", made, live, sched, perSec );
+	FX_PoolPrintTop( "top by live count:", live, live, sched, perSec );
+	FX_PoolPrintTop( "top by scheduled count:", sched, live, sched, perSec );
+	CG_Printf( "(code) = primitives made directly by game code, not by an .efx file\n" );
+
+	memset( fxPoolSpawned, 0, sizeof( fxPoolSpawned ) );
+	memset( fxPoolEvicted, 0, sizeof( fxPoolEvicted ) );
+	memset( fxPoolTransient, 0, sizeof( fxPoolTransient ) );
+	fxPoolEvictedNew = 0;
+	fxPoolSince = theFxHelper.mTime;
 }
 
 

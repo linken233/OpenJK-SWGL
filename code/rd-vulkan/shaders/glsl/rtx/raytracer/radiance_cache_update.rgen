@@ -1,0 +1,219 @@
+/*
+===========================================================================
+Copyright (C) 1999 - 2005, Id Software, Inc.
+Copyright (C) 2000 - 2013, Raven Software, Inc.
+Copyright (C) 2001 - 2013, Activision, Inc.
+Copyright (C) 2013 - 2015, OpenJK contributors
+
+This file is part of the OpenJK source code.
+
+OpenJK is free software; you can redistribute it and/or modify it
+under the terms of the GNU General Public License version 2 as
+published by the Free Software Foundation.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program; if not, see <http://www.gnu.org/licenses/>.
+===========================================================================
+*/
+
+// ========================================================================== //
+// Updates the radiance cache. One path starts at a random pixel of each
+// pt_rc_update_stride x pt_rc_update_stride tile, on the surface of the G-buffer.
+// The path follows cosine sampled bounces. At each world surface it finds the
+// direct light, as the bounce pass does. Then it walks back and writes D of every
+// surface to its cell: D(i) = direct(i) + emission(i+1) + albedo(i+1) * D(i+1).
+//
+// The last surface of the path is the tail. It is not written. It gives the light
+// of the later bounces, from its cell in the cache.
+//
+// Units: a cosine sampled ray has the pdf cos / pi. The light that it finds, with no
+// other factor, has the expected value of the sum of L * cos / pi over the hemisphere.
+// get_direct_illumination gives the same quantity for a light: radiance * NdotL / pi.
+// So both add up in D, and the pass needs no factor of pi.
+// ========================================================================== //
+
+#version 460
+#extension GL_GOOGLE_include_directive    : enable
+#pragma optionNV(unroll all)
+
+#include "../path_tracer_rgen.h"
+#include "../radiance_cache.h"
+
+#define MAX_PATH_SURFACES (RC_MAX_BOUNCES + 1)
+
+// A surface that the path hits.
+struct PathSurface
+{
+	bool	cacheable;	// a static world surface: it has a cell
+	uint	h1, h2;		// the key of the cell
+	vec3	incoming;	// direct light of the surface. The cached D for the tail.
+	vec3	albedo;		// 0 for a surface that has no cell: it only emits
+	vec3	emission;	// the light that the surface sends back: emission, or the sky
+};
+
+// Shades the surface that the ray hit. It reads ray_payload_geometry before the shadow rays overwrite it.
+PathSurface
+shade_surface(Ray ray, int bounce, bool is_tail, int shadow_cull_mask, out vec3 hit_position, out vec3 hit_normal)
+{
+	PathSurface s;
+	s.cacheable = false;
+	s.h1 = 0u;
+	s.h2 = 0u;
+	s.incoming = vec3(0);
+	s.albedo = vec3(0);
+	s.emission = vec3(0);
+
+	hit_position = vec3(0);
+	hit_normal = vec3(0);
+
+	const uint buffer_index = ray_payload_geometry.buffer_and_instance_idx & 0xffffu;
+	Triangle triangle = get_hit_triangle(ray_payload_geometry);
+
+	if(is_sky(triangle.material_id))
+	{
+		if(!is_analytic_light_hit(triangle.material_id, 1))
+			s.emission = env_map(ray.direction, true) * global_ubo.pt_env_scale;
+
+		return s;
+	}
+
+	vec3 bary = get_hit_barycentric(ray_payload_geometry);
+	vec2 tex_coord = triangle.tex_coords0 * bary;
+	MaterialInfo minfo = get_material_info(triangle.material_id);
+
+	hit_position = triangle.positions * bary;
+	hit_normal = normalize(triangle.normals * bary);
+	if(dot(hit_normal, ray.direction) > 0)
+		hit_normal = -hit_normal;
+
+	vec3 base_color = get_bounce_base_color(minfo, tex_coord);
+	vec3 emissive = get_bounce_emissive(triangle, minfo, tex_coord, base_color, 3);
+
+	// The normal that faces the ray is the convention of this pass, for the cell key, NEE and the sun
+	if(luminance(emissive) > 0 && !is_analytic_light_hit(triangle.material_id, 1))
+		s.emission = emissive * get_bounce_spotlight(ray.direction, hit_normal);
+
+	s.cacheable = is_static_world(buffer_index);
+	if(!s.cacheable)
+		return s;
+
+	s.albedo = base_color;
+	rc_get_key(hit_position, hit_normal, s.h1, s.h2);
+
+	if(is_tail)
+	{
+		vec3 cached;
+		float weight;
+		if(rc_fetch(s.h1, s.h2, cached, weight) && weight >= global_ubo.pt_rc_min_weight)
+			s.incoming = cached;
+
+		return s;
+	}
+
+	vec3 diffuse, sun_diffuse;
+	get_bounce_direct_lighting(hit_position, hit_normal, hit_normal, uint(triangle.cluster), triangle.material_id,
+		shadow_cull_mask, ray.direction, base_color, false, RC_RNG_BOUNCE_BASE + bounce, diffuse);
+	get_bounce_sun_lighting(hit_position, hit_normal, hit_normal, uint(triangle.cluster), triangle.material_id,
+		shadow_cull_mask, ray.direction, sun_diffuse);
+
+	s.incoming = diffuse + sun_diffuse * global_ubo.sun_bounce_scale;
+
+	return s;
+}
+
+void
+main()
+{
+	// With two bounce rays, the bounce pass replaces the position of the G-buffer.
+	if(global_ubo.pt_num_bounce_rays > 1)
+		return;
+
+	const int stride = clamp(int(global_ubo.pt_rc_update_stride), 1, RC_MAX_UPDATE_STRIDE);
+	const ivec2 tile = ivec2(gl_LaunchIDEXT.xy);
+
+	uint tile_hash = rc_mix(uint(tile.x) + rc_mix(uint(tile.y) + rc_mix(uint(global_ubo.current_frame_idx))));
+	ivec2 ipos = tile * stride + ivec2(tile_hash % uint(stride), (tile_hash >> 16) % uint(stride));
+
+	if(any(greaterThanEqual(ipos, ivec2(global_ubo.width, global_ubo.height))))
+		return;
+
+	rng_seed = texelFetch(TEX_PT_RNG_SEED_A, ipos, 0).r;
+
+	vec4 position_material = texelFetch(TEX_PT_SHADING_POSITION, ipos, 0);
+	uint material_id = floatBitsToUint(position_material.w);
+
+	// A sky pixel has no surface
+	if(material_id == 0 || abs(texelFetch(TEX_PT_VIEW_DEPTH_A, ipos, 0).x) >= PRIMARY_RAY_T_MAX)
+		return;
+
+	vec3 view_direction = texelFetch(TEX_PT_VIEW_DIRECTION, ipos, 0).xyz;
+	vec3 normal = decode_normal(texelFetch(TEX_PT_GEO_NORMAL_A, ipos, 0).x);
+
+	int bounce_cull_mask = BOUNCE_RAY_CULL_MASK;
+	int shadow_cull_mask = SHADOW_RAY_CULL_MASK;
+
+	if(global_ubo.first_person_model != 0 && (material_id & MATERIAL_FLAG_WEAPON) == 0)
+	{
+		bounce_cull_mask |= AS_FLAG_VIEWER_MODELS;
+		shadow_cull_mask |= AS_FLAG_VIEWER_MODELS;
+	}
+	else
+	{
+		bounce_cull_mask |= AS_FLAG_VIEWER_WEAPON;
+		shadow_cull_mask |= AS_FLAG_VIEWER_WEAPON;
+	}
+
+	Ray ray;
+	ray.origin = position_material.xyz - view_direction * 0.01;
+	ray.t_min = 0;
+	ray.t_max = 10000;
+
+	// The surfaces that write to the cache, and the tail
+	const int num_written = clamp(int(global_ubo.pt_rc_bounces), 1, RC_MAX_BOUNCES);
+
+	PathSurface surfaces[MAX_PATH_SURFACES];
+	int count = 0;
+
+	for(int i = 0; i <= num_written; i++)
+	{
+		vec2 rng = vec2(get_rng(RNG_BRDF_X((RC_RNG_BOUNCE_BASE + i))), get_rng(RNG_BRDF_Y((RC_RNG_BOUNCE_BASE + i))));
+
+		ray.direction = normalize(construct_ONB_frisvad(normal) * sample_cos_hemisphere(rng));
+
+		trace_geometry_ray(ray, true, bounce_cull_mask);
+
+		if(!found_intersection(ray_payload_geometry))
+			break;
+
+		vec3 hit_position, hit_normal;
+		surfaces[count] = shade_surface(ray, i, i == num_written, shadow_cull_mask, hit_position, hit_normal);
+		count++;
+
+		if(!surfaces[count - 1].cacheable || i == num_written)
+			break;
+
+		normal = hit_normal;
+		ray.origin = hit_position - ray.direction * 0.01;
+	}
+
+	// Walk back from the end of the path
+	vec3 outgoing = vec3(0);
+
+	for(int i = count - 1; i >= 0; i--)
+	{
+		vec3 incoming = surfaces[i].incoming + outgoing;
+		bool is_valid = !any(isnan(incoming)) && !any(isinf(incoming));
+
+		incoming = clamp_output(incoming);
+
+		if(surfaces[i].cacheable && i < num_written && is_valid)
+			rc_add_sample(surfaces[i].h1, surfaces[i].h2, incoming);
+
+		outgoing = surfaces[i].emission + surfaces[i].albedo * incoming;
+	}
+}

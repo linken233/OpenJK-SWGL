@@ -1,0 +1,425 @@
+#version 460
+#extension GL_GOOGLE_include_directive    : enable
+#extension GL_EXT_nonuniform_qualifier    : enable
+
+#include "../utils.glsl"
+
+#define GLOBAL_UBO_DESC_SET_IDX 3
+#include "../global_ubo.h"
+
+#define GLOBAL_TEXTURES_DESC_SET_IDX 1
+#include "../global_textures.h"
+
+#define VERTEX_BUFFER_DESC_SET_IDX 0
+#include "../vertex_buffer.h"
+
+#include "../read_visbuf.glsl"
+
+#ifdef USE_RTX_GLOBAL_MODEL_VBO
+	#define MODEL_MDXM_VERTEX_POSITION	0
+	#define MODEL_MDXM_VERTEX_NORMAL	4
+	#define MODEL_MDXM_VERTEX_TEXCOORD	8
+	#define MODEL_MDXM_VERTEX_BONEREFS	10
+	#define MODEL_MDXM_VERTEX_WEIGHTS	11
+	#define MODEL_MDXM_VERTEX_TANGENTS	12
+	#define MODEL_MDXM_VERTEX_SIZE		16
+
+	#define MODEL_VERTEX_POSITION	0
+	#define MODEL_VERTEX_NORMAL		4
+	#define MODEL_VERTEX_TEXCOORD	8
+	#define MODEL_VERTEX_TANGENTS	10
+	#define MODEL_VERTEX_SIZE		14
+#else
+	#define MODEL_VERTEX_POSITION	0
+	#define MODEL_VERTEX_NORMAL		4
+	#define MODEL_VERTEX_TEXCOORD	8
+	#define MODEL_VERTEX_TANGENTS	10
+	#define MODEL_VERTEX_SIZE		14
+#endif
+
+layout(set = 2,	binding = 0) readonly buffer MODEL_VBO {
+	uint data[];
+} model_vbos[];
+
+#ifdef USE_RTX_GLOBAL_MODEL_VBO
+	layout(set = 4,	binding = 0) readonly buffer MODEL_IBO {
+		uint data[];
+	} model_ibos[];
+#endif
+
+uint get_model_uint(uint model_id, uint offset)
+{
+	return model_vbos[nonuniformEXT(model_id)].data[offset];
+}
+
+vec2 get_model_float2(uint model_id, uint offset)
+{
+	vec2 result;
+	result.x = uintBitsToFloat(model_vbos[nonuniformEXT(model_id)].data[offset + 0]);
+	result.y = uintBitsToFloat(model_vbos[nonuniformEXT(model_id)].data[offset + 1]);
+	return result;
+}
+
+vec3 get_model_float3(uint model_id, uint offset)
+{
+	vec3 result;
+	result.x = uintBitsToFloat(model_vbos[nonuniformEXT(model_id)].data[offset + 0]);
+	result.y = uintBitsToFloat(model_vbos[nonuniformEXT(model_id)].data[offset + 1]);
+	result.z = uintBitsToFloat(model_vbos[nonuniformEXT(model_id)].data[offset + 2]);
+	return result;
+}
+
+vec4 get_model_float4(uint model_id, uint offset)
+{
+	vec4 result;
+	result.x = uintBitsToFloat(model_vbos[nonuniformEXT(model_id)].data[offset + 0]);
+	result.y = uintBitsToFloat(model_vbos[nonuniformEXT(model_id)].data[offset + 1]);
+	result.z = uintBitsToFloat(model_vbos[nonuniformEXT(model_id)].data[offset + 2]);
+	result.w = uintBitsToFloat(model_vbos[nonuniformEXT(model_id)].data[offset + 3]);
+	return result;
+}
+
+mat4x3 GetBoneMatrix( uint bone_offset, uint index)
+{
+	//mat3x4 bone = instance_buffer.model_mdxm_bones[bone_offset + index];
+	mat3x4 bone = mdxm_matrix_buffer.matrices[bone_offset + index];
+
+	return mat4x3(
+		bone[0].x, bone[1].x, bone[2].x,
+		bone[0].y, bone[1].y, bone[2].y,
+		bone[0].z, bone[1].z, bone[2].z,
+		bone[0].w, bone[1].w, bone[2].w);
+}
+
+Triangle
+get_model_triangle(uint model_id, uint prim_id, uint idx_offset, uint vert_offset)
+{
+	uint idx_base = idx_offset + prim_id * 3;
+
+	uvec3 idx;
+#ifdef USE_RTX_GLOBAL_MODEL_VBO
+	idx.x = model_ibos[nonuniformEXT(model_id)].data[idx_base + 0];
+	idx.y = model_ibos[nonuniformEXT(model_id)].data[idx_base + 1];
+	idx.z = model_ibos[nonuniformEXT(model_id)].data[idx_base + 2];
+#else
+	idx.x = model_vbos[nonuniformEXT(model_id)].data[idx_base + 0];
+	idx.y = model_vbos[nonuniformEXT(model_id)].data[idx_base + 1];
+	idx.z = model_vbos[nonuniformEXT(model_id)].data[idx_base + 2];
+#endif
+
+	idx = idx * MODEL_VERTEX_SIZE + vert_offset;
+
+	Triangle t;
+	t.positions[0] = get_model_float3(model_id, idx[0] + MODEL_VERTEX_POSITION);
+	t.positions[1] = get_model_float3(model_id, idx[1] + MODEL_VERTEX_POSITION);
+	t.positions[2] = get_model_float3(model_id, idx[2] + MODEL_VERTEX_POSITION);
+
+	t.normals[0] = get_model_float3(model_id, idx[0] + MODEL_VERTEX_NORMAL);
+	t.normals[1] = get_model_float3(model_id, idx[1] + MODEL_VERTEX_NORMAL);
+	t.normals[2] = get_model_float3(model_id, idx[2] + MODEL_VERTEX_NORMAL);
+
+	t.tex_coords0[0] = get_model_float2(model_id, idx[0] + MODEL_VERTEX_TEXCOORD);
+	t.tex_coords0[1] = get_model_float2(model_id, idx[1] + MODEL_VERTEX_TEXCOORD);
+	t.tex_coords0[2] = get_model_float2(model_id, idx[2] + MODEL_VERTEX_TEXCOORD);
+
+	t.tangents[0] = get_model_float3(model_id, idx[0] + MODEL_VERTEX_TANGENTS);
+	t.tangents[1] = get_model_float3(model_id, idx[1] + MODEL_VERTEX_TANGENTS);
+	t.tangents[2] = get_model_float3(model_id, idx[2] + MODEL_VERTEX_TANGENTS);
+
+	t.material_id = 0; // needs to come from uniform buffer
+	t.shell = 0;
+#if 0
+	if(tangent.w < 0)
+		t.material_id |= MATERIAL_FLAG_HANDEDNESS;
+#endif
+
+	t.emissive_factor = 1.0;
+	t.alpha = 1.0;
+
+	return t;
+}
+
+Triangle
+get_mxdm_triangle(uint model_id, uint prim_id, uint idx_offset, uint vert_offset, uint bone_offset )
+{
+	uint idx_base = idx_offset + prim_id * 3;
+
+	uvec3 idx;
+#ifdef USE_RTX_GLOBAL_MODEL_VBO
+	idx.x = model_ibos[nonuniformEXT(model_id)].data[idx_base + 0];
+	idx.y = model_ibos[nonuniformEXT(model_id)].data[idx_base + 1];
+	idx.z = model_ibos[nonuniformEXT(model_id)].data[idx_base + 2];
+#else
+	idx.x = model_vbos[nonuniformEXT(model_id)].data[idx_base + 0];
+	idx.y = model_vbos[nonuniformEXT(model_id)].data[idx_base + 1];
+	idx.z = model_vbos[nonuniformEXT(model_id)].data[idx_base + 2];
+#endif
+
+	idx = idx * MODEL_MDXM_VERTEX_SIZE + vert_offset;
+
+	Triangle t;
+	t.positions[0] = get_model_float3(model_id, idx[0] + MODEL_MDXM_VERTEX_POSITION);
+	t.positions[1] = get_model_float3(model_id, idx[1] + MODEL_MDXM_VERTEX_POSITION);
+	t.positions[2] = get_model_float3(model_id, idx[2] + MODEL_MDXM_VERTEX_POSITION);
+
+	t.normals[0] = get_model_float3(model_id, idx[0] + MODEL_MDXM_VERTEX_NORMAL);
+	t.normals[1] = get_model_float3(model_id, idx[1] + MODEL_MDXM_VERTEX_NORMAL);
+	t.normals[2] = get_model_float3(model_id, idx[2] + MODEL_MDXM_VERTEX_NORMAL);
+
+	t.tex_coords0[0] = get_model_float2(model_id, idx[0] + MODEL_MDXM_VERTEX_TEXCOORD);
+	t.tex_coords0[1] = get_model_float2(model_id, idx[1] + MODEL_MDXM_VERTEX_TEXCOORD);
+	t.tex_coords0[2] = get_model_float2(model_id, idx[2] + MODEL_MDXM_VERTEX_TEXCOORD);
+
+	t.tangents[0] = get_model_float3(model_id, idx[0] + MODEL_MDXM_VERTEX_TANGENTS);
+	t.tangents[1] = get_model_float3(model_id, idx[1] + MODEL_MDXM_VERTEX_TANGENTS);
+	t.tangents[2] = get_model_float3(model_id, idx[2] + MODEL_MDXM_VERTEX_TANGENTS);
+
+	for ( int i_vtx = 0; i_vtx < 3; i_vtx++)
+	{
+		mat4x3 skin_matrix = mat4x3(0);
+
+		uint bone_indices =  get_model_uint(model_id, idx[i_vtx] + MODEL_MDXM_VERTEX_BONEREFS);
+		vec4 bone_weights =  unpackUnorm4x8(get_model_uint(model_id, idx[i_vtx] + MODEL_MDXM_VERTEX_WEIGHTS));
+
+		for (int i_bone = 0; i_bone < 4; i_bone++)
+		{
+			uint bone_index = ( bone_indices >> (i_bone * 8) ) & 0xFF;
+			float bone_weight = bone_weights[i_bone];
+
+			mat4x3 m = GetBoneMatrix( bone_offset, bone_index );
+			skin_matrix += m * bone_weight;
+		}
+
+		t.positions[i_vtx]		= skin_matrix * vec4( t.positions[i_vtx], 1.0 );
+		t.normals[i_vtx]		= normalize(skin_matrix * vec4( t.normals[i_vtx], 0.0 ));
+		t.tangents[i_vtx]	= normalize(skin_matrix * vec4( t.tangents[i_vtx], 0.0 ));
+	}
+
+	t.material_id = 0; // needs to come from uniform buffer
+	t.shell = 0;
+#if 0
+	if(tangent.w < 0)
+		t.material_id |= MATERIAL_FLAG_HANDEDNESS;
+#endif
+
+	t.emissive_factor = 1.0;
+	t.alpha = 1.0;
+
+	return t;
+}
+
+// The deformVertexes of the shader of the instance (RB_DeformTessGeometry), in model space, in
+// the order of the shader. See fill_model_instance_shader_data.
+float deform_triangle_half(float x)
+{
+	return x < 0.25 ? 4.0 * x : 2.0 - 4.0 * x;
+}
+
+// One wave function at x (in periods), as the tables of the rasterizer.
+float deform_wave_value(uint func, float x)
+{
+	x = fract(x);
+
+	switch (func)
+	{
+		case 1u:  return sin(x * 2.0 * M_PI);	// GF_SIN
+		case 2u:  return x < 0.5 ? 1.0 : -1.0;	// GF_SQUARE
+		case 3u:  return x < 0.5 ? deform_triangle_half(x) : -deform_triangle_half(x - 0.5);	// GF_TRIANGLE
+		case 4u:  return x;						// GF_SAWTOOTH
+	}
+
+	return 1.0 - x;								// GF_INVERSE_SAWTOOTH
+}
+
+// A smooth noise in [-1, 1] for the wiggle of the normals: R_NoiseGet4f of the rasterizer is a
+// random table, so only its look is kept.
+float deform_hash(vec4 p)
+{
+	return fract(sin(dot(p, vec4(127.1, 311.7, 74.7, 269.5))) * 43758.5453) * 2.0 - 1.0;
+}
+
+float deform_noise(vec4 p)
+{
+	vec4 i = floor(p);
+	vec4 f = fract(p);
+	f = f * f * (3.0 - 2.0 * f);
+
+	float r = 0.0;
+
+	for (int k = 0; k < 16; k++)
+	{
+		vec4 o = vec4(k & 1, (k >> 1) & 1, (k >> 2) & 1, (k >> 3) & 1);
+		vec4 w = mix(1.0 - f, f, o);
+
+		r += deform_hash(i + o) * w.x * w.y * w.z * w.w;
+	}
+
+	return r;
+}
+
+// prev: the vertex at the previous frame, which only moves its position.
+void apply_deforms(uint instance_index, inout vec3 position, inout vec3 normal, vec2 st, bool prev)
+{
+	uint header = get_model_instance_shader_uint(instance_index, 3);
+	uint count = header & 0xffu;
+
+	if (count == 0u)
+		return;
+
+	float dt = prev ? unpackHalf2x16(header).y : 0.0;
+	float time = uintBitsToFloat(get_model_instance_shader_uint(instance_index, 4)) - dt;
+
+	for (uint d = 0u; d < count; d++)
+	{
+		uint base = RTX_DEFORM_FIRST + d * RTX_DEFORM_UINTS;
+		uint w0 = get_model_instance_shader_uint(instance_index, base + 0u);
+		uint type = w0 & 15u;
+		uint func = (w0 >> 4) & 15u;
+		float p0 = unpackHalf2x16(w0).y;
+		vec2 p12 = unpackHalf2x16(get_model_instance_shader_uint(instance_index, base + 1u));
+		vec2 p34 = unpackHalf2x16(get_model_instance_shader_uint(instance_index, base + 2u));
+
+		if (type == 1u)			// wave
+		{
+			float off = (position.x + position.y + position.z) * p34.y;
+			position += normal * (p0 + deform_wave_value(func, p12.y + off + time * p34.x) * p12.x);
+		}
+		else if (type == 2u)	// bulge
+		{
+			float now = uintBitsToFloat(get_model_instance_shader_uint(instance_index, base + 3u)) - dt * p34.x;
+			position += normal * (sin(st.x * p12.x + now) * p0);
+		}
+		else if (type == 3u)	// uniform bulge
+		{
+			position += normal * p0;
+		}
+		else if (type == 4u)	// move
+		{
+			vec2 mxy = unpackHalf2x16(get_model_instance_shader_uint(instance_index, base + 4u));
+			float mz = unpackHalf2x16(get_model_instance_shader_uint(instance_index, base + 5u)).x;
+
+			position += vec3(mxy, mz) * (p0 + deform_wave_value(func, p12.y + time * p34.x) * p12.x);
+		}
+		else if (type == 5u && !prev)	// normals
+		{
+			vec3 q = position * 0.98;
+			float t = time * p34.x;
+			vec3 n = normal + p12.x * vec3(
+				deform_noise(vec4(q, t)),
+				deform_noise(vec4(q + vec3(100.0, 0.0, 0.0), t)),
+				deform_noise(vec4(q + vec3(200.0, 0.0, 0.0), t)));
+
+			normal = normalize(n);
+		}
+	}
+}
+
+#define LOCAL_SIZE_X 512
+
+layout(local_size_x = LOCAL_SIZE_X, local_size_y = 1, local_size_z = 1) in;
+
+void main()
+{
+	uint instance_index = instance_buffer.animated_model_indices[gl_WorkGroupID.x];
+
+	ModelInstance mi = instance_buffer.model_instances[instance_index];
+
+	for( uint idx = gl_LocalInvocationID.x; idx < mi.prim_count; idx += LOCAL_SIZE_X )
+	{
+		Triangle t;
+
+		/* model mdxm/ghoul2 */
+		if ( mi.mdxm_matrix_offset_curr >= 0 )
+		{
+			// Perform bone-based skinning for two frames:
+			// Current frame...
+			t = get_mxdm_triangle( mi.source_buffer_idx, 
+				idx, mi.idx_offset, 0 /*vtx_offset*/, mi.mdxm_matrix_offset_curr );
+#if 1
+			// ... previous frame
+			Triangle t_prev = get_mxdm_triangle(mi.source_buffer_idx,
+				idx, mi.idx_offset, 0 /*vtx_offset*/, mi.mdxm_matrix_offset_prev );
+	
+			// Use only the triangle positions from the previous frame
+			t.positions_prev = t_prev.positions;
+#else
+			t.positions_prev = t.positions;
+#endif
+			// Apply the model-to-world transform
+			for (int vtx = 0; vtx < 3; vtx++)
+			{
+				// The deformVertexes of the shader, for the current and the previous position
+				vec3 prev_normal = t.normals[vtx];
+				apply_deforms(instance_index, t.positions[vtx], t.normals[vtx], t.tex_coords0[vtx], false);
+				apply_deforms(instance_index, t.positions_prev[vtx], prev_normal, t.tex_coords0[vtx], true);
+
+				// Current position
+				t.positions[vtx] = vec3(mi.transform * vec4(t.positions[vtx], 1.0));
+
+				// Previous position
+				t.positions_prev[vtx] = vec3(mi.transform_prev * vec4(t.positions_prev[vtx], 1.0));
+
+				// Current normal
+				t.normals[vtx] = normalize(vec3(mi.transform * vec4(t.normals[vtx], 0.0)));
+
+				// Current tangent
+				t.tangents[vtx] = normalize(vec3(mi.transform * vec4(t.tangents[vtx], 0.0)));
+			}
+		}
+
+		/* model mdv */
+		else
+		{ 
+			Triangle t_a_curr = get_model_triangle( mi.source_buffer_idx, idx, mi.idx_offset, mi.prim_offset_curr_pose_curr_frame );
+			Triangle t_b_curr = get_model_triangle( mi.source_buffer_idx, idx, mi.idx_offset, mi.prim_offset_prev_pose_curr_frame );
+			Triangle t_a_prev = get_model_triangle( mi.source_buffer_idx, idx, mi.idx_offset, mi.prim_offset_curr_pose_prev_frame );
+			Triangle t_b_prev = get_model_triangle( mi.source_buffer_idx, idx, mi.idx_offset, mi.prim_offset_prev_pose_prev_frame );
+			
+			// Blend between the two animation frames and apply the model-to-world transform
+			for (int vtx = 0; vtx < 3; vtx++)
+			{
+				// Current position
+				t.positions[vtx] = mix(t_a_curr.positions[vtx], t_b_curr.positions[vtx], mi.pose_lerp_curr_frame);
+				vec3 model_normal = normalize(mix(t_a_curr.normals[vtx], t_b_curr.normals[vtx], mi.pose_lerp_curr_frame));
+				vec3 prev_normal = model_normal;
+				apply_deforms(instance_index, t.positions[vtx], model_normal, t_a_curr.tex_coords0[vtx], false);
+				t.positions[vtx] = vec3(mi.transform * vec4(t.positions[vtx], 1.0));
+
+				// Previous position
+				t.positions_prev[vtx] = mix(t_a_prev.positions[vtx], t_b_prev.positions[vtx], mi.pose_lerp_prev_frame);
+				apply_deforms(instance_index, t.positions_prev[vtx], prev_normal, t_a_curr.tex_coords0[vtx], true);
+				t.positions_prev[vtx] = vec3(mi.transform_prev * vec4(t.positions_prev[vtx], 1.0));
+
+				// Current normal
+				t.normals[vtx] = normalize(vec3(mi.transform * vec4(model_normal, 0.0)));
+
+				// Current tangent
+				t.tangents[vtx] = mix(t_a_curr.tangents[vtx], t_b_curr.tangents[vtx], mi.pose_lerp_curr_frame);
+				t.tangents[vtx] = normalize(vec3(mi.transform * vec4(t.tangents[vtx], 0.0)));
+
+				// Current texture coordinates - assume no texcoord animation
+				t.tex_coords0[vtx] = t_a_curr.tex_coords0[vtx];
+			}
+
+			t.material_id = t_a_curr.material_id;
+			t.shell = t_a_curr.shell;
+			t.emissive_factor = t_a_curr.emissive_factor;
+			t.alpha = t_a_curr.alpha;
+		}
+
+		t.cluster = mi.cluster;
+		t.alpha *= unpackHalf2x16(mi.alpha_and_frame).x;
+		t.instance_index = instance_index;
+		if (mi.material != 0)
+		{
+			t.material_id = mi.material;
+			t.shell = mi.shell;
+		}
+
+		// Apply frame-based material animation
+		//t.material_id = animate_material(t.material_id, int(mi.alpha_and_frame >> 16));
+		
+		//store_triangle(t, mi.render_buffer_idx, idx + mi.render_prim_offset);
+		store_triangle(t, mi.render_buffer_idx, idx + mi.render_prim_offset);
+	}
+}

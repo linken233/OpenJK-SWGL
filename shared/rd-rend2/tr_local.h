@@ -1714,9 +1714,11 @@ typedef enum surfaceType_e
 } surfaceType_t;
 
 /*
-the drawsurf sort data is packed into a single 32 bit value so it can be
-compared quickly during the qsorting process
+the drawsurf sort data is packed into a single 64 bit value so it can be
+compared quickly during the sorting process (the radix sort reads 5 bytes)
 */
+typedef uint64_t sortKey_t;
+
 #define	QSORT_CUBEMAP_SHIFT		0
 #define QSORT_CUBEMAP_BITS		6
 #define QSORT_CUBEMAP_MASK		((1 << QSORT_CUBEMAP_BITS) - 1)
@@ -1733,14 +1735,16 @@ compared quickly during the qsorting process
 #define QSORT_POSTRENDER_BITS	1
 #define QSORT_POSTRENDER_MASK	((1 << QSORT_POSTRENDER_BITS) - 1)
 
-#if QSORT_POSTRENDER_SHIFT >= 32
+#define QSORT_BYTES				5	// bytes of the key that R_RadixSort sorts
+
+#if QSORT_POSTRENDER_SHIFT >= QSORT_BYTES * 8
 	#error "Sort field needs to be expanded"
 #endif
 
 typedef struct drawSurf_s {
-	uint32_t sort; // bit combination for fast compares
-	uint32_t dlightBits;
+	sortKey_t sort; // bit combination for fast compares
 	surfaceType_t *surface; // any of surface*_t
+	uint32_t dlightBits;
 	int fogIndex;
 } drawSurf_t;
 
@@ -2994,8 +2998,8 @@ void R_GatherFrameViews(trRefdef_t *refdef);
 void R_AddMD3Surfaces( trRefEntity_t *e, int entityNum );
 void R_AddPolygonSurfaces( const trRefdef_t *refdef );
 
-void R_DecomposeSort( uint32_t sort, int *entityNum, shader_t **shader, int *cubemap, int *postRender );
-uint32_t R_CreateSortKey(int entityNum, int sortedShaderIndex, int cubemapIndex, int postRender);
+void R_DecomposeSort( sortKey_t sort, int *entityNum, shader_t **shader, int *cubemap, int *postRender );
+sortKey_t R_CreateSortKey(int entityNum, int sortedShaderIndex, int cubemapIndex, int postRender);
 void R_AddDrawSurf( surfaceType_t *surface, int entityNum, shader_t *shader,
 				   int fogIndex, int dlightMap, int postRender, int cubemap );
 bool R_IsPostRenderEntity ( const trRefEntity_t *refEntity );

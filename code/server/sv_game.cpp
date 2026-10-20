@@ -691,6 +691,11 @@ static qboolean SV_G2API_SetAnimIndex( CGhoul2Info *ghlInfo, const int index )
 	return re.G2API_SetAnimIndex( ghlInfo, index );
 }
 
+static qboolean SV_G2API_SetAnimOverride( CGhoul2Info *ghlInfo, const char *glaName )
+{
+	return re.G2API_SetAnimOverride( ghlInfo, glaName );
+}
+
 static qboolean SV_G2API_SetBoneAnim(CGhoul2Info *ghlInfo, const char *boneName, const int startFrame, const int endFrame,
     const int flags, const float animSpeed, const int AcurrentTime, const float setFrame, const int blendTime)
 {
@@ -1014,6 +1019,7 @@ void SV_InitGameProgs (void) {
 	import.G2API_SetBoneAnglesMatrixIndex = SV_G2API_SetBoneAnglesMatrixIndex;
 	import.G2API_SetAnimIndex = SV_G2API_SetAnimIndex;
 	import.G2API_GetAnimIndex = SV_G2API_GetAnimIndex;
+	import.G2API_SetAnimOverride = SV_G2API_SetAnimOverride;
 
 	import.G2API_SaveGhoul2Models = SV_G2API_SaveGhoul2Models;
 	import.G2API_LoadGhoul2Models = SV_G2API_LoadGhoul2Models;

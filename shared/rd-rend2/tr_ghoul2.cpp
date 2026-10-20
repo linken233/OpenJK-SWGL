@@ -4280,6 +4280,16 @@ qboolean R_LoadMDXM(model_t *mod, void *buffer, const char *mod_name, qboolean &
 		}
 	}
 
+	// Use the virtual GLA of the animation override of this model, if it has one.
+	const char *overrideGLA = R_GetAnimOverrideGLA(mod_name, mdxm->animName);
+	if (overrideGLA)
+	{
+		const qhandle_t overrideIndex = RE_RegisterModel(overrideGLA);
+		if (overrideIndex)
+		{
+			mdxm->animIndex = overrideIndex;
+		}
+	}
 #endif
 
 	if (!mdxm->animIndex)
@@ -4551,6 +4561,7 @@ qboolean R_LoadMDXM(model_t *mod, void *buffer, const char *mod_name, qboolean &
 
 		surf = (mdxmSurface_t *)((byte *)lod + sizeof (mdxmLOD_t) + (mdxm->numSurfaces * sizeof (mdxmLODSurfOffset_t)));
 
+		int badWeightVerts = 0;		// vertices with bone weights above 1.0 (scaled down below)
 		for (int n = 0; n < mdxm->numSurfaces; n++)
 		{
 			// Positions and normals
@@ -4582,6 +4593,19 @@ qboolean R_LoadMDXM(model_t *mod, void *buffer, const char *mod_name, qboolean &
 					lastWeight -= weights[w];
 				}
 
+				// Badly normalized models: the other weights can already reach 255. Scale them down to 254
+				// at most, so the last bone keeps at least 1 and the sum stays 255.
+				if (lastWeight <= 0 && lastInfluence > 0)
+				{
+					badWeightVerts++;
+					const int total = 255 - lastWeight;
+					lastWeight = 255;
+					for (int w = 0; w < lastInfluence; w++)
+					{
+						weights[w] = (byte)(weights[w] * 254 / total);
+						lastWeight -= weights[w];
+					}
+				}
 				assert(lastWeight > 0);
 
 				// Ensure that all the weights add up to 1.0
@@ -4618,6 +4642,14 @@ qboolean R_LoadMDXM(model_t *mod, void *buffer, const char *mod_name, qboolean &
 
 			surf = (mdxmSurface_t *)((byte *)surf + surf->ofsEnd);
 		}
+
+#ifdef _DEBUG
+		if (badWeightVerts > 0)
+		{
+			ri.Printf(PRINT_WARNING, "WARNING: R_LoadMDXM: %s LOD %d: %d vertices with bone weights above 1.0, scaled down\n",
+				mod_name, l, badWeightVerts);
+		}
+#endif
 
 		// TODO: Check why this was here and why it always fails
 		// assert ((byte *)verts == (data + dataSize));

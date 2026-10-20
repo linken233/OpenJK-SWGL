@@ -2427,6 +2427,14 @@ void NPC_Think ( gentity_t *self)//, int msec )
 		return;
 	}
 
+	if ( !TIMER_Done( self, "meleePainChain" )
+		&& self->client->ps.torsoAnim == BOTH_PAIN1
+		&& self->client->ps.torsoAnimTimer <= FRAMETIME )
+	{//end of the melee stagger, follow with the second pain anim
+		TIMER_Set( self, "meleePainChain", 0 );
+		NPC_SetAnim( self, SETANIM_BOTH, BOTH_PAIN18, SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD );
+	}
+
 	// TODO! Tauntaun's (and other creature vehicles?) think, we'll need to make an exception here to allow that.
 
 	if ( self->client

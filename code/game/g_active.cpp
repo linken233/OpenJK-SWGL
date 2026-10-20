@@ -22,6 +22,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 */
 
 #include "g_local.h"
+#include "g_lightedit.h"
 #include "NPC_SWGL.h"
 #include "g_functions.h"
 #include "../cgame/cg_local.h"
@@ -1440,8 +1441,13 @@ void	G_TouchTriggersLerped( gentity_t *ent ) {
 	assert( (dist<1024) && "insane distance in G_TouchTriggersLerped!" );
 #endif// _DEBUG
 
-	if ( dist > 1024 )
+	// A NaN dist fails every compare, so the step loop below never ends.
+	if ( !( dist <= 1024 ) )
 	{
+		if ( dist != dist )
+		{
+			gi.Printf( S_COLOR_RED "G_TouchTriggersLerped: NaN origin on entity %d (%s %s)\n", ent->s.number, ent->classname, ent->NPC_type ? ent->NPC_type : "" );
+		}
 		return;
 	}
 	memset (touched, qfalse, sizeof(touched) );
@@ -1847,41 +1853,16 @@ void ClientEvents( gentity_t *ent, int oldEventSequence ) {
 			break;
 
 		case EV_FIRE_WEAPON:
+		case EV_FIRE_WEAPON_ATTACK1:
+		case EV_FIRE_WEAPON_ATTACK2:
+		case EV_FIRE_WEAPON_ATTACK3:
 #ifndef FINAL_BUILD
 			if ( fired ) {
-				gi.Printf( "DOUBLE EV_FIRE_WEAPON AND-OR EV_ALT_FIRE!!\n" );
+				gi.Printf( "DOUBLE EV_FIRE_WEAPON!!\n" );
 			}
 			fired = qtrue;
 #endif
-			FireWeapon( ent, 0 );
-			break;
-
-		case EV_ALT_FIRE:
-#ifndef FINAL_BUILD
-			if ( fired ) {
-				gi.Printf( "DOUBLE EV_FIRE_WEAPON AND-OR EV_ALT_FIRE!!\n" );
-			}
-			fired = qtrue;
-#endif
-			FireWeapon( ent, 1 );
-			break;
-		case EV_SCOPED_FIRE:
-#ifndef FINAL_BUILD
-			if ( fired ) {
-				gi.Printf( "DOUBLE EV_FIRE_WEAPON AND-OR EV_ALT_FIRE!!\n" );
-			}
-			fired = qtrue;
-#endif
-			FireWeapon( ent, 2 );
-			break;
-		case EV_SCOPED_ALT_FIRE:
-#ifndef FINAL_BUILD
-			if ( fired ) {
-				gi.Printf( "DOUBLE EV_FIRE_WEAPON AND-OR EV_ALT_FIRE!!\n" );
-			}
-			fired = qtrue;
-#endif
-			FireWeapon( ent, 3 );
+			FireWeapon( ent, event - EV_FIRE_WEAPON );
 			break;
 
 		default:
@@ -5428,6 +5409,10 @@ void ClientThink_real( gentity_t *ent, usercmd_t *ucmd )
 
 	G_CheckClampUcmd( ent, ucmd );
 
+	G_JetpackThink( ent );
+	G_WristFlamerThink( ent );
+	G_FuelItemsLoopSound( ent );
+
 	WP_ForcePowersUpdate( ent, ucmd );
 
 	//if we have the saber in hand, check for starting a block to reflect shots
@@ -5756,6 +5741,9 @@ void ClientThink( int clientNum, usercmd_t *ucmd ) {
 	usercmd_t sav_ucmd = {0};
 
 	ent = g_entities + clientNum;
+
+	// Filter before PM_CheckForceUseButton and before the usercmd is stored.
+	G_LightEdit_FilterUcmd( ent, ucmd );
 
 	if ( ent->s.number<MAX_CLIENTS )
 	{

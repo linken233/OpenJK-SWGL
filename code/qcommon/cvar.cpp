@@ -179,6 +179,25 @@ void Cvar_VariableStringBuffer( const char *var_name, char *buffer, int bufsize 
 
 /*
 ============
+Cvar_PendingStringBuffer
+
+Copies the value that a latched cvar gets at the next restart, else the current value.
+============
+*/
+void Cvar_PendingStringBuffer( const char *var_name, char *buffer, int bufsize ) {
+	cvar_t *var;
+
+	var = Cvar_FindVar (var_name);
+	if (!var) {
+		*buffer = 0;
+	}
+	else {
+		Q_strncpyz( buffer, var->latchedString ? var->latchedString : var->string, bufsize );
+	}
+}
+
+/*
+============
 Cvar_Flags
 ============
 */
@@ -698,6 +717,36 @@ Cvar_Set
 */
 void Cvar_Set( const char *var_name, const char *value) {
 	Cvar_Set2 (var_name, value, qtrue);
+}
+
+/*
+============
+Cvar_SetLatched
+
+As Cvar_Set, but a latched cvar keeps its value until the next restart.
+The new value goes into latchedString, as for a value typed in the console.
+============
+*/
+void Cvar_SetLatched( const char *var_name, const char *value ) {
+	cvar_t	*var = Cvar_FindVar( var_name );
+
+	if ( !var || !value || !( var->flags & CVAR_LATCH ) ) {
+		Cvar_Set2( var_name, value, qtrue );
+		return;
+	}
+
+	value = Cvar_Validate( var, value, qtrue );
+
+	if ( var->latchedString ) {
+		Cvar_FreeString( var->latchedString );
+		var->latchedString = NULL;
+	}
+	if ( strcmp( value, var->string ) ) {
+		var->latchedString = CopyString( value );
+	}
+
+	// The config file keeps the latched value.
+	cvar_modifiedFlags |= var->flags;
 }
 
 /*

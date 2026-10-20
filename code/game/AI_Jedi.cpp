@@ -4765,7 +4765,7 @@ void NPC_EvasionSaber(void)
 	}
 }
 
-extern float WP_SpeedOfMissileForWeapon(int wp, qboolean alt_fire);
+extern float WP_SpeedOfMissileForWeapon(int wp, int attackIndex);
 static void Jedi_FaceEnemy(qboolean doPitch)
 {
 	vec3_t	enemy_eyes, eyes, angles;
@@ -4807,7 +4807,7 @@ static void Jedi_FaceEnemy(qboolean doPitch)
 	{//boba leads his enemy
 		if (NPC->health < NPC->max_health * 0.5f)
 		{//lead
-			float missileSpeed = WP_SpeedOfMissileForWeapon(NPC->s.weapon, ((qboolean)(NPCInfo->scriptFlags & SCF_ALT_FIRE)));
+			float missileSpeed = WP_SpeedOfMissileForWeapon(NPC->s.weapon, (NPCInfo->scriptFlags & SCF_ALT_FIRE) ? 1 : 0);
 			if (missileSpeed)
 			{
 				float eDist = Distance(eyes, enemy_eyes);

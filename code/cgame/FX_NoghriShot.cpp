@@ -61,9 +61,9 @@ void FX_NoghriShotProjectileThink( centity_t *cent, const struct weaponInfo_s *w
 		VectorScale( forward, scale, forward );
 	}
 
-	if (weapon->weaponAttacksInfo[cent->gent->alt_fire].projectileEffect)
+	if (weapon->weaponAttacksInfo[cent->gent->attack_index].projectileEffect)
 	{
-		theFxScheduler.PlayEffect(weapon->weaponAttacksInfo[cent->gent->alt_fire].projectileEffect, cent->lerpOrigin, forward);
+		theFxScheduler.PlayEffect(weapon->weaponAttacksInfo[cent->gent->attack_index].projectileEffect, cent->lerpOrigin, forward);
 	}
 	else
 	{

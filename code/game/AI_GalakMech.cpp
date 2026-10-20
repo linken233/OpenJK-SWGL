@@ -338,7 +338,7 @@ void NPC_GM_Pain(gentity_t* self, gentity_t* inflictor, gentity_t* attacker, con
 			if (TIMER_Done(self, "noRapid"))
 			{
 				self->NPC->scriptFlags &= ~SCF_ALT_FIRE;
-				self->alt_fire = qfalse;
+				self->attack_index = 0;
 				TIMER_Set(self, "noLob", Q_irand(2000, 6000));
 			}
 			else
@@ -351,7 +351,7 @@ void NPC_GM_Pain(gentity_t* self, gentity_t* inflictor, gentity_t* attacker, con
 			if (TIMER_Done(self, "noLob"))
 			{
 				self->NPC->scriptFlags |= SCF_ALT_FIRE;
-				self->alt_fire = qtrue;
+				self->attack_index = 1;
 				TIMER_Set(self, "noRapid", Q_irand(2000, 6000));
 			}
 			else
@@ -848,7 +848,7 @@ void NPC_BSGM_Attack(void)
 			if ((NPC->client->ps.weapon == WP_REPEATER) && (NPCInfo->scriptFlags & SCF_ALT_FIRE))
 			{//shooting an explosive, but enemy too close, switch to primary fire
 				NPCInfo->scriptFlags &= ~SCF_ALT_FIRE;
-				NPC->alt_fire = qfalse;
+				NPC->attack_index = 0;
 				//FIXME: use weap raise & lower anims
 				NPC_ChangeWeapon(WP_REPEATER);
 			}
@@ -859,7 +859,7 @@ void NPC_BSGM_Attack(void)
 			if ((NPC->client->ps.weapon == WP_REPEATER) && !(NPCInfo->scriptFlags & SCF_ALT_FIRE))
 			{//enemy far enough away to use lobby explosives
 				NPCInfo->scriptFlags |= SCF_ALT_FIRE;
-				NPC->alt_fire = qtrue;
+				NPC->attack_index = 1;
 				//FIXME: use weap raise & lower anims
 				NPC_ChangeWeapon(WP_REPEATER);
 			}
@@ -1022,7 +1022,7 @@ void NPC_BSGM_Attack(void)
 			if (enemyLOS && enemyCS && TIMER_Done(NPC, "noRapid"))
 			{//have a clear straight shot, so switch to primary
 				NPCInfo->scriptFlags &= ~SCF_ALT_FIRE;
-				NPC->alt_fire = qfalse;
+				NPC->attack_index = 0;
 				NPC_ChangeWeapon(WP_REPEATER);
 				//keep this weap for a bit
 				TIMER_Set(NPC, "noLob", Q_irand(500, 1000));

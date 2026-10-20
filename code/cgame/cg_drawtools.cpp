@@ -491,3 +491,144 @@ void CG_DrawProportionalString( int x, int y, const char* str, int style, vec4_t
 	//assert(!style);//call this directly if you need style (OR it into the font handle)
 	cgi_R_Font_DrawString (x, y, str, color, cgs.media.qhFontMedium, -1, 1.0f, aspectCorrection);
 }
+#pragma region Text Fitting
+
+#define FIT_MAX_LINES		8
+#define FIT_LINE_CHARS		256
+
+// Returns the space closest to the middle of psLine, or NULL if it holds none.
+static const char* CG_MiddleSpace(const char* psLine)
+{
+	int len = (int)strlen(psLine);
+	int mid = len / 2;
+	const char* best = NULL;
+	int bestDist = len;
+
+	for (int i = 0; i < len; i++)
+	{
+		if (psLine[i] != ' ')
+			continue;
+
+		int dist = (i > mid) ? (i - mid) : (mid - i);
+		if (dist < bestDist)
+		{
+			bestDist = dist;
+			best = psLine + i;
+		}
+	}
+	return best;
+}
+
+// Widest of the current lines, in pixels.
+static int CG_WidestLine(char lines[FIT_MAX_LINES][FIT_LINE_CHARS], int numLines,
+	int iFontHandle, float fScale)
+{
+	int widest = 0;
+
+	for (int i = 0; i < numLines; i++)
+	{
+		int w = cgi_R_Font_StrLenPixels(lines[i], iFontHandle, fScale, cgs.widthRatioCoef);
+		if (w > widest)
+			widest = w;
+	}
+	return widest;
+}
+
+// Cuts the widest line on its most central space, so the caller gains exactly one line.
+// Returns qfalse when that line holds no space to cut on. The caller owns numLines and
+// must leave a free slot, so call it only while numLines < FIT_MAX_LINES.
+static qboolean CG_SplitWidestLine(char lines[FIT_MAX_LINES][FIT_LINE_CHARS], int numLines,
+	int iFontHandle, float fScale)
+{
+	int widest = 0, widestWidth = -1;
+
+	for (int i = 0; i < numLines; i++)
+	{
+		int w = cgi_R_Font_StrLenPixels(lines[i], iFontHandle, fScale, cgs.widthRatioCoef);
+		if (w > widestWidth)
+		{
+			widestWidth = w;
+			widest = i;
+		}
+	}
+
+	const char* space = CG_MiddleSpace(lines[widest]);
+	if (!space)
+		return qfalse;
+
+	// push the tail down a slot, then cut - the tail is read before the line is truncated
+	for (int i = numLines; i > widest + 1; i--)
+		Q_strncpyz(lines[i], lines[i - 1], FIT_LINE_CHARS);
+
+	Q_strncpyz(lines[widest + 1], space + 1, FIT_LINE_CHARS);
+	lines[widest][(int)(space - lines[widest])] = '\0';
+
+	return qtrue;
+}
+
+// Draws psText in the box, horizontally aligned per iAlign. The scale starts at one
+// line filling the box height;
+// while the text is too wide, the widest line is cut on its most central space and the
+// scale becomes base/numLines - so the block always stays exactly one box high.
+void CG_DrawTextInBox(int iBoxX, int iBoxY, int iBoxWidth, int iBoxHeight,
+	const char* psText, int iFontHandle, const vec4_t v4Color, textBoxAlign_t iAlign)
+{
+	char	lines[FIT_MAX_LINES][FIT_LINE_CHARS];
+	int		numLines = 1;
+	int		iFontHeight = cgi_R_Font_HeightPixels(iFontHandle, 1.0f);
+
+	if (iFontHeight <= 0)
+		return;
+
+	float originalScale = (float)iBoxHeight / (float)iFontHeight;
+	float fScale = originalScale;
+
+	Q_strncpyz(lines[0], psText, FIT_LINE_CHARS);
+
+	// Too wide: make the font smaller twice (x0.85), then split the widest line and start again.
+	const float shrinkFactor = 0.85f;
+	const int maxShrinks = 2;
+	int shrinks = 0;
+	while (CG_WidestLine(lines, numLines, iFontHandle, fScale) > iBoxWidth)
+	{
+		if (shrinks < maxShrinks)
+		{
+			fScale *= shrinkFactor;
+			shrinks++;
+			continue;
+		}
+		if (numLines >= FIT_MAX_LINES || !CG_SplitWidestLine(lines, numLines, iFontHandle, fScale))
+		{
+			break;
+		}
+		numLines++;
+		fScale = originalScale / (float)numLines;
+		shrinks = 0;
+	}
+
+	int iLineHeight = cgi_R_Font_HeightPixels(iFontHandle, fScale);
+	int y = iBoxY + ((iBoxHeight - (numLines * iLineHeight)) / 2);
+
+	for (int i = 0; i < numLines; i++)
+	{
+		int w = cgi_R_Font_StrLenPixels(lines[i], iFontHandle, fScale, cgs.widthRatioCoef);
+		int x;
+
+		switch (iAlign)
+		{
+			case ALIGN_LEFT:	
+				x = iBoxX;		
+				break;
+			case ALIGN_RIGHT:
+				x = iBoxX + iBoxWidth - w;		
+				break;
+			default:			
+				x = iBoxX + ((iBoxWidth - w) / 2);	
+				break;
+		}
+
+		cgi_R_Font_DrawString(x, y + (i * iLineHeight) + (numLines == 1 ? 0 : numLines), //Adding numline to Y to "correct" the font padding that is divided by two
+			lines[i], v4Color, iFontHandle, -1, fScale, cgs.widthRatioCoef);	// no clip: the lines fit already, and the clip of the renderer can drop the last letter by less than a pixel
+	}
+}
+#pragma endregion

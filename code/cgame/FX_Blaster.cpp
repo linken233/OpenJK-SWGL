@@ -68,8 +68,8 @@ void FX_BlasterProjectileThink( centity_t *cent, const struct weaponInfo_s *weap
 		VectorScale( forward, scale, forward );
 	}   
 
-	if (weapon->weaponAttacksInfo[cent->gent->alt_fire].projectileEffect) {
-		theFxScheduler.PlayEffect(weapon->weaponAttacksInfo[cent->gent->alt_fire].projectileEffect, cent->lerpOrigin, forward);
+	if (weapon->weaponAttacksInfo[cent->gent->attack_index].projectileEffect) {
+		theFxScheduler.PlayEffect(weapon->weaponAttacksInfo[cent->gent->attack_index].projectileEffect, cent->lerpOrigin, forward);
 	}
 	else if ( cent->gent && cent->gent->owner && cent->gent->owner->s.number > 0 )
 	{

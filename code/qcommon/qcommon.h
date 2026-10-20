@@ -389,6 +389,10 @@ int		Cvar_VariableIntegerValue( const char *var_name );
 char	*Cvar_VariableString( const char *var_name );
 void	Cvar_VariableStringBuffer( const char *var_name, char *buffer, int bufsize );
 // returns an empty string if not defined
+void	Cvar_PendingStringBuffer( const char *var_name, char *buffer, int bufsize );
+void	Cvar_SetLatched( const char *var_name, const char *value );
+// as Cvar_Set, but a latched cvar gets the value at the next restart
+// as Cvar_VariableStringBuffer, but gives the latched value of a latched cvar
 
 int	Cvar_Flags(const char *var_name);
 // returns CVAR_NONEXISTENT if cvar doesn't exist or the flags of that particular CVAR.
@@ -615,6 +619,7 @@ void		Com_StartupVariable( const char *match );
 
 extern	cvar_t	*com_developer;
 extern	cvar_t	*com_speeds;
+extern	cvar_t	*com_perflog;
 extern	cvar_t	*com_timescale;
 extern	cvar_t	*com_sv_running;
 extern	cvar_t	*com_cl_running;
@@ -632,6 +637,14 @@ extern	cvar_t	*com_busyWait;
 // both client and server must agree to pause
 extern	cvar_t	*cl_paused;
 extern	cvar_t	*sv_paused;
+
+// com_perflog: a summary of the frame times every com_perflogFrames frames (server/sv_perflog.cpp)
+void	PerfLog_Init( void );
+double	PerfLog_Now( void );
+void	PerfLog_AddGame( double ms );
+void	PerfLog_AddPhase( int phase, double ms );
+void	PerfLog_NoteTrace( const vec3_t start, const vec3_t end, const vec3_t mins, const vec3_t maxs, int contentmask );
+void	PerfLog_EndFrame( double workStart, double svEnd, double clEnd );
 
 // com_speeds times
 extern	int		time_game;
@@ -671,6 +684,7 @@ int  Z_Validate( void );			// also used to insure all of these are paged in
 int   Z_MemSize	( memtag_t eTag );
 void  Z_TagFree	( memtag_t eTag );
 int   Z_Free	( void *ptr );	//returns bytes freed
+void  Z_SetThreadSafe( qboolean bOn );	// the zone takes a lock while a renderer thread allocates
 int	  Z_Size	( void *pvAddress);
 void  Z_MorphMallocTag( void *pvAddress, memtag_t eDesiredTag );
 qboolean Z_IsFromZone(const void *pvAddress, memtag_t eTag);	//returns size if true

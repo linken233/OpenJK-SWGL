@@ -274,6 +274,12 @@ public:
 	// these occasionally are not valid (like after a vid_restart)
 	// call the questionably efficient G2_SetupModelPointers(this) to insure validity
 	bool				mValid; // all the below are proper and valid
+
+	// When these still match the renderer, the pointers below were already resolved this
+	// frame and G2_SetupModelPointers returns immediately.
+	int					mSetupFrame;
+	int					mSetupEpoch;
+
 	const model_s		*currentModel;
 	int					currentModelSize;
 	const model_s		*animModel;
@@ -304,6 +310,8 @@ public:
 	mBoneCache(0),
 	mSkin(0),
 	mValid(false),
+	mSetupFrame(-1),
+	mSetupEpoch(-1),
 	currentModel(0),
 	currentModelSize(0),
 	animModel(0),

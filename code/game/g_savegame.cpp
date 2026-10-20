@@ -26,6 +26,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "../cgame/cg_local.h"
 #include "Q3_Interface.h"
 #include "g_local.h"
+#include "g_lightedit.h"
 #include "fields.h"
 #include "objectives.h"
 #include "../cgame/cg_camera.h"
@@ -165,7 +166,9 @@ static const save_field_t savefields_gClient[] =
 };
 
 // TODO FIXME mrwonko: this has no business being a global variable. WTF Raven?
-static std::list<sstring_t> strList;
+// std::string, not sstring_t: that one keeps MAX_QPATH characters only, and the reader
+// expects the full length announced by GetStringNum (a long target_print message broke the load)
+static std::list<std::string> strList;
 
 
 /////////// char * /////////////
@@ -344,7 +347,35 @@ static gclient_t *GetGClientPtr(intptr_t c)
 /////////// gitem_t * //////////
 //
 //
-static int GetGItemNum (gitem_t *pItem)
+// Items are saved by classname: their index in bg_itemlist depends on which dynamic weapons were created before.
+static int FindWeaponByClassname(const char *psClassname)
+{
+	for (int i = 0; i < weaponCount; i++)
+	{
+		if (!Q_stricmp(weaponData[i].classname, psClassname))
+		{
+			return i;
+		}
+	}
+	return -1;
+}
+
+// Finds an item by classname. The item of a dynamic weapon is created when it does not exist yet.
+static gitem_t *FindOrCreateItem(const char *psClassname)
+{
+	gitem_t *pItem = FindItem(psClassname);
+	if (!pItem)
+	{
+		const int iWeapon = FindWeaponByClassname(psClassname);
+		if (iWeapon > WP_NONE)
+		{
+			pItem = FindItemForWeapon(iWeapon);
+		}
+	}
+	return pItem;
+}
+
+static int GetGItemName(gitem_t *pItem)
 {
 	assert(pItem != (gitem_t*) 0xcdcdcdcd);
 
@@ -353,19 +384,37 @@ static int GetGItemNum (gitem_t *pItem)
 		return -1;
 	}
 
-	return pItem - bg_itemlist;
+	return GetStringNum(pItem->classname);
 }
 
-static gitem_t *GetGItemPtr(int iItem)
+static gitem_t *GetGItemPtr(int iStrlen)
 {
-	if (iItem == -1)
+	if (iStrlen == -1)
 	{
 		return NULL;
 	}
 
-	assert(iItem >= 0);
-	assert(iItem < bg_numItems);
-	return &bg_itemlist[iItem];
+	char sClassname[128];
+	if (iStrlen < 1 || iStrlen > (int)sizeof(sClassname))
+	{
+		G_Error("GetGItemPtr(): invalid item name length %d", iStrlen);
+	}
+
+	ojk::SavedGameHelper saved_game(
+		::gi.saved_game);
+
+	saved_game.read_chunk(
+		INT_ID('S', 'T', 'R', 'G'),
+		sClassname,
+		iStrlen);
+	sClassname[sizeof(sClassname) - 1] = 0;
+
+	gitem_t *pItem = FindOrCreateItem(sClassname);
+	if (!pItem)
+	{
+		gi.Printf(S_COLOR_YELLOW"WARNING: savegame item '%s' does not exist anymore, it is removed\n", sClassname);
+	}
+	return pItem;
 }
 //
 //
@@ -426,7 +475,7 @@ static void EnumerateField(const save_field_t *pField, const byte *pbBase)
 		break;
 
 	case F_ITEM:
-		*(int *)pv = GetGItemNum(*(gitem_t **)pv);
+		*(int *)pv = GetGItemName(*(gitem_t **)pv);
 		break;
 
 	case F_VEHINFO:
@@ -1262,8 +1311,386 @@ static void ReadGEntities(qboolean qbAutosave)
 }
 
 
+/*
+==============
+Weapon manifest
+
+Indexes of dynamic weapons, ammo and items depend on the loaded .wpn files, so a savegame
+records their names and the loader translates every saved index to the current one.
+A weapon that does not exist anymore is removed.
+==============
+*/
+extern int WP_HardcodedWeaponCount(void);
+extern char itemRegistered[];
+extern void Player_CacheFromPrevLevel(void);
+
+static int	s_savedWeaponCount;
+static int	s_weaponRemap[MAX_WEAPONS];	// saved weapon index -> current index, -1 when removed
+static int	s_ammoRemap[MAX_AMMO];		// saved ammo index -> current index, -1 when removed
+static int	s_savedItemCount;
+static char	s_savedItemNames[MAX_ITEMS + 1][64];
+
+static void WriteManifestName(const char *psName)
+{
+	char sName[64];
+	Q_strncpyz(sName, psName ? psName : "", sizeof(sName));
+
+	ojk::SavedGameHelper saved_game(
+		::gi.saved_game);
+
+	saved_game.write_chunk(
+		INT_ID('W', 'M', 'N', 'M'),
+		sName,
+		static_cast<int>(sizeof(sName)));
+}
+
+static void ReadManifestName(char *psName)
+{
+	ojk::SavedGameHelper saved_game(
+		::gi.saved_game);
+
+	saved_game.read_chunk(
+		INT_ID('W', 'M', 'N', 'M'),
+		psName,
+		64);
+	psName[63] = 0;
+}
+
+static void WriteWeaponManifest()
+{
+	ojk::SavedGameHelper saved_game(
+		::gi.saved_game);
+
+	saved_game.write_chunk<int32_t>(INT_ID('W', 'M', 'W', 'C'), weaponCount);
+	saved_game.write_chunk<int32_t>(INT_ID('W', 'M', 'A', 'C'), ammoCount);
+	saved_game.write_chunk<int32_t>(INT_ID('W', 'M', 'I', 'C'), bg_numItems);
+
+	for (int i = 0; i < weaponCount; i++)
+	{
+		WriteManifestName(weaponData[i].classname);
+	}
+	// an ammo created for a weapon (grenade, mine...) is identified by this weapon
+	for (int a = AMMO_HC_MAX; a < ammoCount; a++)
+	{
+		const int iWeapon = ammoData[a].giveWeaponIndex;
+		WriteManifestName((iWeapon >= 0 && iWeapon < weaponCount) ? weaponData[iWeapon].classname : "");
+	}
+	for (int i = 0; i < bg_numItems; i++)
+	{
+		WriteManifestName(bg_itemlist[i].classname);
+	}
+}
+
+static void ReadWeaponManifest()
+{
+	ojk::SavedGameHelper saved_game(
+		::gi.saved_game);
+
+	int iWeapons = 0, iAmmo = 0, iItems = 0;
+	saved_game.read_chunk<int32_t>(INT_ID('W', 'M', 'W', 'C'), iWeapons);
+	saved_game.read_chunk<int32_t>(INT_ID('W', 'M', 'A', 'C'), iAmmo);
+	saved_game.read_chunk<int32_t>(INT_ID('W', 'M', 'I', 'C'), iItems);
+
+	if (iWeapons < 1 || iWeapons > MAX_WEAPONS || iAmmo < AMMO_HC_MAX || iAmmo > MAX_AMMO || iItems < 0 || iItems > MAX_ITEMS)
+	{
+		G_Error("ReadWeaponManifest(): invalid counts (%d weapons, %d ammo, %d items)", iWeapons, iAmmo, iItems);
+	}
+
+	char sName[64];
+	const int iHardcoded = WP_HardcodedWeaponCount();
+
+	s_savedWeaponCount = iWeapons;
+	for (int i = 0; i < MAX_WEAPONS; i++)
+	{
+		s_weaponRemap[i] = -1;
+	}
+	for (int i = 0; i < iWeapons; i++)
+	{
+		ReadManifestName(sName);
+		if (i < iHardcoded)
+		{
+			s_weaponRemap[i] = i;
+			continue;
+		}
+		s_weaponRemap[i] = FindWeaponByClassname(sName);
+		if (s_weaponRemap[i] < 0)
+		{
+			gi.Printf(S_COLOR_YELLOW"WARNING: savegame weapon '%s' does not exist anymore, it is removed\n", sName);
+		}
+	}
+
+	for (int a = 0; a < MAX_AMMO; a++)
+	{
+		s_ammoRemap[a] = (a < AMMO_HC_MAX) ? a : -1;
+	}
+	for (int a = AMMO_HC_MAX; a < iAmmo; a++)
+	{
+		ReadManifestName(sName);
+		const int iWeapon = FindWeaponByClassname(sName);
+		if (iWeapon >= 0)
+		{
+			const int iNewAmmo = weaponData[iWeapon].ammoIndex;
+			if (iNewAmmo >= AMMO_HC_MAX && iNewAmmo < ammoCount && ammoData[iNewAmmo].giveWeaponIndex == iWeapon)
+			{
+				s_ammoRemap[a] = iNewAmmo;
+			}
+		}
+	}
+
+	s_savedItemCount = iItems;
+	for (int i = 0; i < iItems; i++)
+	{
+		ReadManifestName(s_savedItemNames[i]);
+	}
+}
+
+static int RemapWeapon(int iWeapon)
+{
+	if (iWeapon < 0 || iWeapon >= s_savedWeaponCount)
+	{	// not an index of the saved table
+		return iWeapon;
+	}
+	return (s_weaponRemap[iWeapon] >= 0) ? s_weaponRemap[iWeapon] : WP_NONE;
+}
+
+static qboolean WeaponRemoved(int iWeapon)
+{
+	return (iWeapon > WP_NONE && iWeapon < s_savedWeaponCount && s_weaponRemap[iWeapon] < 0) ? qtrue : qfalse;
+}
+
+// Translates the weapons, the ammo and the statistics of a loaded player state.
+static void RemapPlayerState(playerState_t *ps, clientSession_t *sess, qboolean qbPlayer)
+{
+	char sWeapons[MAX_WEAPONS] = {};
+	for (int i = 0; i < MAX_WEAPONS; i++)
+	{
+		if (ps->weapons[i] && i < s_savedWeaponCount && s_weaponRemap[i] >= 0)
+		{
+			sWeapons[s_weaponRemap[i]] = ps->weapons[i];
+		}
+	}
+
+	int iAmmo[MAX_AMMO] = {};
+	for (int a = 0; a < MAX_AMMO; a++)
+	{
+		if (ps->ammo[a] && s_ammoRemap[a] >= 0)
+		{
+			iAmmo[s_ammoRemap[a]] = ps->ammo[a];
+		}
+	}
+
+	if (sess)
+	{
+		int iUsed[MAX_WEAPONS] = {};
+		for (int i = 0; i < MAX_WEAPONS; i++)
+		{
+			if (i < s_savedWeaponCount && s_weaponRemap[i] >= 0)
+			{
+				iUsed[s_weaponRemap[i]] += sess->missionStats.weaponUsed[i];
+			}
+		}
+		memcpy(sess->missionStats.weaponUsed, iUsed, sizeof(iUsed));
+	}
+
+	const int iOldWeapon = ps->weapon;
+	int iNewWeapon = RemapWeapon(iOldWeapon);
+	memcpy(ps->weapons, sWeapons, sizeof(sWeapons));
+	memcpy(ps->ammo, iAmmo, sizeof(iAmmo));
+
+	if (WeaponRemoved(iOldWeapon) && qbPlayer)
+	{	// the player takes the first weapon he still has
+		for (int i = FIRST_WEAPON; i < weaponCount; i++)
+		{
+			if (ps->weapons[i] && weaponData[i].playerUsable)
+			{
+				iNewWeapon = i;
+				break;
+			}
+		}
+	}
+	if (iNewWeapon != iOldWeapon)
+	{
+		ps->weapon = iNewWeapon;
+		ps->weaponstate = WEAPON_READY;
+	}
+}
+
+static void RemapUsercmd(usercmd_t *cmd)
+{
+	cmd->weapon = (byte)RemapWeapon(cmd->weapon);
+}
+
+static void RemapClient(gclient_t *client, qboolean qbPlayer)
+{
+	RemapPlayerState(&client->ps, &client->sess, qbPlayer);
+	RemapUsercmd(&client->usercmd);
+	RemapUsercmd(&client->pers.lastCommand);
+}
+
+// An autosave restores the player from cvars, so those are translated before the player spawns.
+static void RemapSavedPlayerCvars()
+{
+	char s[MAX_STRING_CHARS];
+	char sNew[MAX_STRING_CHARS];
+
+	char sWeapons[MAX_WEAPONS] = {};
+	gi.Cvar_VariableStringBuffer("playerweaps", s, sizeof(s));
+	int i = 0;
+	if (s[0])
+	{
+		for (const char *var = strtok(s, " "); var && i < MAX_WEAPONS; var = strtok(NULL, " "), i++)
+		{
+			if (atoi(var) && i < s_savedWeaponCount && s_weaponRemap[i] >= 0)
+			{
+				sWeapons[s_weaponRemap[i]] = (char)atoi(var);
+			}
+		}
+		sNew[0] = 0;
+		for (i = 0; i < MAX_WEAPONS; i++)
+		{
+			Q_strcat(sNew, sizeof(sNew), va(" %i", sWeapons[i]));
+		}
+		gi.cvar_set("playerweaps", sNew);
+	}
+
+	int iAmmo[MAX_AMMO] = {};
+	gi.Cvar_VariableStringBuffer("playerammo", s, sizeof(s));
+	if (s[0])
+	{
+		i = 0;
+		for (const char *var = strtok(s, " "); var && i < MAX_AMMO; var = strtok(NULL, " "), i++)
+		{
+			if (atoi(var) && s_ammoRemap[i] >= 0)
+			{
+				iAmmo[s_ammoRemap[i]] = atoi(var);
+			}
+		}
+		sNew[0] = 0;
+		for (i = 0; i < MAX_AMMO; i++)
+		{
+			Q_strcat(sNew, sizeof(sNew), va(" %i", iAmmo[i]));
+		}
+		gi.cvar_set("playerammo", sNew);
+	}
+
+	// the fourth value of playersave is the weapon in hand
+	gi.Cvar_VariableStringBuffer(sCVARNAME_PLAYERSAVE, s, sizeof(s));
+	const char *p = s;
+	for (int iToken = 0; iToken < 3 && *p; iToken++)
+	{
+		while (*p == ' ') p++;
+		while (*p && *p != ' ') p++;
+	}
+	while (*p == ' ') p++;
+	const char *pWeapon = p;
+	const char *pRest = pWeapon;
+	while (*pRest && *pRest != ' ') pRest++;
+	if (*pWeapon)
+	{
+		const int iOld = atoi(pWeapon);
+		int iNew = RemapWeapon(iOld);
+		if (WeaponRemoved(iOld))
+		{
+			for (i = FIRST_WEAPON; i < weaponCount; i++)
+			{
+				if (sWeapons[i] && weaponData[i].playerUsable)
+				{
+					iNew = i;
+					break;
+				}
+			}
+		}
+		Com_sprintf(sNew, sizeof(sNew), "%.*s%i%s", (int)(pWeapon - s), s, iNew, pRest);
+		gi.cvar_set(sCVARNAME_PLAYERSAVE, sNew);
+	}
+}
+
+// The configstring of registered items is indexed by bg_itemlist, so it is rebuilt by name.
+static void RemapRegisteredItems()
+{
+	char sSaved[MAX_ITEMS + 1];
+	gi.GetConfigstring(CS_ITEMS, sSaved, sizeof(sSaved));
+
+	for (int i = 1; i < s_savedItemCount && sSaved[i]; i++)
+	{
+		if (sSaved[i] == '1' && s_savedItemNames[i][0])
+		{
+			const gitem_t *pItem = FindOrCreateItem(s_savedItemNames[i]);
+			if (pItem)
+			{
+				itemRegistered[pItem - bg_itemlist] = '1';
+			}
+		}
+	}
+	gi.SetConfigstring(CS_ITEMS, itemRegistered);
+}
+
+// Fixes everything that stores an index of the saved tables once the entities are loaded.
+static void RemapLoadedWeapons(qboolean qbAutosave)
+{
+	if (qbAutosave)
+	{
+		RemapSavedPlayerCvars();
+		Player_CacheFromPrevLevel();	// registers the items of the translated weapons
+	}
+	else
+	{
+		RemapClient(&level.clients[0], qtrue);
+	}
+
+	for (int i = 0; i < globals.num_entities; i++)
+	{
+		gentity_t *ent = &g_entities[i];
+		if (!ent->inuse)
+		{
+			continue;
+		}
+
+		if (ent->s.eType == ET_ITEM)
+		{
+			if (!ent->item)
+			{
+				G_FreeEntity(ent);
+				continue;
+			}
+			ent->s.modelindex = ent->item - bg_itemlist;
+			if (ent->item->giType == IT_WEAPON && ent->item->giTag >= 0)
+			{
+				ent->s.weapon = ent->item->giTag;
+			}
+			continue;
+		}
+		if (ent->s.eType == ET_MISSILE && WeaponRemoved(ent->s.weapon))
+		{
+			G_FreeEntity(ent);
+			continue;
+		}
+
+		ent->s.weapon = RemapWeapon(ent->s.weapon);
+		if (ent->client && ent->client != &level.clients[0])
+		{
+			RemapClient(ent->client, qfalse);
+		}
+		if (ent->NPC)
+		{
+			RemapUsercmd(&ent->NPC->last_ucmd);
+		}
+		if (ent->m_pVehicle)
+		{
+			RemapUsercmd(&ent->m_pVehicle->m_ucmd);
+		}
+	}
+
+	if (!qbAutosave)
+	{
+		RemapRegisteredItems();
+	}
+}
+
 void WriteLevel(qboolean qbAutosave)
 {
+	WriteWeaponManifest();
+
 	if (!qbAutosave) //-always save the client
 	{
 		// write out one client - us!
@@ -1303,6 +1730,8 @@ void ReadLevel(qboolean qbAutosave, qboolean qbLoadTransition)
 {
 	ojk::SavedGameHelper saved_game(
 		::gi.saved_game);
+
+	ReadWeaponManifest();
 
 	if ( qbLoadTransition )
 	{
@@ -1353,6 +1782,11 @@ void ReadLevel(qboolean qbAutosave, qboolean qbLoadTransition)
 	/////////////
 
 	ReadGEntities(qbAutosave);
+	RemapLoadedWeapons(qbAutosave);
+
+	extern void G_RestoreAnimOverrides(void);
+	G_RestoreAnimOverrides();
+
 	Quake3Game()->VariableLoad();
 	G_LoadSave_ReadMiscData();
 
@@ -1373,7 +1807,7 @@ void ReadLevel(qboolean qbAutosave, qboolean qbLoadTransition)
 extern int killPlayerTimer;
 qboolean GameAllowedToSaveHere(void)
 {
-	return (qboolean)(!in_camera&&!killPlayerTimer);
+	return (qboolean)(!in_camera&&!killPlayerTimer&&!G_PlayerFrozen());
 }
 
 //////////////////// eof /////////////////////

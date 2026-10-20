@@ -30,6 +30,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 extern vmCvar_t	fx_debug;
 extern vmCvar_t	fx_freeze;
+extern vmCvar_t	fx_skipDraw;
 
 extern void CG_ExplosionEffects( vec3_t origin, float intensity, int radius, int time );
 
@@ -119,20 +120,39 @@ void SFxHelper::PlayLocalSound( int sfxHandle, int channelNum )
 void SFxHelper::Trace( trace_t *tr, vec3_t start, vec3_t min, vec3_t max,
 						vec3_t end, int skipEntNum, int flags )
 {
-	CG_Trace( tr, start, min, max, end, skipEntNum, flags );
+	// Same as CG_Trace, split in two so cg_speeds 2 can time the BSP and the entity clip apart.
+	FXS_START( t );
+	cgi_CM_BoxTrace( tr, start, end, min, max, 0, flags );
+	tr->entityNum = tr->fraction != 1.0 ? ENTITYNUM_WORLD : ENTITYNUM_NONE;
+	FXS_STOP( t, trace );
+
+	FXS_START( tc );
+	const int clipped = CG_ClipMoveToEntities( start, min, max, end, skipEntNum, flags, tr );
+	FXS_STOP( tc, clip );
+	FXS_COUNT( traces );
+	if ( fxSpeedsOn ) { fxSpeeds.clipEnts += clipped; }
 }
 
 void SFxHelper::G2Trace( trace_t *tr, vec3_t start, vec3_t min, vec3_t max,
 						vec3_t end, int skipEntNum, int flags )
 {
 	//CG_Trace( tr, start, min, max, end, skipEntNum, flags, G2_COLLIDE );
+	FXS_START( t );
 	gi.trace(tr, start, NULL, NULL, end, skipEntNum, flags, G2_COLLIDE, 0);
+	FXS_STOP( t, g2trace );
+	FXS_COUNT( g2traces );
 }
 
 //------------------------------------------------------
 void SFxHelper::AddFxToScene( refEntity_t *ent )
 {
+	if ( fx_skipDraw.integer )
+		return;
+
+	FXS_START( t );
 	cgi_R_AddRefEntityToScene( ent );
+	FXS_STOP( t, submit );
+	FXS_COUNT( submits );
 }
 
 //------------------------------------------------------
@@ -158,13 +178,22 @@ int SFxHelper::RegisterModel( const gsl::cstring_span& model )
 //------------------------------------------------------
 void SFxHelper::AddLightToScene( vec3_t org, float radius, float red, float green, float blue )
 {
+	FXS_START( t );
 	cgi_R_AddLightToScene( org, radius, red, green, blue );
+	FXS_STOP( t, submit );
+	FXS_COUNT( lights );
 }
 
 //------------------------------------------------------
 void SFxHelper::AddPolyToScene( int shader, int count, polyVert_t *verts )
 {
+	if ( fx_skipDraw.integer )
+		return;
+
+	FXS_START( t );
 	cgi_R_AddPolyToScene( shader, count, verts );
+	FXS_STOP( t, submit );
+	FXS_COUNT( polys );
 }
 
 //------------------------------------------------------

@@ -92,3 +92,7 @@ void R_Free( void *ptr );
 int R_MemSize( memtag_t eTag );
 void R_MorphMallocTag( void *pvBuffer, memtag_t eDesiredTag );
 void *R_Hunk_Alloc( int iSize, qboolean bZeroit=qtrue );
+
+// GLA merge (tr_glamerge.cpp)
+qboolean R_LoadMergedGLA( const char *path, void **buffer );
+const char *R_GetAnimOverrideGLA( const char *modelPath, const char *animName );

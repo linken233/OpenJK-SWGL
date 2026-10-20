@@ -680,7 +680,7 @@ void Player_CacheFromPrevLevel(void)
 		var = strtok(s, " ");
 		while (var != NULL)
 		{
-			if (atoi(var) > 0)
+			if (atoi(var) > 0 && i < weaponCount)
 			{
 				if (i == WP_NONE) //don't register!
 				{
@@ -796,6 +796,12 @@ static void Player_RestoreFromPrevLevel(gentity_t *ent, SavedGameJustLoaded_e eS
 				client->ps.saber[1].blade[j].color = (saber_colors_t)saber2BladeColor[j];
 			}
 
+			const int maxHealth = gi.Cvar_VariableIntegerValue( "playermaxhealth" );
+			if ( maxHealth > 0 )
+			{
+				client->ps.stats[STAT_MAX_HEALTH] = client->pers.maxHealth = maxHealth;
+			}
+
 			ent->health = client->ps.stats[STAT_HEALTH];
 
 			if(ent->client->ps.saber[0].name && gi.bIsFromZone(ent->client->ps.saber[0].name, TAG_G_ALLOC)) {
@@ -885,6 +891,28 @@ static void Player_RestoreFromPrevLevel(gentity_t *ent, SavedGameJustLoaded_e eS
 			client->ps.forceGripEntityNum = client->ps.forceDrainEntityNum = ENTITYNUM_NONE;
 		}
 	}
+}
+
+extern void Cmd_Update_CF( gentity_t *ent );
+
+// restores what lives on the entity (not in playerState) after a map or hub transition
+static void Player_RestoreEntityFromPrevLevel( gentity_t *ent )
+{
+	char	s[MAX_STRING_CHARS];
+
+	gi.Cvar_VariableStringBuffer( "playerlightning", s, sizeof(s) );
+	if ( s[0] )
+	{
+		ent->forceLightningColor = (lightningColor_t)atoi( s );
+	}
+
+	gi.Cvar_VariableStringBuffer( "playerscale", s, sizeof(s) );
+	if ( atof( s ) > 0.0f )
+	{
+		ent->s.modelScale[0] = ent->s.modelScale[1] = ent->s.modelScale[2] = (float)atof( s );
+	}
+
+	Cmd_Update_CF( ent );	// cheat flags come from the ui_cheats_* cvars
 }
 
 /*
@@ -2064,6 +2092,14 @@ qboolean G_SetG2PlayerModelInfo( gentity_t *ent, const char *modelName, const ch
 
 	// set the weaponmodel to -1 so we don't try to remove it in Pmove before we have it built
 	ent->weaponModel[0] = -1;
+	// the jetpack and wrist flamethrower models belong to the previous ghoul2 instance, their code builds them again
+	ent->jetpackModel = -1;
+	ent->wristFlameModel = -1;
+	if ( ent->client )
+	{
+		ent->client->jetPackShown = 0;
+		ent->client->wristFlameShown = 0;
+	}
 
 	if ( ent->playerModel == -1 )
 	{
@@ -2171,6 +2207,8 @@ void G_RemovePlayerModel( gentity_t *ent )
 {
 	if ( ent->playerModel >= 0 && ent->ghoul2.size() )
 	{
+		G_JetpackRemoveModel( ent );	// it is bolted to the player model
+		G_WristFlamerRemoveModel( ent );
 		gi.G2API_RemoveGhoul2Model( ent->ghoul2, ent->playerModel );
 		ent->playerModel = -1;
 	}
@@ -2841,6 +2879,11 @@ qboolean ClientSpawn(gentity_t *ent, SavedGameJustLoaded_e eSavedGameJustLoaded 
 			}
 			G_ReloadSaberData( ent );
 			//force power levels should already be set
+		}
+
+		if ( ent->s.number == 0 && (eSavedGameJustLoaded == eNO || g_qbLoadTransition) )
+		{//map or hub transition, not an autoload
+			Player_RestoreEntityFromPrevLevel( ent );
 		}
 
 		//NEVER start a map with either of your sabers or blades on...

@@ -86,6 +86,12 @@ typedef struct listBoxDef_s {
 	qboolean	notselectable;
 //JLF MPMOVED
 	qboolean	scrollhidden;
+	float		scrollbarSize;		// "scrollbarsize" keyword; 0 = SCROLLBAR_SIZE
+	int			dropdownRows;		// "dropdown" keyword; 0 = normal list box
+	qhandle_t	dropdownArrow;		// "dropdownarrow" keyword; 0 = scrollBarArrowDown
+	qboolean	dropdownList;		// the rect of the item is the open list, not the header
+	float		dropdownBorder;		// border size of a dropdown; the dropdown paints its border, not Window_Paint
+	struct multiDef_s *multi;		// a dropdown made from an ITEM_TYPE_MULTI: the entries and the cvar come from it, not from a feeder
 } listBoxDef_t;
 
 
@@ -107,6 +113,7 @@ typedef struct multiDef_s {
 	float		cvarValue[MAX_MULTI_CVARS];
 	int			count;
 	qboolean	strDef;
+	listBoxDef_t *listDef;		// the "dropdown" keywords of the item; Item_ConvertMultiDropdown turns the item into a list box
 } multiDef_t;
 
 #define CVAR_ENABLE		0x00000001
@@ -189,6 +196,7 @@ typedef struct {
 	qboolean	(*getOverstrikeMode)();
 	float		(*getValue) (int ownerDraw);
 	void		(*keynumToStringBuf)( int keynum, char *buf, int buflen );
+	int			(*keyCombo)( int modifier, int key );
 	void		(*modelBounds) (qhandle_t model, vec3_t min, vec3_t max);
 	qboolean	(*ownerDrawHandleKey)(int ownerDraw, int flags, float *special, int key);
 	void		(*ownerDrawItem) (float x, float y, float w, float h, float text_x, float text_y, int ownerDraw, int ownerDrawFlags, int align, float special, float scale, vec4_t color, qhandle_t shader, int textStyle, int iFontIndex);
@@ -327,6 +335,10 @@ typedef struct {
 	vec4_t		borderColor;				// border color
 	vec4_t		outlineColor;				// border color
 	qhandle_t	background;					// background asset
+	char		backgroundName[MAX_QPATH];	// background asset name, kept around for the nine patch size lookup
+	int			backgroundStyle;			// BACKGROUND_NONE or one of the nine patch modes
+	float		backgroundOffset[4];		// nine patch border widths in shader pixels: top right bottom left
+	float		backgroundSize[2];			// shader size in pixels, 0 = not looked up yet, -1 = lookup failed
 } windowDef_t;
 
 typedef windowDef_t Window;
@@ -502,6 +514,7 @@ itemDef_t *Menu_GetMatchingItemByNumber(menuDef_t *menu, int index, const char *
 void		Menu_HandleKey(menuDef_t *menu, int key, qboolean down);
 void		Menu_New(char *buffer);
 void		Menus_OpenByName(const char *p);
+void		UI_RunMenuCommand(const char *command);
 void		Menu_PaintAll(void);
 void		Menu_Reset(void);
 void		PC_EndParseSession(char *buffer);

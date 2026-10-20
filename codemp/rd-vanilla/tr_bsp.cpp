@@ -1677,7 +1677,8 @@ static	void R_LoadFogs( lump_t *l, lump_t *brushesLump, lump_t *sidesLump, world
 
 	// create fog strucutres for them
 	worldData.numfogs = count + 1;
-	worldData.fogs = (fog_t *)Hunk_Alloc ( worldData.numfogs*sizeof(*out), h_low);
+	// One extra slot past numfogs: the misc_bsp instance copies the global fog there.
+	worldData.fogs = (fog_t *)Hunk_Alloc ( (worldData.numfogs+1)*sizeof(*out), h_low);
 	worldData.globalFog = -1;
 	out = worldData.fogs + 1;
 

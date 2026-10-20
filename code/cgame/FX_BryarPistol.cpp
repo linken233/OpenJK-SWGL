@@ -62,8 +62,8 @@ void FX_BryarProjectileThink(  centity_t *cent, const struct weaponInfo_s *weapo
 
 		VectorScale( forward, scale, forward );
 	}
-	if (weapon->weaponAttacksInfo[cent->gent->alt_fire].projectileEffect) {
-		theFxScheduler.PlayEffect(weapon->weaponAttacksInfo[cent->gent->alt_fire].projectileEffect, cent->lerpOrigin, forward);
+	if (weapon->weaponAttacksInfo[cent->gent->attack_index].projectileEffect) {
+		theFxScheduler.PlayEffect(weapon->weaponAttacksInfo[cent->gent->attack_index].projectileEffect, cent->lerpOrigin, forward);
 	}
 	else if ( cent->gent && cent->gent->owner && cent->gent->owner->s.number > 0 )
 	{
@@ -114,16 +114,16 @@ void FX_BryarAltProjectileThink(  centity_t *cent, const struct weaponInfo_s *we
 	for ( int t = 1; t < cent->gent->count; t++ )
 	{
 		// just add ourselves over, and over, and over when we are charged
-		if (weapon->weaponAttacksInfo[cent->gent->alt_fire].projectileEffect) {
-			theFxScheduler.PlayEffect(weapon->weaponAttacksInfo[cent->gent->alt_fire].projectileEffect, cent->lerpOrigin, forward);
+		if (weapon->weaponAttacksInfo[cent->gent->attack_index].projectileEffect) {
+			theFxScheduler.PlayEffect(weapon->weaponAttacksInfo[cent->gent->attack_index].projectileEffect, cent->lerpOrigin, forward);
 		}
 		else {
 			theFxScheduler.PlayEffect(cgs.effects.bryarPowerupShotEffect, cent->lerpOrigin, forward);
 		}
 	}
 
-	if (weapon->weaponAttacksInfo[cent->gent->alt_fire].projectileEffect) {
-		theFxScheduler.PlayEffect(weapon->weaponAttacksInfo[cent->gent->alt_fire].projectileEffect, cent->lerpOrigin, forward);
+	if (weapon->weaponAttacksInfo[cent->gent->attack_index].projectileEffect) {
+		theFxScheduler.PlayEffect(weapon->weaponAttacksInfo[cent->gent->attack_index].projectileEffect, cent->lerpOrigin, forward);
 	}
 	else {
 		theFxScheduler.PlayEffect(cgs.effects.bryarShotEffect, cent->lerpOrigin, forward);

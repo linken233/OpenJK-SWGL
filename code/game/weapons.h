@@ -291,7 +291,8 @@ typedef struct weaponIndexes_s
 } weaponIndexes_t;
 
 typedef enum{
-	WC_NONE, //Only for weapon none else is "unset"
+	WC_UNSET = -1, //Not defined in the weapon data, inherited from the base weapon then WC_NONE
+	WC_NONE = 0, //Explicitly no category (weapon none)
 	WC_MELEE, //Like melee
 	WC_STUN_BATON, //For this specific weapons. Is handled by "other case"
 	WC_MELEE_1H, //Like Tusken Staff
@@ -301,13 +302,15 @@ typedef enum{
 	WC_HEAVY, //Like Bowcaster or rocket launcher
 	WC_GRENADE, //Like thermal
 	WC_EXPLOSIVE, //Like detpack
-	WC_MINIGUN //Like a Z6
+	WC_MINIGUN, //Like a Z6
+	WC_SHOULDER //Like a PLX-1
 } weaponCategory_t;
 
 
 typedef struct weaponAttackData_s
 {
 	firingLogic_t firingLogic; //The method of fire for this attack
+	qboolean parsed;					// The attack block exists in the weapon data
 
 	/* Base Data */
 	int		energyPerShot;				// Amount of energy used per shot
@@ -349,7 +352,14 @@ typedef struct weaponAttackData_s
 	vec3_t  beamColor;
 	char	fullBeamShader[64];
 	vec3_t  fullBeamColor;
-	
+
+	/* Beam Behaviour (0 / empty = none) */
+	float	beamRadius;			// Half size of the trace box, makes far targets easier to hit
+	int		selfKnockback;		// Push the shooter backwards by this much
+	int		pushForce;			// Push the victim away by this much
+	int		knockdownForce;		// Knock the living victim down with this strength
+	char	beamTrailEffect[64];	// Effect played every 64 units along the beam
+
 	/* Blaster Bounce Data */
 	qboolean bounceWall;		//BounceOnWalls;
 	int		bounceCount;		//BounceCounts
@@ -428,12 +438,6 @@ typedef struct ammoData_s
 //--------------
 #define HIGH_POWERED_DAMAGE			200
 
-// Attack Options
-//--------
-#define MAIN_ATTACK 		1
-#define ALT_ATTACK			2
-#define SCOPED_MAIN_ATTACK  3
-#define SCOPED_ALT_ATTACK   4
 
 // Npc constants
 //-----------------

@@ -1,0 +1,872 @@
+/*
+===========================================================================
+Copyright (C) 1999 - 2005, Id Software, Inc.
+Copyright (C) 2000 - 2013, Raven Software, Inc.
+Copyright (C) 2001 - 2013, Activision, Inc.
+Copyright (C) 2013 - 2015, OpenJK contributors
+
+This file is part of the OpenJK source code.
+
+OpenJK is free software; you can redistribute it and/or modify it
+under the terms of the GNU General Public License version 2 as
+published by the Free Software Foundation.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program; if not, see <http://www.gnu.org/licenses/>.
+===========================================================================
+*/
+
+#include "tr_local.h"
+#include "rtx_light_style.h"
+#include "rtx_light_emissive.h"
+
+#define     MAX_MAP_CLUSTERS    65536
+
+static int local_light_counts[MAX_MAP_CLUSTERS];
+static int cluster_light_counts[MAX_MAP_CLUSTERS];
+static int light_list_tails[MAX_MAP_CLUSTERS];
+static int max_model_lights = 0;
+
+static cvar_t* cvar_pt_primbuf = NULL;
+static uint32_t current_primbuf_size = 0;
+
+// Clamps and default setting for the animated primitive buffer size
+#define PRIMBUF_SIZE_MIN (1 << 16)
+#define PRIMBUF_SIZE_MAX (1 << 26)
+
+#define PRIMBUF_SIZE_DEFAULT (1 << 20)
+void vkpt_light_buffer_reset_counts( void )	// not used yet
+{
+	max_model_lights = 0;
+}
+
+// The factor of the light color in the light buffer.
+// The light cast by a glow stage and by a q3map_surfacelight surface have their own scale.
+// pt_glow_scale only sets how bright the glow surface is seen. In the world, a light without
+// material is a light entity. add_dlights applies pt_light_scale_dlight.
+float vk_rtx_light_scale( const light_poly_t *light, qboolean world )
+{
+	float mat_scale = 10.f;
+	if ( light->material )
+		mat_scale = RTX_LightEmissive_Scale( light->material );
+	else if ( world )
+	{
+		mat_scale = light->ent_class == LIGHT_ENT_EDIT ? MAX( 0.f, pt_light_scale_edit->value ) : 1.f;
+	}
+
+	return mat_scale;
+}
+
+static inline void
+copy_light(const light_poly_t* light, float* vblight, const float* sky_radiance, qboolean world)
+{
+	const float style_scale = RTX_LightStyle_Scale( light->style, qfalse );
+	const float prev_style = RTX_LightStyle_Scale( light->style, qtrue );
+	const float mat_scale = vk_rtx_light_scale( light, world );
+
+	VectorCopy(light->positions + 0, vblight + 0);
+	VectorCopy(light->positions + 3, vblight + 4);
+	VectorCopy(light->positions + 6, vblight + 8);
+
+	if (light->color[0] < 0.f)
+	{
+		vblight[3] = -sky_radiance[0] * 0.5f;
+		vblight[7] = -sky_radiance[1] * 0.5f;
+		vblight[11] = -sky_radiance[2] * 0.5f;
+	}
+	else
+	{
+		vblight[3] = light->color[0] * mat_scale;
+		vblight[7] = light->color[1] * mat_scale;
+		vblight[11] = light->color[2] * mat_scale;
+	}
+
+	vblight[12] = style_scale;
+	vblight[13] = prev_style;
+	vblight[14] = light->type;
+	vblight[15] = 0.f;
+}
+
+VkResult allocate_gpu_memory( VkMemoryRequirements mem_req, VkDeviceMemory *pMemory )
+{
+	VkMemoryAllocateInfo mem_alloc_info;
+	mem_alloc_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+	mem_alloc_info.pNext = NULL;
+	mem_alloc_info.allocationSize = mem_req.size;
+	mem_alloc_info.memoryTypeIndex = vk_find_memory_type(mem_req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+#ifdef VKPT_DEVICE_GROUPS
+	VkMemoryAllocateFlagsInfo mem_alloc_flags = {
+		.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO,
+		.flags = VK_MEMORY_ALLOCATE_DEVICE_MASK_BIT,
+		.deviceMask = (1 << qvk.device_count) - 1
+	};
+
+	if (qvk.device_count > 1) {
+		mem_alloc_info.pNext = &mem_alloc_flags;
+	}
+#endif
+
+	return qvkAllocateMemory( vk.device, &mem_alloc_info, NULL, pMemory );
+}
+
+static VkDeviceAddress vk_get_buffer_device_address(VkBuffer buffer)
+{
+	VkBufferDeviceAddressInfo address_info;
+	address_info.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
+	address_info.pNext = NULL;
+	address_info.buffer = buffer;
+
+	return qvkGetBufferDeviceAddress( vk.device, &address_info );
+}
+
+VkResult vk_rtx_buffer_create( vkbuffer_t *buf, VkDeviceSize size, 
+	VkBufferUsageFlags usage, VkMemoryPropertyFlags mem_properties )
+{
+	assert(size > 0);
+	assert(buf);
+	VkResult result = VK_SUCCESS;
+
+	VkBufferCreateInfo buf_create_info;
+	buf_create_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+	buf_create_info.pNext = NULL;
+	buf_create_info.flags = 0;
+	buf_create_info.size  = size;
+	buf_create_info.usage = usage;
+	buf_create_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+	buf_create_info.queueFamilyIndexCount = 0;
+	buf_create_info.pQueueFamilyIndices = NULL;
+
+	buf->size = size;
+	buf->is_mapped = 0;
+
+	result = qvkCreateBuffer( vk.device, &buf_create_info, NULL, &buf->buffer );
+	if ( result != VK_SUCCESS ) {
+		goto fail_buffer;
+	}
+	assert(buf->buffer != VK_NULL_HANDLE);
+
+	VkMemoryRequirements mem_reqs;
+	qvkGetBufferMemoryRequirements( vk.device, buf->buffer, &mem_reqs );
+
+	VkMemoryAllocateInfo mem_alloc_info;
+	mem_alloc_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+	mem_alloc_info.pNext = NULL;
+	mem_alloc_info.allocationSize = mem_reqs.size;
+	mem_alloc_info.memoryTypeIndex = vk_find_memory_type( mem_reqs.memoryTypeBits, mem_properties );
+
+
+	VkMemoryAllocateFlagsInfo mem_alloc_flags;
+	mem_alloc_flags.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO;
+	mem_alloc_flags.pNext = NULL;
+	mem_alloc_flags.flags = ( usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT ) ? VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT : 0;
+	mem_alloc_flags.deviceMask = 0;
+
+#ifdef VKPT_DEVICE_GROUPS
+	if ( qvk.device_count > 1 && !( mem_properties & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT ) ) {
+		mem_alloc_flags.flags |= VK_MEMORY_ALLOCATE_DEVICE_MASK_BIT;
+		mem_alloc_flags.deviceMask = (1 << qvk.device_count) - 1;
+	}
+#endif
+
+	mem_alloc_info.pNext = &mem_alloc_flags;
+
+	result = qvkAllocateMemory( vk.device, &mem_alloc_info, NULL, &buf->memory );
+	if ( result != VK_SUCCESS ) {
+		goto fail_mem_alloc;
+	}
+
+	assert( buf->memory != VK_NULL_HANDLE );
+
+	result = qvkBindBufferMemory( vk.device, buf->buffer, buf->memory, 0 );
+	if ( result != VK_SUCCESS ) {
+		goto fail_bind_buf_memory;
+	}
+
+	if ( usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT )
+	{
+		buf->address = vk_get_buffer_device_address( buf->buffer );
+		assert(buf->address);
+	}
+	else
+	{
+		buf->address = 0;
+	}
+
+	return VK_SUCCESS;
+
+fail_bind_buf_memory:
+	qvkFreeMemory( vk.device, buf->memory, NULL );
+fail_mem_alloc:
+	qvkDestroyBuffer( vk.device, buf->buffer, NULL );
+fail_buffer:
+	buf->buffer = VK_NULL_HANDLE;
+	buf->memory = VK_NULL_HANDLE;
+	buf->size   = 0;
+	return result;
+}
+
+VkResult vk_rtx_buffer_destroy( vkbuffer_t *buf )
+{
+#if 1
+	assert(!buf->is_mapped);
+#else
+	if ( buf->is_mapped )
+		qvkUnmapMemory( vk.device, buf->memory );
+#endif
+
+	if ( buf->memory != VK_NULL_HANDLE )
+		qvkFreeMemory( vk.device, buf->memory, NULL );
+
+	if ( buf->buffer != VK_NULL_HANDLE )
+		qvkDestroyBuffer( vk.device, buf->buffer, NULL );
+
+	buf->buffer = VK_NULL_HANDLE;
+	buf->memory = VK_NULL_HANDLE;
+	buf->size   = 0;
+	buf->address = 0;
+
+	return VK_SUCCESS;
+}
+
+void *buffer_map( vkbuffer_t *buf )
+{
+	assert( !buf->is_mapped );
+
+	buf->is_mapped = 1;
+	void *ret = NULL;
+
+	assert(buf->memory != VK_NULL_HANDLE);
+	assert(buf->size > 0);
+
+	VK_CHECK( qvkMapMemory( vk.device, buf->memory, 0 /*offset*/, buf->size, 0 /*flags*/, &ret ) );
+	return ret;
+}
+
+void buffer_unmap( vkbuffer_t *buf )
+{
+	assert( buf->is_mapped );
+
+	buf->is_mapped = 0;
+	qvkUnmapMemory( vk.device, buf->memory );
+}
+
+void vk_rtx_buffer_attach_name( const vkbuffer_t *buf, const char *name )
+{
+	VK_SET_OBJECT_NAME( buf->buffer, name, VK_DEBUG_REPORT_OBJECT_TYPE_BUFFER_EXT );
+	VK_SET_OBJECT_NAME( buf->memory, name, VK_DEBUG_REPORT_OBJECT_TYPE_DEVICE_MEMORY_EXT );
+}
+
+static uint32_t VK_DeviceLocalMemoryIndex()	// hmm
+{
+	uint32_t deviceLocalMemIndex = -1;
+	VkPhysicalDeviceMemoryProperties physDevMemProps = { 0 };
+
+	qvkGetPhysicalDeviceMemoryProperties(vk.physical_device, &physDevMemProps);
+	for (uint32_t i = 0; i < physDevMemProps.memoryTypeCount; ++i) {
+		const VkMemoryType* memType = physDevMemProps.memoryTypes;
+		// Just pick the first device local memtype.
+		if (memType[i].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) {
+			deviceLocalMemIndex = i;
+			break;
+		}
+	}
+
+	return deviceLocalMemIndex;
+
+}
+
+void VK_CreateImageMemory(VkMemoryPropertyFlags properties, VkImage *image, VkDeviceMemory *bufferMemory) {
+	VkMemoryRequirements memory_requirements = { 0 };
+	qvkGetImageMemoryRequirements(vk.device, *image, &memory_requirements);
+
+	int32_t memoryTypeIndex = vk_find_memory_type( memory_requirements.memoryTypeBits, properties );
+
+	VkMemoryAllocateInfo allocInfo;
+	Com_Memset( &allocInfo, 0, sizeof(VkMemoryAllocateInfo) );
+
+	allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+	allocInfo.allocationSize = memory_requirements.size;
+	allocInfo.memoryTypeIndex = memoryTypeIndex != -1 ? memoryTypeIndex : VK_DeviceLocalMemoryIndex();
+
+	VK_CHECK(qvkAllocateMemory(vk.device, &allocInfo, NULL, bufferMemory));
+	VK_CHECK(qvkBindImageMemory(vk.device, *image, *bufferMemory, 0));
+}
+
+void VK_CreateAttributeBuffer(vkbuffer_t* buffer, VkDeviceSize size, VkBufferUsageFlagBits usage, qboolean is_host_visible ) {
+	VkDeviceSize nCAS = vk.props.limits.nonCoherentAtomSize;
+	buffer->size = ((size + (nCAS - 1)) / nCAS) * nCAS;
+
+	VkMemoryPropertyFlags mem_flags = is_host_visible
+		? (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)
+		: VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+
+	vk_rtx_buffer_create( buffer, buffer->size, usage, mem_flags );
+}
+
+void vk_rtx_upload_buffer_data_offset( vkbuffer_t *buffer, VkDeviceSize offset, VkDeviceSize size, const byte *data ) 
+{
+    if (offset + size > buffer->size) {
+        ri.Error(ERR_FATAL, "Vulkan: Buffer to small!");
+    }
+
+    byte *p = (byte *)buffer_map(buffer);
+    Com_Memcpy(p + offset, data, (size_t)(size));
+    buffer_unmap(buffer);
+}
+
+void vk_rtx_upload_buffer_data( vkbuffer_t *buffer, const byte *data ) 
+{
+	vk_rtx_upload_buffer_data_offset(buffer, 0, buffer->size, data);
+}
+
+static void copy_bsp_lights( world_t *world, LightBuffer *lbo )
+{
+	memcpy( lbo->light_list_lights, world->cluster_lights, world->cluster_light_offsets[world->numClusters] * sizeof(uint32_t) );
+	memcpy( lbo->light_list_offsets, world->cluster_light_offsets, (world->numClusters + 1) * sizeof(uint32_t)  );
+		
+	// Store the light counts in the light counts history entry for the current frame
+	uint32_t history_index = vk.frame_counter % LIGHT_COUNT_HISTORY;
+	uint32_t *sample_light_counts = (uint32_t *)buffer_map( vk.buf_light_counts_history + history_index );
+		
+	for ( int c = 0; c < world->numClusters; c++ )
+	{
+		sample_light_counts[c] = world->cluster_light_offsets[c + 1] - world->cluster_light_offsets[c];
+	}
+
+	buffer_unmap( vk.buf_light_counts_history + history_index );
+}
+
+// Job context of the two PVS passes of inject_model_lights. A job owns a range of PVS bytes,
+// so it owns the clusters j * 8 + k of that range: no two jobs write the same counter or list.
+typedef struct {
+	world_t				*world;
+	const int			*local_counts;
+	int					*cluster_counts;
+	int					num_model_lights;
+	const light_poly_t	*lights;
+	int					*tails;
+	uint32_t			*dst_lists;
+	const uint32_t		*dst_offsets;
+	int					model_light_offset;
+} injectLightsCtx_t;
+
+static void inject_count_range( int begin, int end, void *p )
+{
+	const injectLightsCtx_t *c = (const injectLightsCtx_t *)p;
+
+	for ( int cl = 0; cl < c->world->numClusters; cl++ )
+	{
+		if ( !c->local_counts[cl] )
+			continue;
+
+		const byte *mask = BSP_GetPvs( c->world, cl );
+
+		for ( int j = begin; j < end; j++ )
+		{
+			if ( !mask[j] )
+				continue;
+
+			for ( int k = 0; k < 8; ++k )
+			{
+				if ( mask[j] & ( 1 << k ) )
+					c->cluster_counts[j * 8 + k] += c->local_counts[cl];
+			}
+		}
+	}
+}
+
+static void inject_write_range( int begin, int end, void *p )
+{
+	const injectLightsCtx_t *c = (const injectLightsCtx_t *)p;
+
+	for ( int nlight = 0; nlight < c->num_model_lights; nlight++ )
+	{
+		const byte *mask = BSP_GetPvs( c->world, c->lights[nlight].cluster );
+
+		if ( !mask )
+			continue;
+
+		for ( int j = begin; j < end; j++ )
+		{
+			if ( !mask[j] )
+				continue;
+
+			for ( int k = 0; k < 8; ++k )
+			{
+				if ( mask[j] & ( 1 << k ) )
+				{
+					const int other_cluster = j * 8 + k;
+					const int list_index = c->tails[other_cluster]++;
+					// assert we're not writing into the space reserved for following cluster
+					assert( list_index < (int)c->dst_offsets[other_cluster + 1] );
+					c->dst_lists[list_index] = c->model_light_offset + nlight;
+				}
+			}
+		}
+	}
+}
+
+static void inject_model_lights( world_t* world, int num_model_lights, light_poly_t* transformed_model_lights, int model_light_offset, LightBuffer *lbo)
+{
+	uint32_t *dst_list_offsets = lbo->light_list_offsets;
+	uint32_t *dst_lists = lbo->light_list_lights;
+
+	memset(local_light_counts, 0, world->numClusters * sizeof(int));
+	memset(cluster_light_counts, 0, world->numClusters * sizeof(int));
+
+	// Count the number of model lights per cluster
+
+	for (int nlight = 0; nlight < num_model_lights; nlight++)
+	{
+		local_light_counts[transformed_model_lights[nlight].cluster]++;
+	}
+
+	// Count the number of model lights visible from each cluster, using the PVS
+
+	// A job takes a range of PVS bytes. Small lists stay on the calling thread.
+	injectLightsCtx_t jobCtx;
+	jobCtx.world = world;
+	jobCtx.local_counts = local_light_counts;
+	jobCtx.cluster_counts = cluster_light_counts;
+	jobCtx.num_model_lights = num_model_lights;
+	jobCtx.lights = transformed_model_lights;
+	jobCtx.tails = light_list_tails;
+	jobCtx.dst_lists = dst_lists;
+	jobCtx.dst_offsets = dst_list_offsets;
+	jobCtx.model_light_offset = model_light_offset;
+
+	const int pvs_grain = MAX( 8, 2048 / MAX( 1, num_model_lights ) );
+
+	RTX_ParallelFor( world->clusterBytes, pvs_grain, inject_count_range, &jobCtx );
+
+	// Count the total required list size
+
+	int required_size = world->cluster_light_offsets[world->numClusters];
+	for (int c = 0; c < world->numClusters; c++)
+	{
+		required_size += cluster_light_counts[c];
+	}
+
+	// See if we have enough room in the interaction buffer
+	
+	if (required_size > MAX_LIGHT_LIST_NODES)
+	{
+		Com_Printf("Insufficient light interaction buffer size (%d needed). Increase MAX_LIGHT_LIST_NODES.\n", required_size);
+
+		// Copy the BSP light lists verbatim
+		copy_bsp_lights( world, lbo );
+
+		return;
+	}
+	
+	// Store the light counts in the light counts history entry for the current frame
+	uint32_t history_index = vk.frame_counter % LIGHT_COUNT_HISTORY;
+	uint32_t *sample_light_counts = (uint32_t *)buffer_map(vk.buf_light_counts_history + history_index);
+
+	// Copy the static light lists, and make room in these lists to inject the model lights
+
+	int tail = 0;
+	for (int c = 0; c < world->numClusters; c++)
+	{
+		int original_size = world->cluster_light_offsets[c + 1] - world->cluster_light_offsets[c];
+
+		dst_list_offsets[c] = tail;
+		memcpy(dst_lists + tail, world->cluster_lights + world->cluster_light_offsets[c], sizeof(uint32_t) * original_size);
+		tail += original_size;
+		
+		assert(tail + cluster_light_counts[c] < MAX_LIGHT_LIST_NODES);
+		
+		light_list_tails[c] = tail;
+		tail += cluster_light_counts[c];
+
+		sample_light_counts[c] = original_size + cluster_light_counts[c];
+	}
+	dst_list_offsets[world->numClusters] = tail;
+
+	buffer_unmap(vk.buf_light_counts_history + history_index);
+
+	// Write the model light indices into the light lists
+
+	RTX_ParallelFor( world->clusterBytes, pvs_grain, inject_write_range, &jobCtx );
+
+#if defined(_DEBUG)
+	// Verify tight packing
+	for (int c = 0; c < world->numClusters; c++)
+	{
+		int list_start = dst_list_offsets[c];
+		int list_end = dst_list_offsets[c + 1];
+		int original_size = world->cluster_light_offsets[c + 1] - world->cluster_light_offsets[c];
+		assert(list_end - list_start == original_size + cluster_light_counts[c]);
+	}
+#endif
+}
+
+VkResult vkpt_light_buffer_upload_to_staging( qboolean render_world, 
+	world_t *world, int num_model_lights, light_poly_t *transformed_model_lights, const float* sky_radiance )
+{
+	vkbuffer_t *staging = vk.buf_light_staging + vk.current_frame_index;
+
+	LightBuffer *lbo = (LightBuffer *)buffer_map(staging);
+	assert(lbo);
+
+	if ( render_world )
+	{
+		// The light buffer holds MAX_LIGHT_POLYS lights. The model lights past the end are dropped.
+		const int model_light_room = MAX( 0, MAX_LIGHT_POLYS - 1 - world->num_light_polys );
+		if ( num_model_lights > model_light_room )
+		{
+			static int last_logged_world, last_logged_model;
+			if ( last_logged_world != world->num_light_polys || last_logged_model != num_model_lights )
+			{
+				last_logged_world = world->num_light_polys;
+				last_logged_model = num_model_lights;
+				Com_Printf( "RTX light buffer full: %d world lights, %d model lights, room for %d (max %d)\n",
+					world->num_light_polys, num_model_lights, model_light_room, MAX_LIGHT_POLYS );
+			}
+			num_model_lights = model_light_room;
+		}
+
+		int model_light_offset = world->num_light_polys;
+		max_model_lights = MAX(max_model_lights, num_model_lights);
+
+		if ( max_model_lights > 0 )
+		{
+			// If any of the BSP models contain lights, inject these lights right into the visibility lists.
+			// The shader doesn't know that these lights are dynamic.
+
+			inject_model_lights( world, num_model_lights, transformed_model_lights, model_light_offset, lbo );
+		}
+		else
+		{
+			copy_bsp_lights( world, lbo );
+		}
+
+		// The world lights past MAX_LIGHT_POLYS do not fit in the buffer. The shaders ignore their indices.
+		const int num_world_lights = MIN( world->num_light_polys, MAX_LIGHT_POLYS );
+		for ( int nlight = 0; nlight < num_world_lights; nlight++ )
+		{
+			light_poly_t* light = world->light_polys + nlight;
+			float* vblight = *(lbo->light_polys + nlight * LIGHT_POLY_VEC4S);
+			copy_light(light, vblight, sky_radiance, qtrue);
+		}
+
+		for (int nlight = 0; nlight < num_model_lights && nlight + model_light_offset < MAX_LIGHT_POLYS; nlight++)
+		{
+			light_poly_t* light = transformed_model_lights + nlight;
+			float* vblight = *(lbo->light_polys + (nlight + model_light_offset) * LIGHT_POLY_VEC4S);
+			copy_light(light, vblight, sky_radiance, qfalse);
+		}
+	}
+	else
+	{
+		lbo->light_list_offsets[0] = 0;
+		lbo->light_list_offsets[1] = 0;
+	}
+
+	// add light styles here
+
+	{
+		// moved to vk_rtx_material.cpp
+		vk_rtx_upload_materials( lbo );
+	}
+
+	// Without the PVS debug view, the mask is the PVS of the camera cluster. The primary rays use it
+	// for the surfaces behind a sky surface. A camera outside the world sees every cluster, as R_MarkLeaves.
+	if ( vk.cluster_debug_index < 0 )
+	{
+		const int view_cluster = BSP_PointLeaf( tr.world->nodes, backEnd.refdef.vieworg )->cluster;
+
+		if ( view_cluster < 0 || view_cluster >= tr.world->numClusters )
+			memset( vk.cluster_debug_mask, 0xff, sizeof( vk.cluster_debug_mask ) );
+		else
+			BSP_ClusterVis( tr.world, (byte*)vk.cluster_debug_mask, view_cluster, DVIS_PVS );
+	}
+	memcpy( lbo->cluster_debug_mask, vk.cluster_debug_mask, MAX_LIGHT_LISTS / 8 );
+	memcpy( lbo->sky_visibility, tr.world->sky_visibility, MAX_LIGHT_LISTS / 8);
+
+	buffer_unmap( staging );
+	lbo = NULL;
+
+	return VK_SUCCESS;
+}
+
+#if 0
+// ~sunny, deprecated, kep for reference
+static void vk_rtx_add_stage_color( const int stage, VertexBuffer *vbo ) 
+{
+	for ( uint32_t i = 0; i < tess.numVertexes; i++ )
+	{
+		vbo[i].color[stage] = tess.svars.colors[0][i][0] | 
+						  tess.svars.colors[0][i][1] << 8 | 
+			              tess.svars.colors[0][i][2] << 16 | 
+			              tess.svars.colors[0][i][3] << 24;
+	}	
+}
+
+static void vk_rtx_add_stage_tex_coords( const int stage, VertexBuffer *vbo ) 
+{
+	// no need for iteration,  simple memcpy?
+	for ( uint32_t i = 0; i < tess.numVertexes; i++ )
+	{
+		vbo[i].uv[stage][1] = tess.svars.texcoordPtr[0][i][1];
+		vbo[i].uv[stage][0] = tess.svars.texcoordPtr[0][i][0];
+	}	
+}
+#endif
+
+VkResult vk_rtx_readback( ReadbackBuffer *dst )
+{
+	vkbuffer_t *buffer = &vk.buf_readback_staging[vk.current_frame_index];
+	void *mapped = buffer_map(buffer);
+
+	if  ( mapped == NULL )
+		return VK_ERROR_MEMORY_MAP_FAILED;
+
+	memcpy( dst, mapped, sizeof(ReadbackBuffer) );
+
+	buffer_unmap( buffer );
+
+	return VK_SUCCESS;
+}
+
+VkResult vkpt_light_buffers_create( world_t &worldData )
+{
+	vkpt_light_buffers_destroy();
+
+	// Light statistics: 2 uints (shadowed, unshadowed) per light per surface orientation (6) per cluster.
+	uint32_t num_stats = worldData.numClusters * worldData.num_light_polys * 6 * 2;
+
+    // Handle rare cases when the map has zero lights
+    if ( num_stats == 0 )
+        num_stats = 1;
+
+	for ( int frame = 0; frame < NUM_LIGHT_STATS_BUFFERS; frame++ )
+	{
+		vk_rtx_buffer_create( vk.buf_light_stats + frame, sizeof(uint32_t) * num_stats,
+			VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT );
+	}
+
+	for ( int h = 0; h < LIGHT_COUNT_HISTORY; h++ )
+	{
+		vk_rtx_buffer_create( vk.buf_light_counts_history + h, sizeof(uint32_t) * worldData.numClusters,
+			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT );
+	}
+
+	assert(NUM_LIGHT_STATS_BUFFERS == 3);
+
+	return VK_SUCCESS;
+}
+
+VkResult vkpt_light_buffers_destroy( void )
+{
+	for ( int frame = 0; frame < NUM_LIGHT_STATS_BUFFERS; frame++ )
+		vk_rtx_buffer_destroy( vk.buf_light_stats + frame );
+
+	for ( int h = 0; h < LIGHT_COUNT_HISTORY; h++ )
+		vk_rtx_buffer_destroy( vk.buf_light_counts_history + h );
+
+	return VK_SUCCESS;
+}
+
+static size_t Q_snprintf(char *dest, size_t size, const char *fmt, ...)
+{
+    va_list argptr;
+    size_t  ret;
+
+    va_start(argptr, fmt);
+    ret = Q_vsnprintf(dest, size, fmt, argptr);
+    va_end(argptr);
+
+    return ret;
+}
+
+static int Cvar_ClampInteger(cvar_t *var, int min, int max)
+{
+    if (var->integer < min) {
+        R_BackendCvarSetValue(var->name, (float)min);
+        return min;
+    }
+    if (var->integer > max) {
+        R_BackendCvarSetValue(var->name, (float)max);
+        return max;
+    }
+    return var->integer;
+}
+
+void create_primbuf( void )
+{
+	int primbuf_size = Cvar_ClampInteger(cvar_pt_primbuf, PRIMBUF_SIZE_MIN, PRIMBUF_SIZE_MAX);
+
+	vk_rtx_buffer_create(&vk.buf_primitive_instanced, sizeof(VboPrimitive) * primbuf_size,
+		VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+	vk_rtx_buffer_create(&vk.buf_positions_instanced, sizeof(prim_positions_t) * primbuf_size,
+		VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+	current_primbuf_size = primbuf_size;
+}
+
+void destroy_primbuf(void)
+{
+	vk_rtx_buffer_destroy( &vk.buf_primitive_instanced );
+	vk_rtx_buffer_destroy( &vk.buf_positions_instanced );
+}
+
+static inline size_t align(size_t x, size_t alignment)
+{
+	return (x + (alignment - 1)) & ~(alignment - 1);
+}
+
+void vkpt_vertex_buffer_ensure_primbuf_size(uint32_t prim_count)
+{
+	if (prim_count <= current_primbuf_size)
+		return;
+	
+	qvkDeviceWaitIdle(vk.device);
+
+	destroy_primbuf();
+
+	prim_count = (uint32_t)align(prim_count, PRIMBUF_SIZE_MIN);
+	R_BackendCvarSetValue(cvar_pt_primbuf->name, (float)(int)prim_count);
+
+	Com_Printf("Resizing the animation buffers to fit all meshes. Set pt_primbuf to at least %d to avoid this.\n", prim_count);
+
+	create_primbuf();
+
+	VkDescriptorBufferInfo buf_info = { 0 };
+
+	VkWriteDescriptorSet output_buf_write;
+	Com_Memset(&output_buf_write, 0, sizeof(VkWriteDescriptorSet));
+	output_buf_write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+	output_buf_write.dstSet = vk.desc_set_vertex_buffer->set;
+	output_buf_write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+	output_buf_write.descriptorCount = 1;
+	output_buf_write.pBufferInfo = &buf_info;
+
+	output_buf_write.dstBinding = PRIMITIVE_BUFFER_BINDING_IDX;
+	output_buf_write.dstArrayElement = VERTEX_BUFFER_INSTANCED;
+	buf_info.buffer = vk.buf_primitive_instanced.buffer;
+	buf_info.range = vk.buf_primitive_instanced.size;
+	qvkUpdateDescriptorSets(vk.device, 1, &output_buf_write, 0, NULL);
+
+	output_buf_write.dstBinding = POSITION_BUFFER_BINDING_IDX;
+	output_buf_write.dstArrayElement = 0;
+	buf_info.buffer = vk.buf_positions_instanced.buffer;
+	buf_info.range = vk.buf_positions_instanced.size;
+	qvkUpdateDescriptorSets(vk.device, 1, &output_buf_write, 0, NULL);
+}
+
+void vk_rtx_create_buffers( void ) 
+{
+	uint32_t i;
+
+	// scratch buffer
+	vk_rtx_buffer_create( &vk.buf_accel_scratch, VK_MAX_DYNAMIC_BOTTOM_AS_INSTANCES * VK_AS_MEMORY_ALLIGNMENT_SIZE * sizeof(byte), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT );
+	vk.scratch_buf_ptr = 0;
+
+	vkpt_uniform_buffer_create();
+
+	for ( i = 0; i < vk.swapchain_image_count; i++ ) 
+	{
+		// blas instances in tlas
+		vk_rtx_buffer_create(		&vk.buf_instances[i],		VK_MAX_BOTTOM_AS_INSTANCES * sizeof(vk_geometry_instance_t), VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT );	
+	}
+
+	// readback
+	vk_rtx_buffer_create( &vk.buf_readback, sizeof(ReadbackBuffer),
+		VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+	for ( i = 0; i < vk.swapchain_image_count; i++ ) 
+	{
+		vk_rtx_buffer_create( vk.buf_readback_staging + i, sizeof(ReadbackBuffer),
+			VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT );	
+	}
+
+	vk_rtx_radiance_cache_create_buffers();
+
+	// mdxm bones
+	vk_rtx_buffer_create(&vk.buf_mdxm_matrices, sizeof(MDXMMatrixBuffer),
+		VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+	for ( i = 0; i < vk.swapchain_image_count; i++ )
+	{
+		vk_rtx_buffer_create(vk.buf_mdxm_matrices_staging + i, sizeof(MDXMMatrixBuffer),
+			VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+	}
+	vk.mdxm_matrices_shadow = (mat3x4_t*)Z_Malloc(sizeof(MDXMMatrixBuffer), TAG_GENERAL);
+	vk.mdxm_matrices_prev = (mat3x4_t*)Z_Malloc(sizeof(MDXMMatrixBuffer), TAG_GENERAL);
+
+	// light & material buffer
+	vk_rtx_buffer_create( &vk.buf_light, sizeof(LightBuffer),
+		VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+	for ( i = 0; i < vk.swapchain_image_count; i++ ) 
+	{
+		vk_rtx_buffer_create( vk.buf_light_staging + i, sizeof(LightBuffer),
+			VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT );	
+	}
+
+	// tonemap
+	vk_rtx_buffer_create( &vk.buf_tonemap, sizeof(ToneMappingBuffer),
+		VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+	// sky
+	vk_rtx_buffer_create( &vk.buf_sun_color, sizeof(SunColorBuffer),
+		VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+	// primbuf
+	char primbuf_initial_value[16];
+	Q_snprintf(primbuf_initial_value, sizeof(primbuf_initial_value), "%d", PRIMBUF_SIZE_DEFAULT);
+	cvar_pt_primbuf = ri.Cvar_Get("pt_primbuf", primbuf_initial_value, CVAR_ARCHIVE);
+
+	create_primbuf();
+}
+
+void vk_rtx_destroy_buffers( void ) 
+{
+	uint32_t i = 0;
+
+	vk_rtx_buffer_destroy( &vk.buf_accel_scratch );
+	
+	destroy_primbuf();
+
+	vk_rtx_buffer_destroy( &vk.buf_readback );
+	vk_rtx_radiance_cache_destroy_buffers();
+	vk_rtx_buffer_destroy( &vk.buf_tonemap );
+	vk_rtx_buffer_destroy( &vk.buf_light );
+	vk_rtx_buffer_destroy( &vk.buf_mdxm_matrices );
+	vk_rtx_buffer_destroy( &vk.buf_sun_color );
+
+	for ( i = 0; i < vk.swapchain_image_count; i++ ) 
+	{
+		vk_rtx_buffer_destroy( &vk.buf_instances[i] );
+		vk_rtx_buffer_destroy( vk.buf_readback_staging + i );
+		vk_rtx_buffer_destroy( vk.buf_light_staging + i );
+		vk_rtx_buffer_destroy( vk.buf_mdxm_matrices_staging + i );
+	}
+	
+	// ~sunny, redundant
+	//Z_Free( &vk.mdxm_matrices_shadow );
+	//Z_Free( &vk.mdxm_matrices_prev );
+
+	vk_rtx_destroy_accel_all();
+	vkpt_light_buffers_destroy();
+}

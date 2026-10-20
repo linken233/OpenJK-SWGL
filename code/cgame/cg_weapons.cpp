@@ -164,30 +164,18 @@ void CG_InitItemForWeapon(gitem_t* item, int weaponNum) {
 
 /*
 =================
-CG_GetAttackIndex
+CG_CurrentAttackIndex
 
-Return The attack Index of the attack
+The attack index the game resolved for the entity (see WP_ResolveAttackIndex), or the one of the projectile
 =================
 */
-int CG_GetAttackIndex(gentity_t *gent,qboolean alt_fire) 
+int CG_CurrentAttackIndex(const centity_t *cent)
 {
-	int weaponNum = gent->s.weapon;
-	if (gent->client && gent->client->ps.clientNum > 0) {
-		return alt_fire ? 1 : 0;
+	if (cent->gent && cent->gent->client)
+	{
+		return cent->gent->client->ps.attack_index;
 	}
-	if (gent->client && gent->client->ps.firing_attack >= 0) {
-		return gent->client->ps.firing_attack;
-	}
-	int attackIndex = alt_fire ? 1 : 0;
-	if (cg.zoomMode == ST_DISRUPTOR || cg.zoomMode >= ST_A280) {
-		if (alt_fire && weaponData[weaponNum].attackData[3].firingLogic != FL_NONE) {
-			return 3;
-		}
-		else if (weaponData[weaponNum].attackData[2].firingLogic != FL_NONE) {
-			return 2;
-		}
-	}
-	return attackIndex;
+	return cent->gent ? cent->gent->attack_index : 0;
 }
 /*
 =================
@@ -239,6 +227,18 @@ void CG_RegisterWeapon( int weaponNum ) {
 	}
 	// if we couldn't find which weapon this is, Create one!
 	if ( !found) {
+		//For throwable, we need to create two items. Ammo and weapon.
+		if (weaponData[weaponNum].baseWeaponNum == WP_THERMAL
+			|| weaponData[weaponNum].baseWeaponNum == WP_DET_PACK
+			|| weaponData[weaponNum].baseWeaponNum == WP_TRIP_MINE) {
+			if (i == (MAX_ITEMS -1)) {
+				CG_Error("Too many items in external items data(%d); Cannot create nor found ammo item for weapon : '%s'\n", MAX_ITEMS, weaponData[weaponNum].classname);
+			}
+			item = &(bg_itemlist[bg_numItems]);
+			CG_InitItemForAmmo(item, weaponNum);
+			bg_numItems++;
+		}
+
 		if (i == MAX_ITEMS) {
 			CG_Error("Too many items in external items data(%d); Cannot create nor found item for weapon : '%s'\n", MAX_ITEMS, weaponData[weaponNum].classname);
 		}
@@ -246,17 +246,6 @@ void CG_RegisterWeapon( int weaponNum ) {
 		CG_InitItemForWeapon(item, weaponNum);
 		weaponInfo->item = item;
 		bg_numItems++;
-
-		if (weaponData[weaponNum].baseWeaponNum == WP_THERMAL
-			|| weaponData[weaponNum].baseWeaponNum == WP_DET_PACK
-			|| weaponData[weaponNum].baseWeaponNum == WP_TRIP_MINE) {
-			if (i == MAX_ITEMS) {
-				CG_Error("Too many items in external items data(%d); Cannot create nor found ammo item for weapon : '%s'\n", MAX_ITEMS, weaponData[weaponNum].classname);
-			}
-			item = &(bg_itemlist[bg_numItems]);
-			CG_InitItemForAmmo(item, weaponNum);
-			bg_numItems++;
-		}
 	}
 
 	CG_RegisterItemVisuals( item - bg_itemlist );
@@ -979,6 +968,17 @@ void CG_RegisterItemVisuals( int itemNum ) {
 			cgs.media.laGogglesArrow		= cgi_R_RegisterShader( "gfx/2d/bracket2" );
 			break;
 
+		case INV_JETPACK:
+			cgi_S_RegisterSound( "sound/chars/boba/jeton.wav" );
+			cgi_S_RegisterSound( "sound/chars/boba/jethover.wav" );
+			theFxScheduler.RegisterEffect( "boba/jet" );
+			break;
+
+		case INV_WRIST_FLAMER:
+			cgi_S_RegisterSound( "sound/weapons/boba/bf_flame.mp3" );
+			theFxScheduler.RegisterEffect( "boba/fthrw" );
+			break;
+
 		case INV_BACTA_CANISTER:
 			for ( int i = 1; i < 5; i++ )
 			{
@@ -1178,7 +1178,7 @@ void CG_SetGhoul2InfoRef( refEntity_t *ent, refEntity_t	*s1)
 qboolean CG_IsChargedAttack(centity_t* cent) 
 {
 	int weaponNum = cent->gent->s.weapon;
-	int attackIndex = CG_GetAttackIndex(cent->gent, cent->altFire);
+	int attackIndex = CG_CurrentAttackIndex(cent);
 	weaponAttackData_t *attackData = &weaponData[weaponNum].attackData[attackIndex];
 	if (attackData->firingLogic == FL_BEAM_CHARGED
 		|| attackData->firingLogic == FL_BOWCASTER
@@ -1193,7 +1193,7 @@ qboolean CG_IsChargedAttack(centity_t* cent)
 const char* CG_GetMuzzleEffect(const centity_t* cent, const weaponData_t* wData) {
 	const char* effect = NULL;
 		
-	int attackIndex = CG_GetAttackIndex(cent->gent, cent->altFire);
+	int attackIndex = CG_CurrentAttackIndex(cent);
 	// I declared this variable just for readability.
 
 	//If I can't fire cause I'm underwater, don't play the effect.
@@ -1264,10 +1264,13 @@ void CG_AddViewWeapon( playerState_t *ps )
 	centity_t	*cent;
 	float		fovOffset, leanOffset;
 
+	if ( CG_LightEdit_Active() || CG_FreeCam_Active() )
+		return;
+
 	// no gun if in third person view
 	if ( cg.renderingThirdPerson )
 		return;
-	
+
 	if ( (cg_trueguns.integer || CG_ChangeFirstPersonView()) && !cg.zoomMode )
 		return;
 
@@ -1579,7 +1582,7 @@ void CG_AddViewWeapon( playerState_t *ps )
 	// Do special charge bits
 	//-----------------------
 	//Should not be important...
-	if ( ps->weaponstate == WEAPON_CHARGING_ALT || ps->weaponstate == WEAPON_CHARGING )
+	if ( ps->weaponstate == WEAPON_CHARGING )
 	{
 		int		shader = 0;
 
@@ -1618,8 +1621,7 @@ void CG_AddViewWeapon( playerState_t *ps )
 		}
 
 		//Overwrite the muzzle effect if needed
-		qboolean altFire = (ps->weaponstate == WEAPON_CHARGING_ALT) ? qtrue : qfalse;
-		int attackIndex = CG_GetAttackIndex(cent->gent, altFire);
+		int attackIndex = ps->attack_index;
 		if (weaponData[weapon].attackData[attackIndex].chargeMuzzleShader[0]) 
 		{
 			shader = cg_weapons[weapon].weaponAttacksInfo[attackIndex].chargeMuzzleShader;
@@ -2004,51 +2006,6 @@ void CG_DrawDataPadWeaponSelect( void )
 	cgi_R_SetColor( NULL );
 }
 
-/*
-===================
-CG_DrawDataPadIconBackground
-
-Draw the proper background graphic for the icons being displayed on the datapad
-===================
-*/
-void CG_DrawDataPadIconBackground(const int backgroundType)
-{
-//	const int		graphicXPos = 40;
-//	const int		graphicYPos = 340;
-//	const short		graphicHeight = 60;
-//	const short		graphicWidth = 560;
-//	qhandle_t		background;
-
-/*
-	if (backgroundType == ICON_INVENTORY)	// Display inventory background?
-	{
-		background = cgs.media.inventoryIconBackground;
-	}
-	else if (backgroundType == ICON_WEAPONS)	// Display weapon background?
-	{
-		background = cgs.media.weaponIconBackground;
-	}
-	else 	// Display force background?
-	{
-		background = cgs.media.forceIconBackground;
-	}
-
-	cgi_R_SetColor( colorTable[CT_WHITE] );	// Let the graphic set the color
-
-	CG_DrawPic( graphicXPos,
-		graphicYPos+(graphicHeight/2),
-		graphicWidth,
-		-graphicHeight,
-		background);	// Top half
-
-	CG_DrawPic( graphicXPos,
-		graphicYPos+(graphicHeight/2),
-		graphicWidth,
-		graphicHeight,
-		background);	// Bottom half
-
-*/
-}
 
 /*
 ===============
@@ -2522,10 +2479,146 @@ void CG_NextWeapon_f( void ) {
 	}
 }
 
+/* Items of the loadout menu: the gadgets are the holdables that are used, the inventory has the other ones, health and armor */
+static qboolean CG_LDO_IsGadget( const gitem_t *item )
+{
+	if ( item->giType != IT_HOLDABLE )
+	{
+		return qfalse;
+	}
+	switch ( item->giTag )
+	{
+	case INV_SENTRY:
+	case INV_ELECTROBINOCULARS:
+	case INV_LIGHTAMP_GOGGLES:
+	case INV_SEEKER:
+	case INV_JETPACK:
+	case INV_WRIST_FLAMER:
+		return qtrue;
+	default:
+		return qfalse;
+	}
+}
+
+// The categories of the loadout menu that list items: -1 ammo, -2 inventory, -4 gadgets
+static qboolean CG_LDO_IsItemCategory( int category )
+{
+	return (qboolean)( category == -1 || category == -2 || category == -4 );
+}
+
+static qboolean CG_LDO_ItemInCategory( const gitem_t *item, int category )
+{
+	if ( !item->icon || !item->icon[0] )
+	{
+		return qfalse;
+	}
+	switch ( category )
+	{
+	case -1:
+		return (qboolean)( item->giType == IT_AMMO );
+	case -2:
+		return (qboolean)( ( item->giType == IT_HOLDABLE && !CG_LDO_IsGadget( item ) ) || item->giType == IT_HEALTH || item->giType == IT_ARMOR );
+	case -4:
+		return CG_LDO_IsGadget( item );
+	default:
+		return qfalse;
+	}
+}
+
+/*
+The character menu opens the loadout menu to pick the weapon of one of its slots (ui_loadout_slot):
+1-6 a weapon of the player, LOADOUT_SLOT_NPC the weapon of the NPC, 0 the loadout menu gives the weapons.
+*/
+#define LOADOUT_SLOT_NPC	7
+
+extern vmCvar_t		ui_loadout_slot;
+extern vmCvar_t		ui_npc_weapon;
+extern int WP_GetWeaponID(const char* weaponName);
+vmCvar_t* CG_GetUiWeaponCvar(int index);
+char* CG_GetUiWeaponName(int index);
+
+static int CG_LDO_Slot(void)
+{
+	cgi_Cvar_Update(&ui_loadout_slot);
+	const int slot = ui_loadout_slot.integer;
+	return (slot >= 1 && slot <= LOADOUT_SLOT_NPC) ? slot : 0;
+}
+
+static vmCvar_t* CG_LDO_SlotCvar(int slot)
+{
+	return (slot == LOADOUT_SLOT_NPC) ? &ui_npc_weapon : CG_GetUiWeaponCvar(slot);
+}
+
+// The weapon of a slot, WP_NONE when it has none.
+static int CG_LDO_SlotWeapon(int slot)
+{
+	vmCvar_t *cvar = CG_LDO_SlotCvar(slot);
+	if (!cvar)
+	{
+		return WP_NONE;
+	}
+	cgi_Cvar_Update(cvar);
+	const int weapon = WP_GetWeaponID(cvar->string);
+	return (weapon > WP_NONE && weapon < weaponCount) ? weapon : WP_NONE;
+}
+
+// Sets the weapon of the slot, then goes back to the character menu.
+static void CG_LDO_SetSlotWeapon(int slot, const char *weaponName)
+{
+	if (slot == LOADOUT_SLOT_NPC)
+	{
+		cgi_Cvar_Set("ui_npc_weapon", weaponName);
+		CG_NPC_UpdateLabel();
+	}
+	else
+	{
+		cgi_Cvar_Set(CG_GetUiWeaponName(slot), weaponName);
+		CG_PC_UpdateLabel(slot);
+	}
+	cgi_Cvar_Set("ui_loadout_slot", "0");
+	cgi_UI_Run_Command("close IngameSWGLEquipment");
+	cgi_UI_Run_Command("uiScript char_weapon");
+}
+
+// The icon of a weapon is lit when the player has it, or when it is the weapon of the slot.
+static qboolean CG_LDO_WeaponLit(int weapon)
+{
+	const int slot = CG_LDO_Slot();
+	if (slot)
+	{
+		return (qboolean)(weapon == CG_LDO_SlotWeapon(slot));
+	}
+	return (qboolean)(cg.snap->ps.weapons[weapon] != 0);
+}
+
+// Empties the player weapon slot (an NPC always has a weapon).
+void CG_LDO_ClearSlot_f(void)
+{
+	const int slot = CG_LDO_Slot();
+	if (slot && slot != LOADOUT_SLOT_NPC)
+	{
+		CG_LDO_SetSlotWeapon(slot, "WP_NONE");
+	}
+}
+
+// Escape goes back to the character menu when the menu picks the weapon of a slot, else leaves the menus.
+void CG_LDO_Escape_f(void)
+{
+	if (CG_LDO_Slot())
+	{
+		cgi_Cvar_Set("ui_loadout_slot", "0");
+		cgi_UI_Run_Command("close IngameSWGLEquipment");
+		return;
+	}
+	cgi_UI_Run_Command("close all");
+	cgi_UI_Run_Command("uiScript closeingame");
+}
+
 /* 1 -> XXX is base weapons*/
 /* -1 -> Ammo */
 /* -2 -> Inventory*/
 /* -3 -> All Weapons*/
+/* -4 -> Gadgets*/
 extern vmCvar_t		ui_loadout_base_weapon;
 void CG_LDO_SelectBaseWeapon_f(void)
 {
@@ -2541,6 +2634,10 @@ void CG_LDO_SelectBaseWeapon_f(void)
 	}
 	else if (!Q_stricmp("LD_INVENTORY", baseWeapon)) {
 		cg.LoadoutBaseWeaponSelect = -2;
+		return;
+	}
+	else if (!Q_stricmp("LD_GADGETS", baseWeapon)) {
+		cg.LoadoutBaseWeaponSelect = -4;
 		return;
 	}
 	else if (!Q_stricmp("WEAPON_ALL", baseWeapon)) {
@@ -2569,7 +2666,8 @@ void CG_LDO_SelectBaseWeapon_f(void)
 		cg.LoadoutBaseWeaponSelect = -WB_OTHERS;
 	}
 	else{
-		cg.LoadoutBaseWeaponSelect = 0;
+		// Picking the weapon of a slot starts with all the weapons.
+		cg.LoadoutBaseWeaponSelect = CG_LDO_Slot() ? -3 : 0;
 	}
 
 }
@@ -2593,20 +2691,12 @@ void CG_LDO_SelectWeapon_f(void)
 	int currMenuIndex = 0;
 	int i;
 	//Search Ammo || Items
-	if (cg.LoadoutBaseWeaponSelect == -1
-		|| cg.LoadoutBaseWeaponSelect == -2
-		)
+	if (CG_LDO_IsItemCategory(cg.LoadoutBaseWeaponSelect))
 	{
 		for (i = 0; i < bg_numItems; i++)
 		{
 			gitem_t* item = &bg_itemlist[i];
-			//Declared like this for readability
-			if ( ( (cg.LoadoutBaseWeaponSelect == -1 && item->giType == IT_AMMO)
-				|| (cg.LoadoutBaseWeaponSelect == -2 && item->giType == IT_HOLDABLE)
-				|| (cg.LoadoutBaseWeaponSelect == -2 && item->giType == IT_HEALTH)
-				|| (cg.LoadoutBaseWeaponSelect == -2 && item->giType == IT_ARMOR) )
-				&& item->icon && item->icon[0]
-				)
+			if ( CG_LDO_ItemInCategory( item, cg.LoadoutBaseWeaponSelect ) )
 			{
 				//This might be the weapon we are looking for
 				currMenuIndex++;
@@ -2669,6 +2759,16 @@ void CG_LDO_SwitchWeapon_f(void) {
 	{
 		return;
 	}
+	// The menu picks the weapon of a slot of the character menu: nothing is given.
+	const int slot = CG_LDO_Slot();
+	if (slot)
+	{
+		if (!CG_LDO_IsItemCategory(cg.LoadoutBaseWeaponSelect))
+		{
+			CG_LDO_SetSlotWeapon(slot, weaponData[cg.LoadoutWeaponSelect].classname);
+		}
+		return;
+	}
 	gentity_t* ent = cg_entities[0].gent;
 	//Add Ammo
 	if (cg.LoadoutBaseWeaponSelect == -1) {
@@ -2678,7 +2778,7 @@ void CG_LDO_SwitchWeapon_f(void) {
 		return;
 	}
 	//Add Holdable
-	if (cg.LoadoutBaseWeaponSelect == -2 && bg_itemlist[cg.LoadoutWeaponSelect].giType == IT_HOLDABLE) {
+	if ((cg.LoadoutBaseWeaponSelect == -2 || cg.LoadoutBaseWeaponSelect == -4) && bg_itemlist[cg.LoadoutWeaponSelect].giType == IT_HOLDABLE) {
 		gitem_t* item = &bg_itemlist[cg.LoadoutWeaponSelect];
 		cgi_S_StartSound(NULL, ent->s.number, CHAN_AUTO, cgi_S_RegisterSound(item->pickup_sound));
 		if (item->giTag == INV_SECURITY_KEY)
@@ -2688,6 +2788,10 @@ void CG_LDO_SwitchWeapon_f(void) {
 		else if (item->giTag == INV_GOODIE_KEY)
 		{
 			INV_GoodieKeyGive(ent);
+		}
+		else if (G_IsFuelItemTag(item->giTag))
+		{
+			G_GiveFuelItem(ent, item, FUEL_MAX);
 		}
 		else
 		{// Picking up a normal item?
@@ -2720,7 +2824,11 @@ void CG_LDO_SwitchWeapon_f(void) {
 	if (cg.snap->ps.weapons[cg.LoadoutWeaponSelect])
 	{
 		int ammoIndex = weaponData[cg.LoadoutWeaponSelect].ammoIndex;
-		int givenAmmo = ammoData[ammoIndex].max / 3;
+		// One clip: 3 for a weapon to throw, 50 for a weapon to shoot.
+		const weaponCategory_t category = weaponData[cg.LoadoutWeaponSelect].weaponCategory;
+		const qboolean thrown = (qboolean)(category == WC_GRENADE || category == WC_EXPLOSIVE || weaponData[cg.LoadoutWeaponSelect].weaponBucket == WB_THROWABLES);
+		const int clip = thrown ? 3 : 50;
+		int givenAmmo = Q_min(clip, ammoData[ammoIndex].max);
 		ent->client->ps.weapons[cg.LoadoutWeaponSelect] = 1;
 		if (ent->client->ps.ammo[ammoIndex] < givenAmmo) {
 			ent->client->ps.ammo[ammoIndex] = givenAmmo;
@@ -2753,17 +2861,11 @@ int CG_LDO_GetMaxPages(void) {
 	int i;
 	int totalIcons = 0;
 
-	if (cg.LoadoutBaseWeaponSelect == -1
-		|| cg.LoadoutBaseWeaponSelect == -2)
+	if (CG_LDO_IsItemCategory(cg.LoadoutBaseWeaponSelect))
 	{
 		for (i = 0; i < bg_numItems; i++) {
 			gitem_t* item = &bg_itemlist[i];
-			//Declared like this for readability
-			if (((cg.LoadoutBaseWeaponSelect == -1 && item->giType == IT_AMMO)
-				|| (cg.LoadoutBaseWeaponSelect == -2 && item->giType == IT_HOLDABLE)
-				|| (cg.LoadoutBaseWeaponSelect == -2 && item->giType == IT_HEALTH)
-				|| (cg.LoadoutBaseWeaponSelect == -2 && item->giType == IT_ARMOR)
-				) && item->icon && item->icon[0])
+			if ( CG_LDO_ItemInCategory( item, cg.LoadoutBaseWeaponSelect ) )
 			{
 				totalIcons++;
 			}
@@ -2777,7 +2879,7 @@ int CG_LDO_GetMaxPages(void) {
 			if (iw < 0) {
 				continue;
 			}
-			if (weaponData[i].playerUsable)
+			if (iw > 0 && weaponData[iw].playerUsable)
 			{
 				totalIcons++;
 			}
@@ -2797,7 +2899,7 @@ int CG_LDO_GetMaxPages(void) {
 				if (iw < 0) {
 					break;;
 				}
-				if (weaponData[i].playerUsable)
+				if (iw > 0 && weaponData[iw].playerUsable)
 				{
 					totalIcons++;
 				}
@@ -2871,6 +2973,72 @@ void CG_NPC_PrevWeapon_f(void) {
 	CG_NPC_UpdateLabel();
 }
 
+// Writes the translated name of a weapon: SP_INGAME_<classname>, SPMOD_INGAME_<classname>, <classname>_NAME, else the classname.
+static void CG_WeaponName(int weaponIndex, char *name, int nameSize)
+{
+	const char *classname = weaponData[weaponIndex].classname;
+	if (!cgi_SP_GetStringTextString(va("SP_INGAME_%s", classname), name, nameSize)
+		&& !cgi_SP_GetStringTextString(va("SPMOD_INGAME_%s", classname), name, nameSize)
+		&& !cgi_SP_GetStringTextString(va("%s_NAME", classname), name, nameSize))
+	{
+		Q_strncpyz(name, classname, nameSize);
+	}
+}
+
+/*
+===================
+CG_GetAmmoName
+
+Writes the translated name of the ammo type ammoIndex, for the cheat menu.
+Returns qfalse for the ammo types the player does not use: none, force, emplaced guns, and the ammo types of no weapon.
+===================
+*/
+qboolean CG_GetAmmoName(int ammoIndex, char *name, int nameSize)
+{
+	// The string keys of the hard coded ammo types (sp_ingame.str).
+	static const char *baseKeys[AMMO_HC_MAX] = {
+		NULL,						// AMMO_NONE
+		NULL,						// AMMO_FORCE: the cheat menu has a force pool
+		"SP_INGAME_AMMO_BLASTER",
+		"SP_INGAME_AMMO_POWERCELL",
+		"SP_INGAME_AMMO_METALLIC_BOLTS",
+		"SP_INGAME_AMMO_ROCKETS",
+		NULL,						// AMMO_EMPLACED: turrets and vehicles
+		"SP_INGAME_AMMO_THERMAL",
+		"SP_INGAME_AMMO_TRIPMINE",
+		"SP_INGAME_AMMO_DETPACK",
+		NULL,						// AMMO_FLAMER: no key, the name of its weapon
+	};
+
+	if (ammoIndex <= AMMO_FORCE || ammoIndex == AMMO_EMPLACED || ammoIndex >= ammoCount || !name || nameSize <= 0)
+	{
+		return qfalse;
+	}
+
+	if (ammoIndex < AMMO_HC_MAX && baseKeys[ammoIndex] && cgi_SP_GetStringTextString(baseKeys[ammoIndex], name, nameSize))
+	{
+		return qtrue;
+	}
+
+	// A generated ammo type (a grenade or an explosive) has the name of its weapon.
+	if (ammoIndex >= AMMO_HC_MAX)
+	{
+		CG_WeaponName(ammoData[ammoIndex].giveWeaponIndex, name, nameSize);
+		return qtrue;
+	}
+
+	// Else the name of the first weapon of the player that uses it.
+	for (int i = FIRST_WEAPON; i < weaponCount; i++)
+	{
+		if (weaponData[i].ammoIndex == ammoIndex && weaponData[i].playerUsable)
+		{
+			CG_WeaponName(i, name, nameSize);
+			return qtrue;
+		}
+	}
+	return qfalse;
+}
+
 char label[256];
 void CG_NPC_UpdateLabel(void) {
 	cgi_Cvar_Update(&ui_npc_weapon);
@@ -2890,24 +3058,6 @@ void CG_NPC_UpdateLabel(void) {
 		Com_sprintf(label, sizeof(label), weaponData[currentWeaponIndex].classname);		
 	}
 	cgi_Cvar_Set("ui_npc_weapon_label", label);
-}
-
-void CG_DrawNpcWeaponLabel(void) {
-	CG_NPC_UpdateLabel();
-	const short textboxXPos = 508;
-	const short textboxYPos = 118;
-	const int	textboxWidth = 106;
-	const int	textboxHeight = 16;
-	const float	textScale = 0.75f;
-
-	CG_DisplayBoxedText(
-		textboxXPos, textboxYPos,
-		textboxWidth, textboxHeight,
-		label,
-		CG_MagicFontToReal(4),
-		textScale,
-		colorTable[CT_WHITE]
-	);
 }
 
 /*For the SIX player cyclers*/
@@ -3017,28 +3167,47 @@ void CG_PC_UpdateLabel(int index) {
 	cgi_Cvar_Set(CG_GetUiWeapon_labelName(index), label);
 }
 
-const short offsetFromPlayerLabel = 61;
-const short offsetPerIndex = 15;
-void CG_DrawPCWeaponLabel(int index) {
-	if (index <= 0 || index >= 7)
+/*
+===============
+CG_DrawWeaponSlot
+The icon of the weapon of a slot of the character menu (1-6 a player weapon, LOADOUT_SLOT_NPC the NPC weapon),
+on the background of the icons of the loadout menu. A weapon without icon shows its name.
+===============
+*/
+void CG_DrawWeaponSlot(int slot, int x, int y, int w, int h) {
+	if (slot < 1 || slot > LOADOUT_SLOT_NPC)
 	{
 		return;
 	}
-	CG_PC_UpdateLabel(index);
-	const short textboxXPos = 508;
-	const short textboxYPos = 57+ offsetFromPlayerLabel + ((index-1)*offsetPerIndex);
-	const int	textboxWidth = 106;
-	const int	textboxHeight = 16;
-	const float	textScale = 0.75f;
+	// The UI leaves the color of the item painted before (its text color): the icons are drawn untinted.
+	cgi_R_SetColor(NULL);
+	CG_DrawPic(x, y, w, h, cgi_R_RegisterShaderNoMip("gfx/menus/w_icon_background"));
 
-	CG_DisplayBoxedText(
-		textboxXPos, textboxYPos,
-		textboxWidth, textboxHeight,
-		label,
-		CG_MagicFontToReal(4),
-		textScale,
-		colorTable[CT_WHITE]
-	);
+	const int weapon = CG_LDO_SlotWeapon(slot);
+	if (weapon == WP_NONE)
+	{
+		return;
+	}
+	// A random weapon (weapon_clonerandom: the NPC gets one of the clone weapons) shows a "?".
+	qhandle_t icon;
+	if (strstr(weaponData[weapon].classname, "random"))
+	{
+		icon = cgi_R_RegisterShaderNoMip("gfx/menus/w_icon_random");
+	}
+	else
+	{
+		CG_RegisterWeapon(weapon);
+		icon = cg_weapons[weapon].weaponIcon;
+	}
+	if (icon)
+	{
+		const int size = Q_min(w, h);
+		CG_DrawPic(x + (w - size) / 2, y + (h - size) / 2, size, size, icon);
+		return;
+	}
+	char name[256];
+	CG_WeaponName(weapon, name, sizeof(name));
+	CG_DisplayBoxedText(x + 2, y + 2, w - 4, h - 4, name, CG_MagicFontToReal(4), 0.5f, colorTable[CT_WHITE]);
 }
 
 
@@ -3106,17 +3275,11 @@ void CG_LDO_DrawWeapons(void) {
 	}
 
 	//Print Ammo or inventory
-	if (cg.LoadoutBaseWeaponSelect == -1
-		|| cg.LoadoutBaseWeaponSelect == -2)
+	if (CG_LDO_IsItemCategory(cg.LoadoutBaseWeaponSelect))
 	{
 		for (iw = 0; iw < bg_numItems && iy < 3; iw++) {
 			gitem_t *item = &bg_itemlist[iw];
-			//Declared like this for readability
-			if ( ((cg.LoadoutBaseWeaponSelect == -1 && item->giType == IT_AMMO)
-				|| (cg.LoadoutBaseWeaponSelect == -2 && item->giType == IT_HOLDABLE)
-				|| (cg.LoadoutBaseWeaponSelect == -2 && item->giType == IT_HEALTH)
-				|| (cg.LoadoutBaseWeaponSelect == -2 && item->giType == IT_ARMOR)
-				) && item->icon && item->icon[0] )
+			if ( CG_LDO_ItemInCategory( item, cg.LoadoutBaseWeaponSelect ) )
 			{
 				if (iic < firstIcon) {
 					iic++;
@@ -3181,7 +3344,7 @@ void CG_LDO_DrawWeapons(void) {
 				weaponInfo_t* weaponInfo;
 				CG_RegisterWeapon(iw);
 				weaponInfo = &cg_weapons[iw];
-				if (cg.snap->ps.weapons[iw])
+				if (CG_LDO_WeaponLit(iw))
 				{
 					CG_DrawPic(posX + 7, posY, sizeY, sizeY, weaponInfo->weaponIcon);
 				}
@@ -3249,7 +3412,7 @@ void CG_LDO_DrawWeapons(void) {
 				weaponInfo_t* weaponInfo;
 				CG_RegisterWeapon(iw);
 				weaponInfo = &cg_weapons[iw];
-				if (cg.snap->ps.weapons[iw])
+				if (CG_LDO_WeaponLit(iw))
 				{
 					CG_DrawPic(posX + 7, posY, sizeY, sizeY, weaponInfo->weaponIcon);
 				}
@@ -3843,7 +4006,6 @@ void CG_FireWeapon( centity_t *cent, int attackIndex)
 	// mark the entity as muzzle flashing, so when it is added it will
 	// append the flash to the weapon model
 	cent->muzzleFlashTime = cg.time;
-	cent->altFire = (attackIndex == 1 || attackIndex == 3) ? qtrue: qfalse;
 	cent->attack_index = attackIndex;
 
 	if ( ent->weapon == WP_SABER )
@@ -3940,7 +4102,7 @@ CG_MissileHitWall
 Caused by an EV_MISSILE_MISS event, or directly by local bullet tracing
 =================
 */
-void CG_MissileHitWall( centity_t *cent, int weapon, vec3_t origin, vec3_t dir, qboolean altFire )
+void CG_MissileHitWall( centity_t *cent, int weapon, vec3_t origin, vec3_t dir )
 {
 	weaponData_t* wpnData = &weaponData[weapon];
 	weaponAttackData_t* attackData = &wpnData->attackData[cent->gent->attack_index];

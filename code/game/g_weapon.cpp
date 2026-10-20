@@ -45,13 +45,9 @@ int	g_rocketSlackTime = 0;
 
 
 
-float WP_SpeedOfMissileForWeapon( int wp, qboolean alt_fire )
+float WP_SpeedOfMissileForWeapon( int wp, int attackIndex )
 {
-	if ( alt_fire )
-	{
-		return weaponData[wp].attackData[1].velocity;
-	}
-	return weaponData[wp].attackData[0].velocity;
+	return weaponData[wp].attackData[attackIndex].velocity;
 }
 
 //-----------------------------------------------------------------------------
@@ -103,8 +99,7 @@ gentity_t *CreateMissile( vec3_t org, vec3_t dir, float vel, int life, gentity_t
 
 	Vehicle_t*	pVeh = G_IsRidingVehicle(owner);
 
-	missile->alt_fire = (qboolean)attackIndex;
-	missile->attack_index = (qboolean)attackIndex;
+	missile->attack_index = attackIndex;
 
 	missile->s.pos.trType = TR_LINEAR;
 	missile->s.pos.trTime = level.time;// - 10;	// move a bit on the very first frame
@@ -334,7 +329,7 @@ void ViewHeightFix(const gentity_t *const ent)
 	}
 }
 
-qboolean W_AccuracyLoggableWeapon( int weapon, qboolean alt_fire, int mod )
+qboolean W_AccuracyLoggableWeapon( int weapon, int attackIndex, int mod )
 {
 	int weaponNum = weapon;
 	if (weaponData[weaponNum].baseWeaponNum) {
@@ -428,7 +423,7 @@ qboolean W_AccuracyLoggableWeapon( int weapon, qboolean alt_fire, int mod )
 		case WP_REPEATER:
 		case WP_DEMP2:
 		case WP_FLECHETTE:
-			if ( !alt_fire )
+			if ( !(attackIndex & 1) )
 			{
 				return qtrue;
 			}
@@ -648,7 +643,7 @@ vec3_t WP_MuzzlePoint[] =
 void WP_RocketLock( gentity_t *ent, float lockDist )
 {
 	// Not really a charge weapon, but we still want to delay fire until the button comes up so that we can
-	//	implement our alt-fire locking stuff
+	//	implement our lock-on stuff
 	vec3_t		ang;
 	trace_t		tr;
 
@@ -738,7 +733,7 @@ void WP_FireVehicleWeapon( gentity_t *ent, vec3_t start, vec3_t dir, vehWeaponIn
 		//make sure our start point isn't on the other side of a wall
 		WP_TraceSetStart( ent, start, mins, maxs );
 
-		//QUERY: alt_fire true or not?  Does it matter?
+		//QUERY: which attack index? Does it matter?
 		missile = CreateMissile( start, dir, vehWeapon->fSpeed, 10000, ent, 0 );
 		if ( vehWeapon->bHasGravity )
 		{//TESTME: is this all we need to do?
@@ -921,7 +916,7 @@ qboolean WP_VehCheckTraceFromCamPos( gentity_t *ent, const vec3_t shotStart, vec
 }
 
 //---------------------------------------------------------
-void FireVehicleWeapon( gentity_t *ent, qboolean alt_fire )
+void FireVehicleWeapon( gentity_t *ent, int attackIndex )
 //---------------------------------------------------------
 {
 	Vehicle_t *pVeh = ent->m_pVehicle;
@@ -955,7 +950,7 @@ void FireVehicleWeapon( gentity_t *ent, qboolean alt_fire )
 		qboolean aimCorrect = qfalse;
 		qboolean linkedFiring = qfalse;
 
-		if ( !alt_fire )
+		if ( !(attackIndex & 1) )
 		{
 			weaponNum = 0;
 		}
@@ -1200,7 +1195,7 @@ void FireVehicleWeapon( gentity_t *ent, qboolean alt_fire )
 	}
 }
 
-void WP_FireScepter( gentity_t *ent, qboolean alt_fire )
+void WP_FireScepter( gentity_t *ent, int attackIndex )
 {//just a straight beam
 	int			damage = 1;
 	vec3_t		start, end;
@@ -1263,7 +1258,6 @@ extern Vehicle_t *G_IsRidingVehicle( gentity_t *ent );
 void FireWeapon( gentity_t *ent, int attack_index)
 //---------------------------------------------------------
 {
-	qboolean alt_fire = (attack_index == 1 || attack_index == 3) ? qtrue : qfalse;
 	float alert = 256;
 	Vehicle_t *pVeh = NULL;
 	int weaponNum = ent->s.weapon;
@@ -1274,17 +1268,22 @@ void FireWeapon( gentity_t *ent, int attack_index)
 	// If this is a vehicle, fire it's weapon and we're done.
 	if ( ent && ent->client && ent->client->NPC_class == CLASS_VEHICLE )
 	{
-		FireVehicleWeapon( ent, alt_fire);
+		FireVehicleWeapon( ent, attack_index );
 		return;
 	}
 
 	// set aiming directions
-	if ( (ent->s.weapon == WP_DISRUPTOR || ent->s.weapon == WP_CIS_SNIPER) && (cg.zoomMode == ST_DISRUPTOR || cg.zoomMode > ST_A280) )
+	if ( weaponData[weaponNum].weaponCategory == WC_SNIPER && (attack_index & 1) )
 	{
 		if ( ent->NPC )
 		{
 			//snipers must use the angles they actually did their shot trace with
 			AngleVectors( ent->lastAngles, forwardVec, vrightVec, up );
+		}
+		else
+		{
+			// the player's unscoped alt-fire still needs a fresh aim, forwardVec is stale otherwise
+			AngleVectors( ent->client->ps.viewangles, forwardVec, vrightVec, up );
 		}
 	}
 	else if ( ent->s.weapon == WP_ATST_SIDE || ent->s.weapon == WP_ATST_MAIN )
@@ -1296,13 +1295,13 @@ void FireWeapon( gentity_t *ent, int attack_index)
 
 		if ( !ent->s.number )
 		{//player driving an AT-ST
-			//SIGH... because we can't anticipate alt-fire, must calc muzzle here and now
+			//SIGH... because we can't anticipate the attack, must calc muzzle here and now
 			mdxaBone_t		boltMatrix;
 			int				bolt;
 
 			if ( ent->client->ps.weapon == WP_ATST_MAIN )
-			{//FIXME: alt_fire should fire both barrels, but slower?
-				if ( ent->alt_fire)
+			{//FIXME: the second attack should fire both barrels, but slower?
+				if ( attack_index )
 				{
 					bolt = ent->handRBolt;
 				}
@@ -1313,7 +1312,7 @@ void FireWeapon( gentity_t *ent, int attack_index)
 			}
 			else
 			{// ATST SIDE weapons
-				if ( ent->alt_fire)
+				if ( attack_index )
 				{
 					bolt = ent->handRBolt;
 					if ( !gi.G2API_GetSurfaceRenderStatus( &ent->ghoul2[ent->playerModel], "head_light_blaster_cann" ) )
@@ -1443,7 +1442,7 @@ void FireWeapon( gentity_t *ent, int attack_index)
 		}
 	}
 
-	ent->alt_fire = alt_fire;
+	ent->attack_index = attack_index;
 	if (!pVeh)
 	{
 		if (ent->NPC && (ent->NPC->scriptFlags&SCF_FIRE_WEAPON_NO_ANIM))
@@ -1468,7 +1467,7 @@ void FireWeapon( gentity_t *ent, int attack_index)
 	switch (attackData->firingLogic) {
 		case FL_MELEE:
 			alert = 0;
-			if (baseWeaponNum != WP_MELEE || !alt_fire || !g_debugMelee->integer) {
+			if (baseWeaponNum != WP_MELEE || !(attack_index & 1) || !g_debugMelee->integer) {
 				WP_Melee(ent);
 			}
 			break;
@@ -1528,14 +1527,14 @@ void FireWeapon( gentity_t *ent, int attack_index)
 			switch (baseWeaponNum) {
 				case WP_TIE_FIGHTER:
 				case WP_EMPLACED_GUN:
-					// doesn't care about whether it's alt-fire or not.  We can do an alt-fire if needed
+					// doesn't care about the attack index.  We can use the second attack if needed
 					WP_EmplacedFire(ent);
 					break;
 				case WP_STUN_BATON:
 					WP_FireStunBaton(ent);
 					break;
 				case WP_SCEPTER:
-					WP_FireScepter(ent, alt_fire);
+					WP_FireScepter(ent, attack_index);
 					break;
 				default:
 					return;
@@ -1545,10 +1544,10 @@ void FireWeapon( gentity_t *ent, int attack_index)
 
 	if ( !ent->s.number )
 	{
-		if ( ent->s.weapon == WP_FLECHETTE || (ent->s.weapon == WP_BOWCASTER && !alt_fire) )
+		if ( ent->s.weapon == WP_FLECHETTE || (ent->s.weapon == WP_BOWCASTER && !(attack_index & 1)) )
 		{//these can fire multiple shots, count them individually within the firing functions
 		}
-		else if ( W_AccuracyLoggableWeapon( ent->s.weapon, alt_fire, MOD_UNKNOWN ) )
+		else if ( W_AccuracyLoggableWeapon( ent->s.weapon, attack_index, MOD_UNKNOWN ) )
 		{
 			ent->client->sess.missionStats.shotsFired++;
 		}
@@ -1611,7 +1610,7 @@ TOGGLE - keep firing until used again (fires at intervals of "wait")
 */
 void misc_weapon_shooter_fire( gentity_t *self )
 {
-	FireWeapon( self, (qboolean)((self->spawnflags&1) != 0) );
+	FireWeapon( self, (self->spawnflags & 1) ? 1 : 0 );
 	if ( (self->spawnflags&2) )
 	{//repeat
 		self->e_ThinkFunc = thinkF_misc_weapon_shooter_fire;

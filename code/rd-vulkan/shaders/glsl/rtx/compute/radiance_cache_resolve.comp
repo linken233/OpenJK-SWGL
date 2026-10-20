@@ -1,0 +1,79 @@
+/*
+===========================================================================
+Copyright (C) 1999 - 2005, Id Software, Inc.
+Copyright (C) 2000 - 2013, Raven Software, Inc.
+Copyright (C) 2001 - 2013, Activision, Inc.
+Copyright (C) 2013 - 2015, OpenJK contributors
+
+This file is part of the OpenJK source code.
+
+OpenJK is free software; you can redistribute it and/or modify it
+under the terms of the GNU General Public License version 2 as
+published by the Free Software Foundation.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program; if not, see <http://www.gnu.org/licenses/>.
+===========================================================================
+*/
+
+// ========================================================================== //
+// Resolves the radiance cache. One thread per cell.
+// A cell with samples in this frame blends them into its resolved value.
+// A cell without samples for pt_rc_stale_frames frames is removed.
+// ========================================================================== //
+
+#version 460
+#extension GL_GOOGLE_include_directive    : enable
+#extension GL_EXT_nonuniform_qualifier    : enable
+
+#define GLOBAL_UBO_DESC_SET_IDX 3
+#include "../global_ubo.h"
+
+layout(local_size_x = RC_RESOLVE_GROUP_SIZE, local_size_y = 1, local_size_z = 1) in;
+
+#include "../utils.glsl"
+
+#define VERTEX_BUFFER_DESC_SET_IDX 0
+#include "../vertex_buffer.h"
+
+#include "../radiance_cache.h"
+
+void
+main()
+{
+	uint slot = gl_GlobalInvocationID.x;
+	if(slot >= uint(RC_CAPACITY) || rc_tags.tags[slot] == 0u)
+		return;
+
+	uint base = slot * 4u;
+	uint count = rc_accum.sums[base + 3u];
+	uint frame = uint(global_ubo.current_frame_idx);
+
+	if(count > 0u)
+	{
+		vec3 sum = vec3(rc_accum.sums[base], rc_accum.sums[base + 1u], rc_accum.sums[base + 2u]) / RC_RADIANCE_SCALE;
+		float n_new = float(min(count, RC_MAX_SAMPLES_PER_FRAME));
+
+		vec4 cell = rc_resolved.cells[slot];
+		float n_old = min(cell.w, global_ubo.pt_rc_max_frames_weight);
+
+		rc_resolved.cells[slot] = vec4((cell.rgb * n_old + sum) / (n_old + n_new), n_old + n_new);
+		rc_last_frame.frames[slot] = frame;
+
+		rc_accum.sums[base + 0u] = 0u;
+		rc_accum.sums[base + 1u] = 0u;
+		rc_accum.sums[base + 2u] = 0u;
+		rc_accum.sums[base + 3u] = 0u;
+	}
+	else if(frame - rc_last_frame.frames[slot] > uint(max(global_ubo.pt_rc_stale_frames, 0.0)))
+	{
+		rc_tags.tags[slot] = 0u;
+		rc_resolved.cells[slot] = vec4(0);
+		rc_last_frame.frames[slot] = 0u;
+	}
+}

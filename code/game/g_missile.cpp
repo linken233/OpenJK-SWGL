@@ -531,12 +531,11 @@ void G_SpawnNoghriGasCloud( gentity_t *ent )
 }
 
 extern void laserTrapStick( gentity_t *ent, vec3_t endpos, vec3_t normal );
-extern qboolean W_AccuracyLoggableWeapon( int weapon, qboolean alt_fire, int mod );
+extern qboolean W_AccuracyLoggableWeapon( int weapon, int attackIndex, int mod );
 void G_MissileImpacted( gentity_t *ent, gentity_t *other, vec3_t impactPos, vec3_t normal, int hitLoc=HL_NONE )
 {
 	weaponData_t *wpnData = &weaponData[ent->s.weapon];
-	qboolean altFire = ent->alt_fire;
-	int attackIndex = CG_GetAttackIndex(ent, altFire);
+	int attackIndex = ent->attack_index;
 	weaponAttackData_t* atkData = &wpnData->attackData[attackIndex];
 	blockability_t blockability = getAttackBlockability(atkData);
 	
@@ -683,8 +682,7 @@ void G_MissileImpact( gentity_t *ent, trace_t *trace, int hitLoc=HL_NONE )
 	vec3_t			diff;
 
 	weaponData_t* wpnData = &weaponData[ent->s.weapon];
-	qboolean altFire = ent->alt_fire;
-	int attackIndex = CG_GetAttackIndex(ent, altFire);
+	int attackIndex = ent->attack_index;
 	weaponAttackData_t* atkData = &wpnData->attackData[attackIndex];
 
 	other = &g_entities[trace->entityNum];
@@ -714,7 +712,7 @@ void G_MissileImpact( gentity_t *ent, trace_t *trace, int hitLoc=HL_NONE )
 			}
 			if ( ent->owner->client && !ent->owner->s.number )
 			{
-				if ( W_AccuracyLoggableWeapon( ent->s.weapon, qfalse, ent->methodOfDeath ) )
+				if ( W_AccuracyLoggableWeapon( ent->s.weapon, ent->attack_index, ent->methodOfDeath ) )
 				{
 					ent->owner->client->sess.missionStats.hits++;
 				}
@@ -818,7 +816,7 @@ void G_MissileImpact( gentity_t *ent, trace_t *trace, int hitLoc=HL_NONE )
 
 	if ( (!other->takedamage || (other->client && other->health <= 0))
 		&& ent->s.weapon == WP_THERMAL
-		&& !ent->alt_fire)
+		&& !ent->attack_index)
 	{//rolling thermal det - FIXME: make this an eFlag like bounce & stick!!!
 		//G_BounceRollMissile( ent, trace );
 		if ( ent->owner )//&& ent->owner->s.number == 0 )

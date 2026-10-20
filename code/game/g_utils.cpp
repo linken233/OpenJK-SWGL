@@ -1962,6 +1962,10 @@ void G_ChangeMap(const char *mapname, const char *spawntarget, qboolean hub)
 	if (spawntarget == NULL) {
 		spawntarget = "";	//prevent it from becoming "(null)"
 	}
+	// state kept on the entity, restored by ClientSpawn on the next map
+	gi.cvar_set("playerlightning", va("%i", (int)g_entities[0].forceLightningColor));
+	gi.cvar_set("playerscale", va("%f", g_entities[0].s.modelScale[0]));
+
 	if (hub == qtrue)
 	{
 		gi.SendConsoleCommand(va("loadtransition %s %s\n", mapname, spawntarget));

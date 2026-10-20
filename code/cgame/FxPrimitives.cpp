@@ -276,7 +276,10 @@ bool CParticle::UpdateOrigin()
 		else
 		{
 			// if this returns solid, we need to do a trace
+			FXS_START( t );
 			solid = !!(CG_PointContents( new_origin, ENTITYNUM_WORLD ) & ( MASK_SHOT | CONTENTS_WATER ));
+			FXS_STOP( t, contents );
+			FXS_COUNT( contentsCalls );
 		}
 
 		if ( solid )
@@ -1435,7 +1438,10 @@ void CEmitter::Draw()
 				else
 				{
 					// if this returns solid, we need to do a trace
+					FXS_START( t );
 					solid = !!(CG_PointContents( org, ENTITYNUM_WORLD ) & MASK_SHOT);
+					FXS_STOP( t, contents );
+					FXS_COUNT( contentsCalls );
 				}
 
 				if ( solid )

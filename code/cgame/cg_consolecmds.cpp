@@ -25,12 +25,13 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 // executed by a key binding
 
 #include "cg_headers.h"
-
+#include "cg_characters.h"
 #include "cg_media.h"	//just for cgs....
 
 void CG_TargetCommand_f( void );
 extern qboolean	player_locked;
 extern void CMD_CGCam_Disable( void );
+extern void FX_PoolReport( void );
 void CG_NextInventory_f( void );
 void CG_PrevInventory_f( void );
 void CG_NextForcePower_f( void );
@@ -300,12 +301,35 @@ static consoleCommand_t	commands[] = {
 	{ "loadoutSwitchSelectWeapon",		CG_LDO_SwitchWeapon_f },
 	{ "loadoutNextPage",		CG_LDO_NextPage_f },
 	{ "loadoutPreviousPage",		CG_LDO_PreviousPage_f},
+	{ "loadoutClearSlot",		CG_LDO_ClearSlot_f},
+	{ "loadoutEscape",		CG_LDO_Escape_f},
 	{ "uiNpcWeaponNext",		CG_NPC_NextWeapon_f},
 	{ "uiNpcWeaponPrev",		CG_NPC_PrevWeapon_f},
 	{ "uiNpcWeaponLabelUpd",		CG_NPC_UpdateLabel}, 
+	{ "characterUpdateSearch",		CG_Characters_SearchChanged_f},
+	{ "characterResetSearch",		CG_Characters_ResetSearch_f},
+	{ "characterToggleTags",		CG_Characters_ToggleTags_f},
+	{ "characterTagPreviousPage",		CG_Characters_TagPreviousPage_f},
+	{ "characterTagNextPage",		CG_Characters_TagNextPage_f},
+	{ "characterConfigsRefresh",		CG_Characters_ConfigsRefresh_f},
+	{ "characterBack",		CG_Characters_Back_f},
+	{ "characterButtonClick",		CG_Characters_CharacterClick_f},
+	{ "characterFactionClick",		CG_Characters_FactionClick_f},
+	{ "characterFactionPreviousPage",		CG_Characters_FactionPreviousPage_f},
+	{ "characterFactionNextPage",		CG_Characters_FactionNextPage_f},
+	{ "characterVariantClick",		CG_Characters_VariantClick_f},
+	{ "characterVariantPreviousPage",		CG_Characters_VariantPreviousPage_f},
+	{ "characterVariantNextPage",		CG_Characters_VariantNextPage_f},
+	{ "characterNextPage",		CG_Characters_NextPage_f},
+	{ "characterPreviousPage",		CG_Characters_PreviousPage_f},
+#ifdef _DEBUG
+	{ "charportraits",		CG_Characters_Portraits_f},
+#endif
+	{ "charportrait",		CG_Characters_Portrait_f},
 	{ "dualwield",			CG_Dualwield_f},
 	{ "forcenext",			CG_NextForcePower_f },
 	{ "forceprev",			CG_PrevForcePower_f },
+	{ "fxpool",				FX_PoolReport },	// effect pool usage per .efx file
 	{ "invnext",			CG_NextInventory_f },
 	{ "invprev",			CG_PrevInventory_f },
 	{ "la_zoom",			CG_ToggleLAGoggles },
@@ -345,6 +369,9 @@ Cmd_Argc() / Cmd_Argv()
 */
 qboolean CG_ConsoleCommand( void ) {
 	consoleCommand_t	*command = NULL;
+
+	if ( CG_LightEdit_ConsoleCommand( CG_Argv(0) ) ) return qtrue;
+	if ( CG_FreeCam_ConsoleCommand( CG_Argv(0) ) ) return qtrue;
 
 	const char* commandName = CG_Argv(0);
 	/* Check argv commands */
@@ -471,4 +498,7 @@ void CG_InitConsoleCommands( void ) {
 	//
 	for( i = 0; i < numgcmds; i++ )
 		cgi_AddCommand( gcmds[i] );
+
+	CG_LightEdit_InitConsoleCommands();
+	CG_FreeCam_InitConsoleCommands();
 }

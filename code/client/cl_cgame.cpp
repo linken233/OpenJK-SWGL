@@ -791,6 +791,9 @@ Ghoul2 Insert End
 		case CG_OPENJK_GETMENU_BYNAME_JK2:
 			return CG_OPENJK_GETMENU_BYNAME;
 			break;
+		case CG_R_GETEXTENSION_JK2:
+			return CG_R_GETEXTENSION;
+			break;
 	}
 	return (cgameImport_t)-1;
 }
@@ -972,6 +975,8 @@ intptr_t CL_CgameSystemCalls( intptr_t *args ) {
 		return re.RegisterShader( (const char *) VMA(1) );
 	case CG_R_REGISTERSHADERNOMIP:
 		return re.RegisterShaderNoMip( (const char *) VMA(1) );
+	case CG_R_GETEXTENSION:
+		return (intptr_t)( re.GetExtension ? re.GetExtension( (const char *) VMA(1) ) : NULL );
 	case CG_R_REGISTERFONT:
 		return re.RegisterFont( (const char *) VMA(1) );
 	case CG_R_FONTSTRLENPIXELS:
@@ -1147,6 +1152,10 @@ Ghoul2 Insert End
 
 	case CG_UI_MENU_OPENBYNAME:
 		Menus_OpenByName((const char *) VMA(1));
+		return 0;
+
+	case CG_UI_RUN_COMMAND:
+		UI_RunMenuCommand((const char *) VMA(1));
 		return 0;
 
 	case CG_UI_MENU_RESET:

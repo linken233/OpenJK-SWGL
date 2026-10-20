@@ -33,6 +33,8 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "qcommon/stringed_ingame.h"
 #include "sys/sys_loadlib.h"
 #include "qcommon/ojk_saved_game.h"
+#include "cl_dualref.h"
+#include "qcommon/jobs.h"
 
 #define	RETRANSMIT_TIMEOUT	3000	// time between connection packet retransmits
 
@@ -87,6 +89,8 @@ clientStatic_t		cls;
 // Structure containing functions exported from refresh DLL
 refexport_t	re;
 static void *rendererLib = NULL;
+static void *rendererLib2 = NULL;	// g_FastRendererSwitch: the default renderer
+static cvar_t *g_FastRendererSwitch;
 
 //RAZFIXME: BAD BAD, maybe? had to move it out of ghoul2_shared.h -> CGhoul2Info_v at the least..
 IGhoul2InfoArray &_TheGhoul2InfoArray( void ) {
@@ -761,6 +765,7 @@ CL_Frame
 extern cvar_t	*cl_newClock;
 static unsigned int frameCount;
 float avgFrametime=0.0;
+void PerfLog_ConnectionTrace( void );	// server/sv_perflog.cpp
 void CL_Frame ( int msec,float fractionMsec ) {
 
 	if ( !com_cl_running->integer ) {
@@ -769,6 +774,8 @@ void CL_Frame ( int msec,float fractionMsec ) {
 
 	// load the ref / cgame if needed
 	CL_StartHunkUsers();
+
+	PerfLog_ConnectionTrace();
 
 	if ( cls.state == CA_DISCONNECTED && !( Key_GetCatcher( ) & KEYCATCH_UI )
 		&& !com_sv_running->integer ) {
@@ -871,10 +878,14 @@ void CL_Frame ( int msec,float fractionMsec ) {
 		}
 	} else {
 		// update the screen
+		const double perfScr = PerfLog_Now();
 		SCR_UpdateScreen();
+		PerfLog_AddPhase( 0, PerfLog_Now() - perfScr );
 	}
 	// update audio
+	const double perfAudio = PerfLog_Now();
 	S_Update();
+	PerfLog_AddPhase( 1, PerfLog_Now() - perfAudio );
 
 	// advance local effects for next frame
 	SCR_RunCinematic();
@@ -898,10 +909,18 @@ static void CL_ShutdownRef( qboolean restarting ) {
 
 	memset( &re, 0, sizeof( re ) );
 
+	if ( rendererLib2 != NULL ) {
+		Sys_UnloadDll (rendererLib2);
+		rendererLib2 = NULL;
+		CL_DualRef_Shutdown();
+	}
+
 	if ( rendererLib != NULL ) {
 		Sys_UnloadDll (rendererLib);
 		rendererLib = NULL;
 	}
+
+	WIN_SetDual( qfalse );
 }
 
 /*
@@ -1069,12 +1088,21 @@ static CMiniHeap *GetG2VertSpaceServer( void ) {
 	return G2VertSpaceServer;
 }
 
+// The second renderer runs RE_BeginRegistration right after the first one. It must
+// not free the hunk memory that the first one has just allocated.
+static void Hunk_ClearToMark_Second( void ) {
+}
+
 // NOTENOTE: If you change the output name of rd-vanilla, change this define too!
 #ifdef JK2_MODE
 #define DEFAULT_RENDER_LIBRARY	"rdjosp-vanilla"
 #else
 #define DEFAULT_RENDER_LIBRARY	"rdsp_swgl"
 #endif
+
+static qboolean CL_RefIsWorkerThread( void ) {
+	return Jobs_IsWorkerThread() ? qtrue : qfalse;
+}
 
 void CL_InitRef( void ) {
 	refexport_t	*ret;
@@ -1161,6 +1189,12 @@ void CL_InitRef( void ) {
 	rit.GL_GetProcAddress = WIN_GL_GetProcAddress;
 	rit.GL_ExtensionSupported = WIN_GL_ExtensionSupported;
 
+	rit.VK_IsMinimized = WIN_VK_IsMinimized;
+	rit.VK_GetInstanceProcAddress = WIN_VK_GetInstanceProcAddress;
+	rit.VK_createSurfaceImpl = WIN_VK_createSurfaceImpl;
+	rit.VK_destroyWindow = WIN_VK_destroyWindow;
+	rit.WIN_GammaInSoftware = WIN_GammaInSoftware;
+
 	rit.PD_Load = PD_Load;
 	rit.PD_Store = PD_Store;
 
@@ -1184,6 +1218,12 @@ void CL_InitRef( void ) {
 
 	rit.saved_game = &ojk::SavedGame::get_instance();
 
+	rit.Jobs_ParallelFor = Jobs_ParallelFor;
+	rit.Jobs_NumThreads = Jobs_NumThreads;
+	rit.Jobs_IsWorkerThread = CL_RefIsWorkerThread;
+	rit.Jobs_SetThreadErrorHook = Jobs_SetThreadErrorHook;
+	rit.Z_SetThreadSafe = Z_SetThreadSafe;
+
 	ret = GetRefAPI( REF_API_VERSION, &rit );
 
 	if ( !ret ) {
@@ -1191,6 +1231,43 @@ void CL_InitRef( void ) {
 	}
 
 	re = *ret;
+	WIN_SetDual( qfalse );
+
+	// g_FastRendererSwitch: also load the default renderer, so g_SwitchRenderer
+	// and g_ShowSplit can compare the two without a vid_restart.
+	g_FastRendererSwitch = Cvar_Get( "g_FastRendererSwitch", "0", CVAR_ARCHIVE|CVAR_LATCH );
+	if ( g_FastRendererSwitch->integer && Q_stricmp( cl_renderer->string, DEFAULT_RENDER_LIBRARY ) )
+	{
+		static refimport_t rit2;
+		const refexport_t *ret2 = NULL;
+
+		Com_Printf( "g_FastRendererSwitch: also loading %s\n", DEFAULT_RENDER_LIBRARY );
+		Com_sprintf( dllName, sizeof( dllName ), DEFAULT_RENDER_LIBRARY "_" ARCH_STRING DLL_EXT );
+		rendererLib2 = Sys_LoadDll( dllName, qfalse );
+		GetRefAPI = rendererLib2 ? (GetRefAPI_t)Sys_LoadFunction( rendererLib2, "GetRefAPI" ) : NULL;
+
+		if ( GetRefAPI )
+		{
+			rit2 = rit;
+			rit2.TheGhoul2InfoArray = ret->TheGhoul2InfoArray;
+			rit2.Hunk_ClearToMark = Hunk_ClearToMark_Second;
+			ret2 = GetRefAPI( REF_API_VERSION, &rit2 );
+		}
+
+		if ( ret2 )
+		{
+			WIN_SetDual( qtrue );
+			re = *CL_DualRef_Init( ret, cl_renderer->string, ret2, DEFAULT_RENDER_LIBRARY );
+		}
+		else
+		{
+			Com_Printf( S_COLOR_YELLOW "g_FastRendererSwitch: could not load %s, one renderer only\n", dllName );
+			if ( rendererLib2 ) {
+				Sys_UnloadDll( rendererLib2 );
+				rendererLib2 = NULL;
+			}
+		}
+	}
 
 	Com_Printf( "-------------------------------\n");
 
@@ -1313,6 +1390,8 @@ void CL_Init( void ) {
 	Cmd_AddCommand("swglsystem", CL_System_f);
 	Cmd_AddCommand("swglspawner", CL_Spawner_f);
 	Cmd_AddCommand ("endscreendissolve", CL_EndScreenDissolve_f);
+	Cmd_AddCommand ("g_SwitchRenderer", CL_SwitchRenderer_f);
+	Cmd_AddCommand ("g_ShowSplit", CL_ShowSplit_f);
 
 	CL_InitRef();
 
@@ -1368,6 +1447,8 @@ void CL_Shutdown( void ) {
 	Cmd_RemoveCommand("swglspawner");
 	Cmd_RemoveCommand("swglsystem");
 	Cmd_RemoveCommand ("endscreendissolve");
+	Cmd_RemoveCommand ("g_SwitchRenderer");
+	Cmd_RemoveCommand ("g_ShowSplit");
 
 	Cvar_Set( "cl_running", "0" );
 

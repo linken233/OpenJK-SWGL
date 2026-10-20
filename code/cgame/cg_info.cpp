@@ -979,22 +979,22 @@ void CG_DrawInformation( void ) {
 		{
 			levelshot = cgi_R_RegisterShaderNoMip(va("levelshots_sav/%s", s + 5));
 			CG_DrawLoadingScreen(levelshot, s);
+			cgi_UI_Run_Command("loadframe show");
 			cgi_UI_Menu_Paint(cgi_UI_GetMenuByName("loadscreen"), qtrue);
-			vec4_t	rectColor = { 1, 0.1, 0, 1 };
-			CG_DrawRect(21, 29, 270, 203, 2, rectColor);
 		}
 	}
 	else if (g_eSavedGameJustLoaded != eFULL && cgi_SP_GetStringTextString(va("BRIEFINGS_%s", s), NULL, 0) == 0)
 	{
 		CG_DrawLoadingScreenWithoutBriefing(levelshot, s);
+		// no map pic in this layout, so no frame around it
+		cgi_UI_Run_Command("loadframe hide");
 		cgi_UI_Menu_Paint(cgi_UI_GetMenuByName("loadscreen"), qtrue);
 	}
 	else
 	{
 		CG_DrawLoadingScreen(levelshot, s);
+		cgi_UI_Run_Command("loadframe show");
 		cgi_UI_Menu_Paint( cgi_UI_GetMenuByName( "loadscreen" ), qtrue );
-		vec4_t	rectColor = { 1, 0.1, 0, 1 };
-		CG_DrawRect(21, 29, 270, 203, 2, rectColor);
 		//cgi_UI_MenuPaintAll();
 	}
 

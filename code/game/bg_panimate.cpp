@@ -2610,6 +2610,8 @@ qboolean PM_CheckLungeAttackMove( void )
 				if ( pm->ps->legsAnim == BOTH_STAND2
 					|| pm->ps->legsAnim == BOTH_SABERFAST_STANCE
 					|| pm->ps->legsAnim == BOTH_SABERSLOW_STANCE
+					|| pm->ps->legsAnim == BOTH_SABERTAVION_STANCE
+					|| pm->ps->legsAnim == BOTH_SABERDESSAN_STANCE
 					|| pm->ps->legsAnim == BOTH_SABERSTAFF_STANCE
 					|| pm->ps->legsAnim == BOTH_SABERDUAL_STANCE
 					|| (level.time-pm->ps->lastStationary) <= 500  )
@@ -2822,6 +2824,8 @@ qboolean PM_CheckJumpForwardAttackMove( void )
 							if ( pm->ps->legsAnim == BOTH_STAND2
 								|| pm->ps->legsAnim == BOTH_SABERFAST_STANCE
 								|| pm->ps->legsAnim == BOTH_SABERSLOW_STANCE
+								|| pm->ps->legsAnim == BOTH_SABERTAVION_STANCE
+								|| pm->ps->legsAnim == BOTH_SABERDESSAN_STANCE
 								|| level.time-pm->ps->lastStationary <= 250 )
 							{//standing or just started moving
 								if ( pm->gent->client
@@ -5302,8 +5306,7 @@ void PM_TorsoAnimLightsaber()
 	}
 
 	if (pm->ps->weaponstate == WEAPON_READY ||
-		pm->ps->weaponstate == WEAPON_CHARGING ||
-		pm->ps->weaponstate == WEAPON_CHARGING_ALT)
+		pm->ps->weaponstate == WEAPON_CHARGING)
 	{//ready
 		if (pm->ps->weapon == WP_SABER && (pm->ps->SaberLength()))
 		{//saber is on
@@ -5842,7 +5845,7 @@ void PM_TorsoAnimation(void)
 	{
 		weaponBusy = qfalse;
 	}
-	else if (pm->ps->weaponstate == WEAPON_FIRING || pm->ps->weaponstate == WEAPON_CHARGING || pm->ps->weaponstate == WEAPON_CHARGING_ALT)
+	else if (pm->ps->weaponstate == WEAPON_FIRING || pm->ps->weaponstate == WEAPON_CHARGING)
 	{
 		weaponBusy = qtrue;
 	}
@@ -5873,7 +5876,7 @@ void PM_TorsoAnimation(void)
 	}
 
 	if (weapon == WP_NONE || pm->ps->weaponstate == WEAPON_READY
-		|| pm->ps->weaponstate == WEAPON_CHARGING || pm->ps->weaponstate == WEAPON_CHARGING_ALT)
+		|| pm->ps->weaponstate == WEAPON_CHARGING)
 	{
 		if (weapon == WP_SABER && pm->ps->SaberLength())
 		{
@@ -5957,8 +5960,7 @@ void PM_TorsoAnimation(void)
 			}
 			else if (pm->gent != NULL
 				&& (pm->gent->s.number < MAX_CLIENTS || G_ControlledByPlayer(pm->gent))
-				&& pm->ps->weaponstate != WEAPON_CHARGING
-				&& pm->ps->weaponstate != WEAPON_CHARGING_ALT)
+				&& pm->ps->weaponstate != WEAPON_CHARGING)
 			{//PLayer- temp hack for weapon frame
 				if (pm->gent && pm->gent->client && pm->gent->client->NPC_class == CLASS_RANCOR)
 				{//ignore
@@ -5987,7 +5989,7 @@ void PM_TorsoAnimation(void)
 			//CLASS_GALAKMECH Case
 			else if(pm->gent && pm->gent->client && pm->gent->client->NPC_class == CLASS_GALAKMECH)
 			{
-				if (pm->gent->alt_fire)
+				if (pm->gent->attack_index)
 				{
 					PM_SetAnim(pm, SETANIM_TORSO, TORSO_WEAPONREADY3, SETANIM_FLAG_NORMAL);
 				}
@@ -5998,6 +6000,9 @@ void PM_TorsoAnimation(void)
 			}
 			else if (weaponData[weapon].weaponCategory == WC_MINIGUN) {
 				PM_SetAnim(pm, SETANIM_TORSO, TORSO_Z6_AIM, SETANIM_FLAG_NORMAL);
+			}
+			else if (weaponData[weapon].weaponCategory == WC_SHOULDER) {
+				PM_SetAnim(pm, SETANIM_TORSO, TORSO_PLX_AIM, SETANIM_FLAG_NORMAL);
 			}
 			else if (weaponData[weapon].weaponCategory == WC_PISTOL)
 			{
@@ -6082,8 +6087,7 @@ void PM_TorsoAnimation(void)
 			}
 			else if (weaponData[weapon].weaponCategory == WC_SNIPER) {
 				if ((pm->ps->weaponstate != WEAPON_FIRING
-					&& pm->ps->weaponstate != WEAPON_CHARGING
-					&& pm->ps->weaponstate != WEAPON_CHARGING_ALT)
+					&& pm->ps->weaponstate != WEAPON_CHARGING)
 					|| PM_RunningAnim(pm->ps->legsAnim)
 					|| PM_WalkingAnim(pm->ps->legsAnim)
 					|| PM_JumpingAnim(pm->ps->legsAnim)
@@ -6104,7 +6108,6 @@ void PM_TorsoAnimation(void)
 			{
 				if (pm->ps->weaponstate != WEAPON_FIRING
 					&& pm->ps->weaponstate != WEAPON_CHARGING
-					&& pm->ps->weaponstate != WEAPON_CHARGING_ALT
 					&& (PM_RunningAnim(pm->ps->legsAnim)
 						|| PM_WalkingAnim(pm->ps->legsAnim)
 						|| PM_JumpingAnim(pm->ps->legsAnim)
@@ -6114,7 +6117,7 @@ void PM_TorsoAnimation(void)
 				}
 				else
 				{
-					if ((pm->ps->clientNum < MAX_CLIENTS || PM_ControlledByPlayer()) && (pm->ps->weaponstate == WEAPON_CHARGING || pm->ps->weaponstate == WEAPON_CHARGING_ALT))
+					if ((pm->ps->clientNum < MAX_CLIENTS || PM_ControlledByPlayer()) && (pm->ps->weaponstate == WEAPON_CHARGING))
 					{//player pulling back to throw
 						if (PM_StandingAnim(pm->ps->legsAnim))
 						{
@@ -6224,7 +6227,7 @@ void PM_TorsoAnimation(void)
 			}//else still holding, leave it as it is
 		}
 		//running w/1-handed or light 2-handed weapon uses full-body anim if you're not using the weapon right now
-		else if (!weaponBusy && !(pm->ps->weaponstate == WEAPON_CHARGING_ALT)
+		else if (!weaponBusy
 			&& (weaponData[weapon].weaponCategory == WC_PISTOL || weaponData[weapon].weaponCategory == WC_LIGHT || weaponData[weapon].weaponCategory == WC_MELEE_1H)
 			&& (PM_RunningAnim(pm->ps->legsAnim) || (PM_WalkingAnim(pm->ps->legsAnim) && (pm->ps->clientNum < MAX_CLIENTS || PM_ControlledByPlayer()))
 				|| PM_JumpingAnim(pm->ps->legsAnim) || PM_SwimmingAnim(pm->ps->legsAnim)))
@@ -6234,7 +6237,7 @@ void PM_TorsoAnimation(void)
 		//GalakMech Special Case
 		else if (pm->gent && pm->gent->client && pm->gent->client->NPC_class == CLASS_GALAKMECH)
 		{
-			if (pm->gent->alt_fire)
+			if (pm->gent->attack_index)
 			{
 				PM_SetAnim(pm, SETANIM_TORSO, TORSO_WEAPONIDLE3, SETANIM_FLAG_NORMAL);
 			}
@@ -6245,6 +6248,9 @@ void PM_TorsoAnimation(void)
 		}
 		else if (weaponData[weapon].weaponCategory == WC_MINIGUN) {
 			PM_SetAnim(pm, SETANIM_TORSO, TORSO_Z6_AIM, SETANIM_FLAG_NORMAL);
+		}
+		else if (weaponData[weapon].weaponCategory == WC_SHOULDER) {
+			PM_SetAnim(pm, SETANIM_TORSO, TORSO_PLX_AIM, SETANIM_FLAG_NORMAL);
 		}
 		//Pistol Animations
 		else if (weaponData[weapon].weaponCategory == WC_PISTOL)
@@ -6311,7 +6317,7 @@ void PM_TorsoAnimation(void)
 		/* Special Sniper Case */
 		else if (weaponData[weapon].weaponCategory == WC_SNIPER)
 		{
-			if ((pm->ps->weaponstate != WEAPON_FIRING && pm->ps->weaponstate != WEAPON_CHARGING && pm->ps->weaponstate != WEAPON_CHARGING_ALT)
+			if ((pm->ps->weaponstate != WEAPON_FIRING && pm->ps->weaponstate != WEAPON_CHARGING)
 				|| PM_RunningAnim(pm->ps->legsAnim) || PM_WalkingAnim(pm->ps->legsAnim)
 				|| PM_JumpingAnim(pm->ps->legsAnim) || PM_SwimmingAnim(pm->ps->legsAnim))
 			{//running sniper weapon uses normal ready
@@ -6400,6 +6406,8 @@ int PM_GetTurnAnim( gentity_t *gent, int anim )
 	case BOTH_STAND2:			//# Standing idle with a weapon
 	case BOTH_SABERFAST_STANCE:
 	case BOTH_SABERSLOW_STANCE:
+	case BOTH_SABERTAVION_STANCE:
+	case BOTH_SABERDESSAN_STANCE:
 	case BOTH_STAND2IDLE1:		//# Random standing idle
 	case BOTH_STAND2IDLE2:		//# Random standing idle
 	case BOTH_STAND3:			//# Standing hands behind back: at ease: etc.
@@ -6429,6 +6437,11 @@ int PM_GetTurnAnim( gentity_t *gent, int anim )
 	case BOTH_ATTACK4:			//# Attack with ???
 	case BOTH_MELEE1:			//# First melee attack
 	case BOTH_MELEE2:			//# Second melee attack
+	case BOTH_MELEE_COMBO_1:
+	case BOTH_MELEE_COMBO_2:
+	case BOTH_MELEE_COMBO_3:
+	case BOTH_MELEE_COMBO_4:
+	case BOTH_MELEE_COMBO_5:
 	case BOTH_GUARD_LOOKAROUND1:	//# Cradling weapon and looking around
 	case BOTH_GUARD_IDLE1:		//# Cradling weapon and standing
 		if ( PM_HasAnimation( gent, LEGS_TURN2 ) )
@@ -6469,6 +6482,8 @@ int PM_TurnAnimForLegsAnim( gentity_t *gent, int anim )
 	case BOTH_STAND2:			//# Standing idle with a weapon
 	case BOTH_SABERFAST_STANCE:
 	case BOTH_SABERSLOW_STANCE:
+	case BOTH_SABERTAVION_STANCE:
+	case BOTH_SABERDESSAN_STANCE:
 	case BOTH_STAND2IDLE1:		//# Random standing idle
 	case BOTH_STAND2IDLE2:		//# Random standing idle
 		if ( PM_HasAnimation( gent, BOTH_TURNSTAND2 ) )

@@ -390,6 +390,10 @@ typedef enum
 		A_PAD0_LEFTTRIGGER,
 		A_PAD0_RIGHTTRIGGER,
 
+		// Key combinations (modifier + key), registered at run time by Key_RegisterCombo()
+		A_COMBO_BASE,
+		A_COMBO_LAST = A_COMBO_BASE + 255,
+
 		MAX_KEYS
 } fakeAscii_t;
 

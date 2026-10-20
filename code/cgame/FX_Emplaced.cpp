@@ -70,7 +70,7 @@ void FX_EmplacedProjectileThink( centity_t *cent, const struct weaponInfo_s *wea
 		if ( cent->gent && cent->gent->owner && cent->gent->owner->activator && cent->gent->owner->activator->s.number > 0 )
 		{
 			// NPC's do short shot
-			if ( cent->gent->alt_fire )
+			if ( cent->gent->attack_index )
 			{
 				theFxScheduler.PlayEffect( "eweb/shotNPC", cent->lerpOrigin, forward );
 			}
@@ -82,7 +82,7 @@ void FX_EmplacedProjectileThink( centity_t *cent, const struct weaponInfo_s *wea
 		else
 		{
 			// players do long shot
-			if ( cent->gent && cent->gent->alt_fire )
+			if ( cent->gent && cent->gent->attack_index )
 			{
 				theFxScheduler.PlayEffect( "eweb/shotNPC", cent->lerpOrigin, forward );
 			}

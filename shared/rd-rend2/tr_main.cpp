@@ -1757,23 +1757,27 @@ static QINLINE void R_Radix( int byte, int size, drawSurf_t *source, drawSurf_t 
 ===============
 R_RadixSort
 
-Radix sort with 4 byte size buckets
+Radix sort of the QSORT_BYTES low bytes of the key, one byte per pass
 ===============
 */
 static void R_RadixSort( drawSurf_t *source, int size )
 {
-  static drawSurf_t scratch[ MAX_DRAWSURFS ];
+	static drawSurf_t scratch[ MAX_DRAWSURFS ];
+	drawSurf_t *from = source, *to = scratch, *t;
+	int i;
+
+	for ( i = 0; i < QSORT_BYTES; i++ ) {
 #ifdef Q3_LITTLE_ENDIAN
-  R_Radix( 0, size, source, scratch );
-  R_Radix( 1, size, scratch, source );
-  R_Radix( 2, size, source, scratch );
-  R_Radix( 3, size, scratch, source );
+		R_Radix( i, size, from, to );
 #else
-  R_Radix( 3, size, source, scratch );
-  R_Radix( 2, size, scratch, source );
-  R_Radix( 1, size, source, scratch );
-  R_Radix( 0, size, scratch, source );
-#endif //Q3_LITTLE_ENDIAN
+		R_Radix( (int)sizeof( sortKey_t ) - 1 - i, size, from, to );
+#endif
+		t = from; from = to; to = t;
+	}
+
+	// an odd number of passes ends in scratch
+	if ( from != source )
+		memcpy( source, from, size * sizeof( drawSurf_t ) );
 }
 
 //==========================================================================================
@@ -1792,7 +1796,7 @@ bool R_IsPostRenderEntity ( const trRefEntity_t *refEntity )
 R_DecomposeSort
 =================
 */
-void R_DecomposeSort( uint32_t sort, int *entityNum, shader_t **shader, int *cubemap, int *postRender )
+void R_DecomposeSort( sortKey_t sort, int *entityNum, shader_t **shader, int *cubemap, int *postRender )
 {
 	*shader = tr.sortedShaders[ ( sort >> QSORT_SHADERNUM_SHIFT ) & QSORT_SHADERNUM_MASK ];
 	*postRender = (sort >> QSORT_POSTRENDER_SHIFT ) & QSORT_POSTRENDER_MASK;
@@ -1800,14 +1804,14 @@ void R_DecomposeSort( uint32_t sort, int *entityNum, shader_t **shader, int *cub
 	*cubemap = (sort >> QSORT_CUBEMAP_SHIFT ) & QSORT_CUBEMAP_MASK;
 }
 
-uint32_t R_CreateSortKey(int entityNum, int sortedShaderIndex, int cubemapIndex, int postRender)
+sortKey_t R_CreateSortKey(int entityNum, int sortedShaderIndex, int cubemapIndex, int postRender)
 {
-	uint32_t key = 0;
+	sortKey_t key = 0;
 
-	key |= (sortedShaderIndex & QSORT_SHADERNUM_MASK) << QSORT_SHADERNUM_SHIFT;
-	key |= (cubemapIndex & QSORT_CUBEMAP_MASK) << QSORT_CUBEMAP_SHIFT;
-	key |= (postRender & QSORT_POSTRENDER_MASK) << QSORT_POSTRENDER_SHIFT;
-	key |= (entityNum & QSORT_ENTITYNUM_MASK) << QSORT_ENTITYNUM_SHIFT;
+	key |= (sortKey_t)(sortedShaderIndex & QSORT_SHADERNUM_MASK) << QSORT_SHADERNUM_SHIFT;
+	key |= (sortKey_t)(cubemapIndex & QSORT_CUBEMAP_MASK) << QSORT_CUBEMAP_SHIFT;
+	key |= (sortKey_t)(postRender & QSORT_POSTRENDER_MASK) << QSORT_POSTRENDER_SHIFT;
+	key |= (sortKey_t)(entityNum & QSORT_ENTITYNUM_MASK) << QSORT_ENTITYNUM_SHIFT;
 
 	return key;
 }

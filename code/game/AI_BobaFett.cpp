@@ -511,15 +511,6 @@ void Boba_FireFlameThrower( gentity_t *self )
 ////////////////////////////////////////////////////////////////////////////////////////
 void Boba_StopFlameThrower( gentity_t *self )
 {
-	if ( self->s.number < MAX_CLIENTS )
-	{
-		self->client->ps.torsoAnimTimer  =	0;
-		G_StopEffect( G_EffectIndex("boba/fthrw"), self->playerModel, self->genericBolt3, self->s.number);
-		//Stop Sound
-		self->s.loopSound = 0;
-		G_SoundOnEnt(self, CHAN_WEAPON, "sound/null.wav");
-		return;
-	}
 	if ((NPCInfo->aiFlags&NPCAI_FLAMETHROW))
 	{
 		self->NPC->aiFlags				&= ~NPCAI_FLAMETHROW;
@@ -539,14 +530,23 @@ void Boba_StopFlameThrower( gentity_t *self )
 ////////////////////////////////////////////////////////////////////////////////////////
 //
 ////////////////////////////////////////////////////////////////////////////////////////
+// The pose of the torso while the flamethrower burns: held until the timer runs out.
+void Boba_HoldFlameAnim( gentity_t *self )
+{
+	NPC_SetAnim( self, SETANIM_TORSO, BOTH_FORCELIGHTNING_HOLD, SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD );
+	self->client->ps.torsoAnimTimer = BOBA_FLAMEDURATION;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////
+//
+////////////////////////////////////////////////////////////////////////////////////////
 void Boba_StartFlameThrower( gentity_t *self )
 {
 	if (!(NPCInfo->aiFlags&NPCAI_FLAMETHROW))
 	{
-		NPC_SetAnim( self, SETANIM_TORSO, BOTH_FORCELIGHTNING_HOLD, SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD );
+		Boba_HoldFlameAnim( self );
 
 		self->NPC->aiFlags				|=  NPCAI_FLAMETHROW;
-	 	self->client->ps.torsoAnimTimer  =	BOBA_FLAMEDURATION;
 
 		TIMER_Set( self, "flameTime",			BOBA_FLAMEDURATION);
 		TIMER_Set( self, "nextAttackDelay",		BOBA_FLAMEDURATION);
@@ -565,30 +565,6 @@ void Boba_StartFlameThrower( gentity_t *self )
 ////////////////////////////////////////////////////////////////////////////////////////
 void Boba_DoFlameThrower( gentity_t *self )
 {
-	if ( self->s.number < MAX_CLIENTS )
-	{
-		if ( self->client )
-		{
-			//If power inactive or if is player and animation almost ended.
-			if ( !self->client->ps.forcePowerDuration[FP_LIGHTNING] || (!self->s.number && self->client->ps.torsoAnimTimer <= 25) )
-			{
-				NPC_SetAnim( self, SETANIM_TORSO, BOTH_FORCELIGHTNING_HOLD, SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD );
-	 			self->client->ps.torsoAnimTimer  =	BOBA_FLAMEDURATION;
-
-				if (self->client->ps.forcePowerDuration[FP_LIGHTNING]) {
-					self->s.loopSound = G_SoundIndex("sound/weapons/flame_thrower/fire_loop.mp3");
-					G_SoundOnEnt(self, CHAN_WEAPON, "sound/null.wav");
-				}
-				else {
-					G_SoundOnEnt(self, CHAN_WEAPON, "sound/weapons/boba/bf_flame.mp3");
-				}
-				G_PlayEffect( G_EffectIndex("boba/fthrw"), self->playerModel, self->genericBolt3, self->s.number, self->s.origin, 1 );
-				self->client->ps.forcePowerDuration[FP_LIGHTNING] = 1;
-			}
-			Boba_FireFlameThrower( self );
-		}
-		return;
-	}
 	if (!Q_stricmp(self->NPC_type, COMMANDER_CODY_BOSS))
 	{
 		if (NPC->client->ps.torsoAnim == BOTH_KYLE_GRAB)

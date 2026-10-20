@@ -68,6 +68,7 @@ typedef enum {
 #define ICON_INVENTORY	2
 
 #define MAX_HUD_TICS	4
+#define MAX_JK2_HUD_TICS	7
 
 
 typedef struct HUDMenuItem_s
@@ -146,6 +147,18 @@ typedef struct {
 	qhandle_t	weaponIconBackground;
 	qhandle_t	forceIconBackground;
 	qhandle_t	inventoryIconBackground;
+
+	// JK2 HUD (needs the JKO assets, see CG_JK2HudActive)
+	qboolean	jk2HudLoaded;
+	qhandle_t	jk2HudLeftFrame, jk2HudLeftInner;
+	qhandle_t	jk2HudRightFrame, jk2HudRightInner;
+	qhandle_t	jk2HudHealth, jk2HudHealthTic;
+	qhandle_t	jk2HudArmor1, jk2HudArmor2, jk2HudArmorTic;
+	qhandle_t	jk2HudSaberStyle[5];	// fast, medium, strong, desann, tavion
+	qhandle_t	jk2HudAmmoTic[MAX_JK2_HUD_TICS];
+	qhandle_t	jk2HudForceTic[MAX_JK2_HUD_TICS];
+	qhandle_t	jk2ProngOff, jk2ProngOnWeapon, jk2ProngOnForce, jk2ProngOnInventory;
+	qhandle_t	jk2BackgroundWeapon, jk2BackgroundForce, jk2BackgroundInventory;
 	qhandle_t	turretComputerOverlayShader;
 	qhandle_t	turretCrossHairShader;
 
@@ -262,6 +275,7 @@ typedef struct {
 	//
 	qhandle_t	qhFontSmall;
 	qhandle_t	qhFontMedium;
+	qhandle_t	qhFontTitle;		// anewhope: font of the menu titles (font 3)
 
 	// special effects models / etc.
 	qhandle_t	personalShieldShader;

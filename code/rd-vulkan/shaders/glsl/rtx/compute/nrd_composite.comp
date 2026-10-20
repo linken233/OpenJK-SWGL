@@ -1,0 +1,87 @@
+/*
+Copyright (C) 2019, NVIDIA CORPORATION. All rights reserved.
+
+This program is free software; you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation; either version 2 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along
+with this program; if not, write to the Free Software Foundation, Inc.,
+51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+*/
+
+// This software contains source code provided by NVIDIA Corporation.
+
+// ========================================================================== //
+// This shader composites the output of the NRD RELAX denoiser (DENOISER_NRD_RELAX)
+// into the final color. It writes the checkerboard layout of the tracer images:
+// the interleave pass that follows expects it. The NRD outputs are flat images.
+// ========================================================================== //
+
+#version 460
+#extension GL_GOOGLE_include_directive    : enable
+#extension GL_EXT_nonuniform_qualifier    : enable
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+#define GLOBAL_UBO_DESC_SET_IDX 3
+#include "../global_ubo.h"
+
+#define GLOBAL_TEXTURES_DESC_SET_IDX 1
+#include "../global_textures.h"
+
+#include "../utils.glsl"
+#include "../brdf.glsl"
+#include "../nrd_front_end.glsl"
+#include "../compositing.glsl"
+
+void
+main()
+{
+	ivec2 ipos = ivec2(gl_GlobalInvocationID);
+	if(any(greaterThanEqual(ipos, ivec2(global_ubo.current_gpu_slice_width, global_ubo.height))))
+		return;
+
+	ivec2 flat_pos = nrd_checker_to_flat(ipos);
+
+	// RELAX_BackEnd_UnpackRadiance: the radiance is in the xyz channels. ReBLUR: it is in YCoCg.
+	vec4 diffuse4 = imageLoad(IMG_NRD_OUT_DIFF, flat_pos);
+	vec4 specular4 = imageLoad(IMG_NRD_OUT_SPEC, flat_pos);
+	vec3 diffuse = nrd_pc.mode == 0 ? diffuse4.rgb : nrd_reblur_unpack_radiance(diffuse4);
+	vec3 specular = nrd_pc.mode == 0 ? specular4.rgb : nrd_reblur_unpack_radiance(specular4);
+
+	// NRD does not write the pixels out of the denoising range (the sky). The tracer lights none of them.
+	bool is_sky = !(abs(texelFetch(TEX_PT_VIEW_DEPTH_A, ipos, 0).x) < PRIMARY_RAY_T_MAX);
+
+	if(is_sky || any(isnan(diffuse)) || any(isinf(diffuse)))
+		diffuse = vec3(0);
+
+	if(is_sky || any(isnan(specular)) || any(isinf(specular)))
+		specular = vec3(0);
+
+	// The denoiser output is in render units (the storage scale is not applied to it).
+	// pt_nrd_direct 0: NRD has the indirect diffuse only, the direct diffuse of the tracer is added as it is.
+	vec4 color;
+	if(nrd_pc.direct != 0)
+		color = composite_pixel(ipos, vec3(0), diffuse, specular);
+	else
+	{
+		vec3 high_freq = is_sky ? vec3(0) : unpackRGBE(texelFetch(TEX_PT_COLOR_HF, ipos, 0).x) / STORAGE_SCALE_HF;
+		color = composite_pixel(ipos, diffuse, high_freq, specular);
+	}
+
+	// pt_nrd_validation: the validation layer of NRD is an RGBA8 overlay, its alpha is the opacity.
+	if(nrd_pc.validation != 0)
+	{
+		vec4 validation = imageLoad(IMG_NRD_OUT_VALIDATION, flat_pos);
+		color.rgb = mix(color.rgb, validation.rgb * STORAGE_SCALE_HDR, validation.a);
+	}
+
+	imageStore(IMG_DENOISED_COLOR, ipos, color);
+}

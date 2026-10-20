@@ -23,6 +23,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #pragma once
 
 #include "q_platform.h"
+#include <math.h>
 
 
 #if defined(__cplusplus)
@@ -244,6 +245,39 @@ extern vec3_t vec3_origin;
 #define VectorClearM(dst) \
 	memset((dst), 0, sizeof((dst)[0]) * 3)
 
+#if defined(Q_MATH_INLINE) && !defined(Q_MATH_C)
+// Hot vector helpers are inline in the targets that define Q_MATH_INLINE. q_math.c still builds them out of line.
+static inline void VectorAdd( const vec3_t vec1, const vec3_t vec2, vec3_t vecOut ) { vecOut[0] = vec1[0]+vec2[0]; vecOut[1] = vec1[1]+vec2[1]; vecOut[2] = vec1[2]+vec2[2]; }
+static inline void VectorSubtract( const vec3_t vec1, const vec3_t vec2, vec3_t vecOut ) { vecOut[0] = vec1[0]-vec2[0]; vecOut[1] = vec1[1]-vec2[1]; vecOut[2] = vec1[2]-vec2[2]; }
+static inline void VectorScale( const vec3_t vecIn, float scale, vec3_t vecOut ) { vecOut[0] = vecIn[0]*scale; vecOut[1] = vecIn[1]*scale; vecOut[2] = vecIn[2]*scale; }
+static inline void VectorMA( const vec3_t vec1, float scale, const vec3_t vec2, vec3_t vecOut ) { vecOut[0] = vec1[0] + scale*vec2[0]; vecOut[1] = vec1[1] + scale*vec2[1]; vecOut[2] = vec1[2] + scale*vec2[2]; }
+static inline void VectorSet( vec3_t vec, float x, float y, float z ) { vec[0]=x; vec[1]=y; vec[2]=z; }
+static inline void VectorClear( vec3_t vec ) { vec[0] = vec[1] = vec[2] = 0.0f; }
+static inline void VectorCopy( const vec3_t vecIn, vec3_t vecOut ) { vecOut[0] = vecIn[0]; vecOut[1] = vecIn[1]; vecOut[2] = vecIn[2]; }
+static inline float VectorLength( const vec3_t vec ) { return (float)sqrt( vec[0]*vec[0] + vec[1]*vec[1] + vec[2]*vec[2] ); }
+static inline float VectorLengthSquared( const vec3_t vec ) { return (vec[0]*vec[0] + vec[1]*vec[1] + vec[2]*vec[2]); }
+static inline float VectorNormalize( vec3_t vec )
+{
+	float	length, ilength;
+
+	length = vec[0]*vec[0] + vec[1]*vec[1] + vec[2]*vec[2];
+	length = sqrtf( length );
+
+	if ( length ) {
+		ilength = 1/length;
+		vec[0] *= ilength;
+		vec[1] *= ilength;
+		vec[2] *= ilength;
+	}
+
+	return length;
+}
+static inline void CrossProduct( const vec3_t vec1, const vec3_t vec2, vec3_t vecOut ) { vecOut[0] = vec1[1]*vec2[2] - vec1[2]*vec2[1]; vecOut[1] = vec1[2]*vec2[0] - vec1[0]*vec2[2]; vecOut[2] = vec1[0]*vec2[1] - vec1[1]*vec2[0]; }
+static inline float DotProduct( const vec3_t vec1, const vec3_t vec2 ) { return vec1[0]*vec2[0] + vec1[1]*vec2[1] + vec1[2]*vec2[2]; }
+static inline qboolean VectorCompare( const vec3_t vec1, const vec3_t vec2 ) { return (qboolean)(vec1[0] == vec2[0] && vec1[1] == vec2[1] && vec1[2] == vec2[2]); }
+static inline float Distance( const vec3_t p1, const vec3_t p2 ) { vec3_t v; VectorSubtract( p2, p1, v ); return VectorLength( v ); }
+static inline float DistanceSquared( const vec3_t p1, const vec3_t p2 ) { vec3_t v; VectorSubtract( p2, p1, v ); return v[0]*v[0] + v[1]*v[1] + v[2]*v[2]; }
+#else
 void VectorAdd( const vec3_t vec1, const vec3_t vec2, vec3_t vecOut );
 void VectorSubtract( const vec3_t vec1, const vec3_t vec2, vec3_t vecOut );
 void VectorScale( const vec3_t vecIn, float scale, vec3_t vecOut );
@@ -253,21 +287,22 @@ void VectorClear( vec3_t vec );
 void VectorCopy( const vec3_t vecIn, vec3_t vecOut );
 float VectorLength( const vec3_t vec );
 float VectorLengthSquared( const vec3_t vec );
-void VectorNormalizeFast( vec3_t vec );
 float VectorNormalize( vec3_t vec );
+void CrossProduct( const vec3_t vec1, const vec3_t vec2, vec3_t vecOut );
+float DotProduct( const vec3_t vec1, const vec3_t vec2 );
+qboolean VectorCompare( const vec3_t vec1, const vec3_t vec2 );
+float Distance( const vec3_t p1, const vec3_t p2 );
+float DistanceSquared( const vec3_t p1, const vec3_t p2 );
+#endif
+void VectorNormalizeFast( vec3_t vec );
 float VectorNormalize2( const vec3_t vec, vec3_t vecOut );
 void VectorAdvance( const vec3_t veca, const float scale, const vec3_t vecb, vec3_t vecc);
 void VectorInc( vec3_t vec );
 void VectorDec( vec3_t vec );
 void VectorInverse( vec3_t vec );
-void CrossProduct( const vec3_t vec1, const vec3_t vec2, vec3_t vecOut );
-float DotProduct( const vec3_t vec1, const vec3_t vec2 );
-qboolean VectorCompare( const vec3_t vec1, const vec3_t vec2 );
 qboolean VectorCompare2( const vec3_t v1, const vec3_t v2 );
 
 void SnapVector( float *v );
-float Distance( const vec3_t p1, const vec3_t p2 );
-float DistanceSquared( const vec3_t p1, const vec3_t p2 );
 float DistanceHorizontal( const vec3_t p1, const vec3_t p2 );
 float DistanceHorizontalSquared( const vec3_t p1, const vec3_t p2 );
 void MakeNormalVectors( const vec3_t forward, vec3_t right, vec3_t up);

@@ -1,0 +1,883 @@
+/*
+===========================================================================
+Copyright (C) 1999 - 2005, Id Software, Inc.
+Copyright (C) 2000 - 2013, Raven Software, Inc.
+Copyright (C) 2001 - 2013, Activision, Inc.
+Copyright (C) 2013 - 2015, OpenJK contributors
+
+This file is part of the OpenJK source code.
+
+OpenJK is free software; you can redistribute it and/or modify it
+under the terms of the GNU General Public License version 2 as
+published by the Free Software Foundation.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program; if not, see <http://www.gnu.org/licenses/>.
+===========================================================================
+*/
+
+#ifndef VK_RTX_H
+#define VK_RTX_H
+
+
+#include "dds.h"
+#include "shaders/glsl/rtx/sky.h"
+#include "shaders/glsl/rtx/global_ubo.h"		// contains constants.h
+#include "shaders/glsl/rtx/global_textures.h"	// contains constants.h, ignored
+#include "shaders/glsl/rtx/vertex_buffer.h"	// contains constants.h, ignored
+#include "shaders/glsl/rtx/inspector.h"
+#include "vk_rtx_compute_shaders.h"
+#include "vk_rtx_denoiser.h"
+#include "vk_rtx_asvgf.h"
+#include "vk_rtx_tonemap.h"
+#include "vk_rtx_bloom.h"
+#include "vk_rtx_radiance_cache.h"
+#include "vk_rtx_nrd.h"
+#include "vk_rtx_precomputed_sky.h"
+#include "vk_rtx_physical_sky.h"
+
+#define DEBUG_POLY_LIGHTS 3.0f
+
+// math
+#define frand()     ((rand() & 32767) * (1.0 / 32767))
+
+#define VectorVectorScale(in,scale,out) \
+        ((out)[0]=(in)[0]*(scale)[0], \
+         (out)[1]=(in)[1]*(scale)[1], \
+         (out)[2]=(in)[2]*(scale)[2])
+
+// the visibility lump consists of a header with a count, then
+// byte offsets for the PVS and PHS of each cluster, then the raw
+// compressed bit vectors
+#define DVIS_PVS    0
+#define DVIS_PHS    1
+#define DVIS_PVS2   16 // Q2RTX : 2nd order PVS
+
+#define MAX_RIMAGES 2048
+
+// maximum size of a PVS row, in bytes
+#define VIS_MAX_BYTES   ( MAX_MAP_LEAFS >> 3 )
+
+#define NUM_TAA_SAMPLES						128
+
+#define VK_MAX_SWAPCHAIN_SIZE				2
+
+#define VK_AS_MEMORY_ALLIGNMENT_SIZE		65536
+
+#define VK_MAX_STATIC_BOTTOM_AS_INSTANCES	16
+#define VK_MAX_DYNAMIC_BOTTOM_AS_INSTANCES	384
+#define VK_MAX_BOTTOM_AS_INSTANCES (VK_MAX_STATIC_BOTTOM_AS_INSTANCES + VK_MAX_DYNAMIC_BOTTOM_AS_INSTANCES)
+
+#define VK_GLOBAL_IMAGEARRAY_SHADER_STAGE_FLAGS (VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR | VK_SHADER_STAGE_ANY_HIT_BIT_KHR | VK_SHADER_STAGE_COMPUTE_BIT)
+
+// unused
+#define ANIMATE_TEXTURE		( tess.shader->stages[0]->bundle[0].numImageAnimations > 0 )
+#define UV_CHANGES			( tess.shader->stages[0] != NULL ? ((tess.shader->stages[0]->bundle[0].tcGen != TCGEN_BAD)  && tess.shader->stages[0]->bundle[0].numTexMods > 0 /*&& tess.shader->stages[0]->bundle[0].texMods[0].type != TMOD_NONE*/) : qfalse )
+#define UV_CHANGES_S(s)		( tess.shader->stages[s] != NULL ? ((tess.shader->stages[s]->bundle[0].tcGen != TCGEN_BAD)  && tess.shader->stages[s]->bundle[0].numTexMods > 0 /*&& tess.shader->stages[0]->bundle[0].texMods[0].type != TMOD_NONE*/) : qfalse )
+#define MODEL_DEFORM		( tess.shader->numDeforms > 0 )
+#define ANIMATE_MODEL		( backEnd.currentEntity->e.frame > 0 || backEnd.currentEntity->e.oldframe > 0 )
+#define RTX_DYNAMIC_AS		( MODEL_DEFORM || ANIMATE_MODEL )
+#define RTX_DYNAMIC_AS_DATA	( RTX_DYNAMIC_AS || UV_CHANGES || ANIMATE_TEXTURE )
+#define RTX_DYNAMIC_DATA	( UV_CHANGES || ANIMATE_TEXTURE )
+
+#define MEM_BARRIER_BUILD_ACCEL( cmd_buf, ... ) \
+	do { \
+		VkMemoryBarrier barrier;  \
+		Com_Memset( &barrier, 0, sizeof(VkMemoryBarrier) ); \
+		barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;  \
+		barrier.pNext = NULL;  \
+		barrier.srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR \
+							  | VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR; \
+		barrier.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR; \
+	 \
+		qvkCmdPipelineBarrier(cmd_buf, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, \
+				VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, 0, 1, \
+				&barrier, 0, 0, 0, 0); \
+	} while(0)
+
+#define BUFFER_BARRIER( cmd_buf, _src_access_mask, _dst_access_mask, _buffer, _offset, _size ) \
+	do { \
+		VkBufferMemoryBarrier barrier;\
+		Com_Memset( &barrier, 0, sizeof(VkBufferMemoryBarrier) ); \
+		barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;  \
+		barrier.pNext = NULL; \
+		barrier.srcAccessMask = _src_access_mask; \
+		barrier.dstAccessMask = _dst_access_mask; \
+		barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED; \
+		barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED; \
+		barrier.buffer = _buffer; \
+		barrier.offset = _offset; \
+		barrier.size = _size; \
+	\
+		qvkCmdPipelineBarrier( cmd_buf, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, \
+				VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, NULL, 1, &barrier, \
+				0, NULL); \
+	} while(0)
+
+#define IMAGE_BARRIER( cmd_buf, _image, _range, _src_access_mask, _dst_access_mask, _old_layout, _new_layout ) \
+	do { \
+		VkImageMemoryBarrier barrier; \
+		Com_Memset( &barrier, 0, sizeof(VkImageMemoryBarrier) ); \
+		barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER, \
+		barrier.pNext = NULL, \
+		barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED; \
+		barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED; \
+		barrier.image = _image; \
+		barrier.subresourceRange = _range; \
+		barrier.srcAccessMask = _src_access_mask; \
+		barrier.dstAccessMask = _dst_access_mask; \
+		barrier.oldLayout = _old_layout; \
+		barrier.newLayout = _new_layout; \
+		\
+		qvkCmdPipelineBarrier( cmd_buf, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, \
+				VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, NULL, 0, NULL, \
+				1, &barrier ); \
+	} while(0)
+
+typedef struct cmd_buf_group_s {
+	uint32_t count_per_frame;
+	uint32_t used_this_frame;
+	VkCommandBuffer* buffers;
+	VkCommandPool command_pool;
+#ifdef _DEBUG
+	void** buffer_begin_addrs;
+#endif
+} cmd_buf_group_t;
+
+// shared model-mesh vbo structure (mdxm, mdv)
+typedef struct
+{
+	int indexOffset;	// same as indexOffset in parent struct
+	int numIndexes;		// same as numIndexes in parent struct
+	int meshIndex;
+	int modelIndex;
+} maliasmesh_t;
+
+typedef struct entity_hash_s {
+	unsigned int mesh : 8;
+	unsigned int model : 9;
+	unsigned int entity : 14;
+	unsigned int bsp : 1;
+} entity_hash_t;
+
+typedef struct {
+	uint32_t	index;
+	uint32_t	remappedIndex;
+	qboolean	active;
+	MaterialStage	stage[MAX_RTX_STAGES];
+	uint32_t		num_stages;
+	qboolean	uploaded[VK_MAX_SWAPCHAIN_SIZE];
+	uint32_t	albedo;
+	uint32_t	emissive;	// glow
+	qboolean	glow_emissive;	// emissive comes from a glow stage, scaled by pt_glow_scale
+	uint32_t	anim_first;		// material of the next animMap frame (a frame material), or of frame 0
+	uint32_t	anim_frames;	// frames of the animMaps, 0 for a frame material
+	qboolean	anim_oneshot;
+	uint32_t	normals;
+	uint32_t	phyiscal;
+	vec4_t		specular_scale;
+	uint32_t	emissive_factor;
+	int			surface_light;	// q3map_surfacelight fallback
+	uint32_t	flags;
+	uint32_t	alpha_test_func;
+	float		alpha_test_value;
+	uint32_t	blend_mode;
+} rtx_material_t;
+
+// Class of a world light entity. Only LIGHT_ENT_EDIT has a scale (pt_light_scale_edit). Lights
+// with a material ignore it.
+enum {
+	LIGHT_ENT_UNSET = 0,	// not yet classified
+	LIGHT_ENT_SPOT,			// the entity has a target
+	LIGHT_ENT_SKY,			// the cluster sees the sky
+	LIGHT_ENT_AMBIENT,		// every other light entity
+	LIGHT_ENT_EDIT			// added in the light editor, one scale (pt_light_scale_edit)
+};
+
+typedef struct light_poly_s {
+	float			positions[9]; // 3x vec3_t
+	vec3_t			off_center;
+	vec3_t			color;
+	rtx_material_t	*material;
+	int				cluster;
+	int				style;
+	float			emissive_factor;
+	int				type;
+	int				ent_class;
+	int				surface;		// emissive polygon: index of its world surface, set by collect_light_polys
+} light_poly_t;
+
+// passes information back from the RTX renderer to the engine for various development maros
+typedef struct ref_feedback_s {
+	int         viewcluster;
+	int         lookatcluster;
+	int         num_light_polys;
+	int         resolution_scale;
+
+	char        view_material[MAX_QPATH];
+	char        view_material_override[MAX_QPATH];
+
+	float		sun_luminance;
+	float		adapted_luminance;
+
+	vec3_t      hdr_color;
+} ref_feedback_t;
+
+typedef struct sun_light_s {
+	vec3_t		direction;
+	vec3_t		direction_envmap;
+	vec3_t		color;
+	float		angular_size_rad;
+	qboolean	use_physical_sky;
+	qboolean	visible;
+} sun_light_t;
+
+typedef struct EntityUploadInfo
+{
+	uint32_t num_instances;
+	uint32_t num_prims;
+	uint32_t opaque_prim_count;
+	uint32_t transparent_prim_offset;
+	uint32_t transparent_prim_count;
+	uint32_t masked_prim_offset;
+	uint32_t masked_prim_count;
+	uint32_t viewer_model_prim_offset;
+	uint32_t viewer_model_prim_count;
+	uint32_t distortion_prim_offset;
+	uint32_t distortion_prim_count;
+	uint32_t viewer_weapon_prim_offset;
+	uint32_t viewer_weapon_prim_count;
+	uint32_t explosions_prim_offset;
+	uint32_t explosions_prim_count;
+	qboolean weapon_left_handed;
+} EntityUploadInfo;
+
+
+typedef struct {
+	vec3_t mins;
+	vec3_t maxs;
+} aabb_t;
+
+typedef struct {
+    VkDeviceSize	size;
+    //byte			*p;
+    VkBuffer		buffer;
+    VkDeviceMemory	memory;
+    VkDeviceAddress address;
+	int				is_mapped;
+} vkbuffer_t;
+
+typedef struct
+{
+	uint8_t* geometry_storage;
+	VkAccelerationStructureGeometryKHR* geometries;
+	VkAccelerationStructureBuildRangeInfoKHR* build_ranges;
+	uint32_t* prim_counts;
+	uint32_t* prim_offsets;
+	uint32_t num_geometries;
+	uint32_t max_geometries;
+	VkAccelerationStructureBuildSizesInfoKHR build_sizes;
+	VkDeviceSize blas_data_offset;
+	VkAccelerationStructureKHR accel;
+	VkDeviceAddress blas_device_address;
+	VkGeometryInstanceFlagsKHR instance_flags;
+	uint32_t instance_mask;
+	uint32_t sbt_offset;
+} model_geometry_t;
+
+typedef struct {
+	vkbuffer_t buffer;
+	vkbuffer_t staging_buffer;
+	int registration_sequence;
+} model_vbo_t;
+
+typedef struct {
+	float			transform[12];
+	uint32_t		instance_id			: 24;	// instanceCustomIndex
+	uint32_t		mask				: 8;
+	uint32_t		instance_offset		: 24;
+	uint32_t		flags				: 8;
+	uint64_t		acceleration_structure;
+} vk_geometry_instance_t; // needed for top AS
+
+typedef struct {
+	union {
+		VkDescriptorImageInfo							*image;
+		VkDescriptorBufferInfo							*buffer;
+		VkBufferView									*buffer_view;
+		VkWriteDescriptorSetAccelerationStructureKHR	as;
+	};
+	uint32_t dstArrayElement;
+	uint32_t updateSize;
+} vkdescriptorData_t;
+
+typedef struct {
+    size_t							size;
+    VkDescriptorSetLayoutBinding	*bindings;	// length = size
+    vkdescriptorData_t				*data;		// length = size
+    VkDescriptorSet					set; 
+    VkDescriptorSetLayout			layout;
+    VkDescriptorPool				pool;
+
+	// ext
+	qboolean						lastBindingVariableSizeExt;
+	qboolean						needsUpdate;
+} vkdescriptor_t;
+
+typedef struct {
+    size_t									size;
+    VkShaderModule							*modules;
+    VkPipelineShaderStageCreateInfo			*shader_stages;
+	size_t									group_count;
+	VkRayTracingShaderGroupCreateInfoKHR	*shader_groups;
+} vkshader_t;
+
+typedef struct {
+	VkPipelineCache			cache;
+	VkPipelineLayout		layout;
+	VkPipeline				handle;
+
+	vkshader_t				*shader;
+
+	VkDescriptorSetLayout	*set_layouts;
+	uint32_t				set_layouts_count;
+
+	struct {
+		size_t				size;
+		VkPushConstantRange	*p;
+	} pushConstantRange;
+} vkpipeline_t;
+
+typedef struct {
+	VkExtent3D		extent;
+	uint32_t		mipLevels;
+	uint32_t		arrayLayers;
+
+	VkImage			handle;
+	VkImageView		view;
+	VkDeviceMemory	memory;
+} vkimage_t;
+
+#define MAX_BATCH_ACCEL_BUILDS 16
+
+typedef struct {
+	uint32_t numBuilds;
+	VkAccelerationStructureGeometryKHR				geometries[MAX_BATCH_ACCEL_BUILDS];
+	VkAccelerationStructureBuildGeometryInfoKHR		buildInfos[MAX_BATCH_ACCEL_BUILDS];
+	VkAccelerationStructureBuildRangeInfoKHR		rangeInfos[MAX_BATCH_ACCEL_BUILDS];
+	const VkAccelerationStructureBuildRangeInfoKHR	*rangeInfoPtrs[MAX_BATCH_ACCEL_BUILDS];
+} accel_build_batch_t;
+
+typedef struct {
+	VkAccelerationStructureKHR	accel;
+	uint64_t					handle;
+	VkDeviceSize				offset;
+	vkbuffer_t					mem;
+} vk_tlas_t;
+
+typedef enum {
+	BLAS_TYPE_OPAQUE,
+	BLAS_TYPE_TRANSPARENT,
+	BLAS_TYPE_MASKED,
+	BLAS_TYPE_COUNT
+} vk_blas_type;
+
+#define BLAS_TYPE_FLAG_OPAQUE			(1 << BLAS_TYPE_OPAQUE)
+#define BLAS_TYPE_FLAG_TRANSPARENT		(1 << BLAS_TYPE_TRANSPARENT)
+#define BLAS_TYPE_FLAG_ALL				((1 << BLAS_TYPE_COUNT) - 1)
+
+#define BLAS_DYNAMIC_FLAG_NONE  0
+#define BLAS_DYNAMIC_FLAG_IDX   (1 << 0)
+#define BLAS_DYNAMIC_FLAG_XYZ   (1 << 1)
+#define BLAS_DYNAMIC_FLAG_ALL   (BLAS_DYNAMIC_FLAG_IDX | BLAS_DYNAMIC_FLAG_XYZ)
+
+typedef struct accel_bottom_match_info_s {
+	int fast_build;
+	uint32_t vertex_count;
+	uint32_t index_count;
+	uint32_t aabb_count;
+	uint32_t instance_count;
+} vk_blas_match_info_t;
+
+typedef struct {
+	VkAccelerationStructureKHR	accel;
+	uint64_t					handle;
+	VkDeviceSize				offset;			// offset in static or dynamic buffer
+	vkbuffer_t					mem;
+	vk_blas_match_info_t		match;
+	VkDeviceAddress				vertex_address;
+	VkDeviceAddress				index_address;
+
+	// revisit this
+	VkAccelerationStructureGeometryKHR			geometries;
+	VkAccelerationStructureBuildRangeInfoKHR	range;
+	uint32_t	create_num_vertices;
+	uint32_t	create_num_indices;
+	bool present;
+} vk_blas_t;
+
+typedef struct {
+	void	*shader;
+	void	*surf;
+	int		cluster;
+	int		fogIndex;
+	uint32_t	prim_offset;	// first primitive of the surface in the geometry
+	uint32_t	prim_count;
+	qboolean	deformed;		// set once the surface has a previous position
+} vk_geometry_dynamic_surf_t;
+
+typedef struct {
+	uint32_t	surf_count;	
+	uint32_t	surf_offset;
+} vk_geometry_data_accel_t;
+
+typedef struct {
+	vk_geometry_dynamic_surf_t	*dynamic_surfs;
+
+	uint32_t		surf_count;
+	uint32_t		surf_offset;
+
+	VkBufferCopy	*deform_copies;		// staging ranges written this frame
+	uint32_t		num_deform_copies;
+} vk_geometry_host_t;
+
+typedef struct {
+
+	vkbuffer_t	buffer[NUM_COMMAND_BUFFERS];
+	vkbuffer_t	staging_buffer;
+
+	vkbuffer_t	deform_staging[NUM_COMMAND_BUFFERS];		// per-frame upload of the deformed surfaces
+	uint8_t		*deform_staging_data[NUM_COMMAND_BUFFERS];	// persistent mappings of deform_staging
+
+	VboPrimitive*	primitives;
+	uint32_t		num_primitives_allocated;
+	uint32_t		num_primitives;
+	size_t			vertex_data_offset;
+
+	uint32_t	blas_type_flags;
+	uint32_t	dynamic_flags;
+	qboolean	fast_build;
+	qboolean	allow_update;
+
+	vk_geometry_host_t		 host;
+	vk_geometry_data_accel_t accel[BLAS_TYPE_COUNT];
+
+	model_geometry_t geom_opaque;
+	model_geometry_t geom_transparent;
+	model_geometry_t geom_masked;
+	model_geometry_t geom_forcesight;	// surfaces that only Force Sight shows, instanced while it is on
+} vk_geometry_data_t;
+
+typedef struct {
+	vk_geometry_data_t sky_static;	
+	vk_geometry_data_t world_static;
+	vk_geometry_data_t world_dynamic_material;
+	vk_geometry_data_t world_dynamic_geometry;
+	vk_geometry_data_t world_submodels;
+#ifdef DEBUG_POLY_LIGHTS
+	vk_geometry_data_t debug_light_polys;
+#endif
+} vkgeometry_t;
+
+
+typedef struct {
+	int gpu_index;
+	int bounce;
+} pt_push_constants_t;
+#endif // VK_RTX_H
+
+#ifdef VK_RTX_LINKER
+#define BARRIER_COMPUTE_DST(cmd_buf, img, dst_access) \
+	do { \
+		VkImageSubresourceRange range; \
+		VkImageMemoryBarrier barrier; \
+		Com_Memset( &barrier, 0, sizeof(VkImageMemoryBarrier) ); \
+		range.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT; \
+		range.baseMipLevel = 0; \
+		range.levelCount = 1; \
+		range.baseArrayLayer = 0; \
+		range.layerCount = 1; \
+		barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER; \
+		barrier.pNext = NULL; \
+		barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED; \
+		barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED; \
+		barrier.image = img.handle; \
+		barrier.subresourceRange = range; \
+		barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT; \
+		barrier.dstAccessMask = dst_access; \
+		barrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL; \
+		barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL; \
+		qvkCmdPipelineBarrier( cmd_buf, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, \
+				VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, NULL, 0, NULL, \
+				1, &barrier); \
+	} while(0)
+
+#define BARRIER_COMPUTE(cmd_buf, img)		BARRIER_COMPUTE_DST( cmd_buf, img, VK_ACCESS_SHADER_READ_BIT )
+#define BARRIER_COMPUTE_WRITE(cmd_buf, img)	BARRIER_COMPUTE_DST( cmd_buf, img, VK_ACCESS_SHADER_WRITE_BIT )
+
+void		vk_rtx_cvar_handler( void );
+void		vk_rtx_begin_registration( void );
+void		vk_rtx_create_command_pool( void );
+void		vk_rtx_initialize( void );
+void		vk_rtx_shutdown( void );
+void		vk_rtx_begin_frame( void );
+void		vk_rtx_show_pvs_f( void );
+void		vk_rtx_list_debug_images_f( void );
+uint32_t	vk_rtx_debug_image_index( void );
+
+// vk_rtx_lightgen.cpp - reconstructs point lights from the baked lightmaps of maps that
+// shipped without their light entities. Writes maps/<name>.lgt; nothing reads it yet.
+void		R_LightGen_f( void );
+void		R_LightGen_EnsureForMap( const char *mapname );
+
+VkDescriptorSet vk_rtx_get_current_desc_set_textures( void);
+
+void		R_PreparePT( world_t &worldData );
+
+// matrix
+void		mult_matrix_matrix( float *p, const float *a, const float *b );
+void		create_entity_matrix( float matrix[16], trRefEntity_t *e, qboolean enable_left_hand );
+void		create_projection_matrix( float matrix[16], float znear, float zfar, float fov_x, float fov_y );
+void		create_orthographic_matrix( float matrix[16], float xmin, float xmax,
+										float ymin, float ymax, float znear, float zfar );
+void		create_view_matrix( float matrix[16], trRefdef_t *fd );
+void		inverse( const float *m, float *inv );
+void		mult_matrix_vector( float *p, const float *a, const float *b );
+
+// shade 
+void		temporal_cvar_changed( void );
+void		vk_rtx_restir_gi_invalidate( void );
+void		VK_BeginRenderClear( void );
+
+vkdescriptor_t *vk_rtx_init_descriptor( vkdescriptor_t *descriptor );
+void		vk_rtx_update_descriptor( vkdescriptor_t *descriptor );
+void		vk_rtx_add_descriptor_sampler( vkdescriptor_t *descriptor, uint32_t binding, VkShaderStageFlagBits stage, uint32_t count, VkImageLayout layout );
+void		vk_rtx_add_descriptor_image( vkdescriptor_t *descriptor, uint32_t binding, VkShaderStageFlagBits stage );
+void		vk_rtx_add_descriptor_as( vkdescriptor_t *descriptor, uint32_t binding, VkShaderStageFlagBits stage, uint32_t count );
+void		vk_rtx_bind_descriptor_as( vkdescriptor_t *descriptor, uint32_t binding, VkShaderStageFlagBits stage, VkAccelerationStructureKHR *as, uint32_t count );
+uint32_t	vk_rtx_add_descriptor_buffer( vkdescriptor_t *descriptor, uint32_t count, uint32_t binding, VkShaderStageFlagBits stage, VkDescriptorType type );
+void		vk_rtx_bind_descriptor_buffer_view( vkdescriptor_t *descriptor, uint32_t binding, VkShaderStageFlagBits stage, VkBufferView view );
+void		vk_rtx_bind_descriptor_buffer( vkdescriptor_t *descriptor, uint32_t binding, VkShaderStageFlagBits stage, VkBuffer buffer );
+void		vk_rtx_bind_descriptor_image_sampler( vkdescriptor_t *descriptor, uint32_t binding, VkShaderStageFlagBits stage, VkSampler sampler, VkImageView view, uint32_t index );
+void		vk_rtx_create_descriptor( vkdescriptor_t *descriptor );
+void		vk_rtx_set_descriptor_update_size( vkdescriptor_t *descriptor, uint32_t binding, VkShaderStageFlagBits stage, uint32_t size );
+void		vk_rtx_bind_descriptor_buffer_element(vkdescriptor_t *descriptor, uint32_t binding, VkShaderStageFlagBits stage, uint32_t element, VkBuffer buffer);
+void		vk_rtx_destroy_descriptor( vkdescriptor_t *descriptor );
+void		vk_rtx_destroy_rt_descriptors( void );
+void		vk_rtx_destroy_primary_rays_resources( void );
+// pipeline
+void		vk_rtx_bind_pipeline_shader( vkpipeline_t *pipeline, vkshader_t *shader );
+void		vk_rtx_bind_pipeline_desc_set_layouts( vkpipeline_t *pipeline, VkDescriptorSetLayout *set_layouts, uint32_t count );
+void		vk_rtx_create_compute_pipeline( vkpipeline_t *pipeline, VkSpecializationInfo *spec, uint32_t push_size );
+void		vk_rtx_create_rt_pipelines( void );
+void		vk_rtx_dispatch_rays( VkCommandBuffer cmd_buf, uint32_t pipeline_index, pt_push_constants_t push, uint32_t width, uint32_t height, uint32_t depth );
+void		vk_rtx_destroy_rt_pipelines( void );
+void		vk_rtx_create_compute_pipelines( void );
+void		vk_rtx_create_standard_compute_pipeline( vkpipeline_t *pipeline, vkshader_t *shader, VkSpecializationInfo *spec, uint32_t push_size );
+void		vk_rtx_bind_standard_compute_pipeline( VkCommandBuffer cmd_buf, const vkpipeline_t *pipeline );
+
+// vk_rtx_interleave.cpp
+void		vk_rtx_create_interleave_pipeline( void );
+void		vk_rtx_destroy_interleave_pipeline( void );
+void		vk_rtx_interleave( VkCommandBuffer cmd_buf );
+
+// vk_rtx_taa.cpp
+void		vk_rtx_create_taa_pipeline( void );
+void		vk_rtx_destroy_taa_pipeline( void );
+void		vk_rtx_taa_invalidate_history( void );
+void		vk_rtx_taa_prepare_ubo( vkUniformRTX_t *ubo );
+void		vk_rtx_taa_end_frame( qboolean denoiser_active );
+void		vk_rtx_taa_evaluate_settings( qboolean denoiser_active );
+void		vk_rtx_taa( VkCommandBuffer cmd_buf );
+
+// vk_rtx_distortion.cpp
+void		vk_rtx_create_distortion_pipeline( void );
+void		vk_rtx_destroy_distortion_pipeline( void );
+void		vk_rtx_distortion( VkCommandBuffer cmd_buf );
+void		vk_rtx_destroy_compute_pipelines( void );
+void		vk_rtx_destroy_pipeline( vkpipeline_t *pipeline );
+
+// uniform
+// Defined in vk_rtx_cmd.cpp but never declared upstream - the callers in
+// vk_rtx_accel.cpp, vk_rtx_image.cpp and vk_rtx_physical_sky.cpp had nothing to see.
+void			vkpt_wait_idle( VkQueue queue, cmd_buf_group_t *group );
+VkCommandBuffer	vkpt_begin_command_buffer( cmd_buf_group_t *group );
+void			vkpt_free_command_buffers( cmd_buf_group_t *group );
+void			vkpt_reset_command_buffers( cmd_buf_group_t *group );
+void			vkpt_submit_command_buffer( VkCommandBuffer cmd_buf, VkQueue queue,
+					uint32_t execute_device_mask, int wait_semaphore_count,
+					VkSemaphore *wait_semaphores, VkPipelineStageFlags *wait_stages,
+					uint32_t *wait_device_indices, int signal_semaphore_count,
+					VkSemaphore *signal_semaphores, uint32_t *signal_device_indices,
+					VkFence fence );
+void			vkpt_submit_command_buffer_simple( VkCommandBuffer cmd_buf, VkQueue queue, bool all_gpus );
+
+VkResult	vkpt_uniform_buffer_create( void );
+VkResult	vkpt_uniform_buffer_destroy( void );
+VkResult	vkpt_uniform_buffer_upload_to_staging( void );
+void		vkpt_uniform_buffer_copy_from_staging( VkCommandBuffer command_buffer );
+
+// buffer
+VkResult	allocate_gpu_memory( VkMemoryRequirements mem_req, VkDeviceMemory *pMemory );
+VkResult	vk_rtx_buffer_create( vkbuffer_t *buf, VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags mem_properties );
+VkResult	vk_rtx_buffer_destroy( vkbuffer_t *buf );
+void		*buffer_map( vkbuffer_t *buf );
+void		buffer_unmap( vkbuffer_t *buf );
+void		vk_rtx_buffer_attach_name( const vkbuffer_t *buf, const char *name );
+
+void		VK_CreateImageMemory( VkMemoryPropertyFlags properties, VkImage *image, VkDeviceMemory *bufferMemory );
+void		VK_CreateAttributeBuffer( vkbuffer_t *buffer, VkDeviceSize size, VkBufferUsageFlagBits usage, qboolean is_host_visible );
+void		vk_rtx_upload_buffer_data_offset( vkbuffer_t *buffer, VkDeviceSize offset, VkDeviceSize size, const byte *data );
+void		vk_rtx_upload_buffer_data( vkbuffer_t *buffer, const byte *data );
+VkResult	vkpt_light_buffer_upload_to_staging( qboolean render_world, 
+												 world_t *world, int num_model_lights, light_poly_t *transformed_model_lights, const float* sky_radiance );
+VkResult	vk_rtx_readback( ReadbackBuffer *dst );
+VkResult	vkpt_light_buffers_create( world_t &world );
+VkResult	vkpt_light_buffers_destroy( void );
+void		vk_rtx_create_buffers( void );
+void		vk_rtx_destroy_buffers( void );
+void		vkpt_vertex_buffer_ensure_primbuf_size(uint32_t prim_count);
+
+// acceleration structure
+void		vk_rtx_reset_world_geometries( world_t *world );
+//void		vk_rtx_append_blas( vk_blas_t *blas, int instance_id, uint32_t type, uint32_t offset, uint32_t flags );
+void		vk_rtx_create_blas( accel_build_batch_t *batch,  
+								 vkbuffer_t *vertex_buffer, VkDeviceAddress vertex_offset,
+								 vkbuffer_t *index_buffer, VkDeviceAddress index_offset,
+								 uint32_t num_vertices, uint32_t num_indices,
+								 vk_blas_t *blas, qboolean is_dynamic, qboolean fast_build, 
+								 qboolean allow_update, size_t first_vertex_offset,
+								 const char* debug_label );
+void		vk_rtx_update_blas( VkCommandBuffer cmd_buf, vk_geometry_data_t *geom, vk_geometry_data_accel_t *accel,
+								vk_blas_t *blas, vk_blas_t *old_blas );
+void		vk_rtx_create_tlas( accel_build_batch_t *batch, vk_tlas_t *as, VkDeviceAddress instance_data, uint32_t num_instances );
+void		vk_rtx_destroy_accel_all( void );
+void		vk_rtx_destroy_tlas( vk_tlas_t *as );
+void		vk_rtx_destroy_blas( vk_blas_t *blas );
+
+void		vkpt_init_model_geometry(model_geometry_t* info, uint32_t max_geometries);
+void		vkpt_append_model_geometry(model_geometry_t* info, uint32_t num_prims, uint32_t prim_offset, const char* model_name);
+void		suballocate_model_blas_memory(model_geometry_t* info, size_t* vbo_size, const char* model_name);
+void		create_model_blas(model_geometry_t* info, VkBuffer buffer, const char* name);
+void		build_model_blas(VkCommandBuffer cmd_buf, model_geometry_t* info, size_t first_vertex_offset, const vkbuffer_t* buffer);
+void		vkpt_vertex_buffer_upload_bsp_mesh( world_t &worldData );
+
+// bsp
+qboolean	RB_IsSky( shader_t *shader );
+qboolean	RB_IsDynamicMaterial( shader_t *shader );
+qboolean	RB_IsDynamicGeometry( shader_t *shader );
+void		vk_rtx_deform_world_geometry( trRefdef_t *refdef );
+void		vk_rtx_upload_world_deforms( VkCommandBuffer cmd_buf );
+void		vk_rtx_rebuild_world_deforms( VkCommandBuffer cmd_buf );
+mnode_t		*BSP_PointLeaf( mnode_t *node, vec3_t p );
+byte		*BSP_ClusterVis( world_t *bsp, byte *mask, int cluster, int vis );
+byte		*BSP_GetPvs( world_t *bsp, int cluster );
+byte		*BSP_GetPvs2( world_t *bsp, int cluster );
+void		get_triangle_norm( const float* positions, float* normal );
+qboolean	get_triangle_off_center(const float* positions, float* center, float* anti_center, float offset );
+int			vk_get_surface_cluster( world_t &worldData, surfaceType_t *surf );
+float		vk_rtx_light_scale( const light_poly_t *light, qboolean world );
+
+// material
+uint32_t		MAT_SetKind(uint32_t material, uint32_t kind);
+bool			MAT_IsKind(uint32_t material, uint32_t kind);
+void			vk_rtx_clear_material_list( void ) ;
+void			vk_rtx_clear_material( uint32_t index );
+rtx_material_t	*vk_rtx_get_material( uint32_t index );
+
+uint32_t	vk_rtx_find_emissive_texture( const shader_t *shader, rtx_material_t *material );
+qboolean	RB_StageNeedsColor( int stage );
+uint32_t	RB_GetNextTex( shader_t *shader, int stage );
+uint32_t	RB_GetNextTexEncoded( shader_t *shader, int stage );
+//qboolean	RB_IsLight( shader_t *shader );
+qboolean	RB_SkipObject( shader_t *shader );
+qboolean	RB_IsTransparent( shader_t *shader );
+qboolean	RB_IsMasked( shader_t *shader );
+void		vk_rtx_update_shader_material( shader_t *shader, shader_t *updatedShader );
+rtx_material_t	*vk_rtx_shader_to_material( shader_t *shader );
+uint32_t	vk_rtx_bundle_color( const textureBundle_t *bundle );
+VkResult	vk_rtx_upload_materials( LightBuffer *lbo );
+uint32_t	encode_normal( const vec3_t normal );
+
+// image
+void		vk_rtx_create_image( const char *name, vkimage_t *image, uint32_t width, uint32_t height, VkFormat format, VkImageUsageFlags usage, uint32_t mipLevels );
+void		vk_rtx_create_cubemap( vkimage_t *image, uint32_t width, uint32_t height, VkFormat format, VkImageUsageFlags usage, uint32_t mipLevels );
+void		vk_rtx_upload_image_data( vkimage_t *image, uint32_t width, uint32_t height, const uint8_t *pixels, uint32_t bytes_per_pixel, uint32_t mipLevel, uint32_t arrayLayer );
+void		vk_rtx_extract_emissive_texture_info( image_t *image );
+void		vk_rtx_create_images( void );
+VkResult	vk_rtx_initialize_images( void );
+void		vk_rtx_destroy_image( vkimage_t *image );
+
+// shader
+void		vk_load_final_blit_shader( void );
+void		vk_rtx_create_shader_modules( void );
+void		vk_rtx_create_pipelines( void );
+void		vk_rtx_destroy_shaders( void );
+
+void		vk_rtx_begin_scene( trRefdef_t *refdef, drawSurf_t *drawSurfs, int numDrawSurfs );
+void		vk_rtx_begin_blit( void );
+
+// phyiscal sky
+void		vk_rtx_init_sky_scatter( void );
+VkResult	vk_rtx_prepare_envmap( world_t &worldData );
+VkResult	vk_rtx_set_envmap_descriptor_binding( void );
+void		prepare_sky_matrix( float time, vec3_t sky_matrix[3] );
+void		vk_rtx_evaluate_sun_light( sun_light_t *light, const vec3_t sky_matrix[3], float time );
+VkResult	vk_rtx_physical_sky_update_ubo( vkUniformRTX_t *ubo, const sun_light_t *light, qboolean render_world );
+
+// shadow map
+void		vkpt_shadow_map_reset_instances();
+void		vkpt_shadow_map_add_instance( const float* model_matrix, VkBuffer buffer, size_t vertex_offset, uint32_t prim_count );
+
+VkResult	vk_rtx_shadow_map_initialize( void );
+VkResult	vk_rtx_shadow_map_destroy( void );
+VkResult	vk_rtx_shadow_map_create_pipelines( void );
+VkResult	vk_rtx_shadow_map_destroy_pipelines( void );
+VkResult	vk_rtx_shadow_map_render(	VkCommandBuffer cmd_buf, world_t &worldData, float *view_projection_matrix, 
+										uint32_t static_offset, uint32_t num_static_verts, 
+										uint32_t dynamic_offset, uint32_t num_dynamic_verts,
+										uint32_t transparent_offset, uint32_t num_transparent_verts );
+VkImageView	vk_rtx_shadow_map_get_view( void );
+VkImage		vk_rtx_shadow_map_get_image( void );
+void		vk_rtx_shadow_map_setup( const sun_light_t *light, const float *bbox_min, const float *bbox_max, float *VP, float *depth_scale, qboolean random_sampling );
+
+// transparency/sprite/beam/particle
+bool initialize_transparency(void);
+void destroy_transparency(void);
+
+void update_transparency(VkCommandBuffer command_buffer, const trRefdef_t *refdef, const float* view_matrix );
+
+typedef enum {
+	VKPT_TRANSPARENCY_PARTICLES,
+	VKPT_TRANSPARENCY_SPRITES,
+
+	VKPT_TRANSPARENCY_COUNT
+} vkpt_transparency_t;
+
+void vkpt_get_transparency_buffers(
+	vkpt_transparency_t ttype, 
+	vkbuffer_t** vertex_buffer,
+	uint64_t* vertex_offset, 
+	vkbuffer_t** index_buffer,
+	uint64_t* index_offset,
+	uint32_t* num_vertices,
+	uint32_t* num_indices);
+void vkpt_get_beam_aabb_buffer(
+	vkbuffer_t** aabb_buffer,
+	uint64_t* aabb_offset,
+	uint32_t* num_aabbs);
+
+VkBufferView get_transparency_particle_color_buffer_view(void);
+VkBufferView get_transparency_beam_color_buffer_view(void);
+VkBufferView get_transparency_sprite_info_buffer_view(void);
+VkBufferView get_transparency_beam_intersect_buffer_view(void);
+void get_transparency_counts(int* particle_num, int* beam_num, int* sprite_num);
+void vk_rtx_build_saber_lights( light_poly_t *light_list, int *num_lights, 
+	int max_lights, world_t *worldData, const trRefdef_t *refdef, float adapted_luminance, int *light_entity_ids );
+
+
+// god rays
+qboolean	vk_rtx_god_rays_enabled( const sun_light_t* sun_light );
+VkResult	vk_rtx_god_rays_initialize( void );
+VkResult	vk_rtx_god_rays_destroy( void );
+void		vk_rtx_god_rays_prepare_ubo( vkUniformRTX_t * ubo, const aabb_t* world_aabb, const float* proj, 
+									   const float* view, const float* shadowmap_viewproj, float shadowmap_depth_scale );
+VkResult	vk_rtx_god_rays_create_pipelines( void );
+VkResult	vk_rtx_god_rays_destroy_pipelines( void );
+VkResult	vk_rtx_god_rays_update_images( void );
+VkResult	vk_rtx_god_rays_noop( void );
+void		vk_rtx_record_god_rays_trace_command_buffer( VkCommandBuffer command_buffer, int pass );
+void		vk_rtx_record_god_rays_filter_command_buffer( VkCommandBuffer command_buffer );
+void		vk_rtx_get_god_rays_shadowmap( VkImageView &view, VkSampler &sampler );
+
+// animated images
+void		vk_rtx_animate_materials( const trRefdef_t *refdef );
+
+// bloom
+extern cvar_t	*cvar_bloom_enable;
+void		vk_load_bloom_shaders( void );
+void		vk_rtx_create_bloom_pipelines( void );
+void		vk_rtx_destroy_bloom_pipelines( void );
+void		vk_rtx_bloom_update( vkUniformRTX_t *ubo );
+void		vk_rtx_bloom_record_cmd_buffer( VkCommandBuffer cmd_buf );
+
+// models
+void		vk_rtx_extract_model_lights_mdxm( model_t *model );
+void		vk_rtx_extract_model_lights_mdv( model_t *model, mdvModel_t *mdvModel );
+void		vk_rtx_write_model_descriptor( int index, VkDescriptorSet descriptor, VkBuffer buffer, VkDeviceSize size );
+void		vk_rtx_create_model_vbo_ibo_descriptor( void );
+void		vk_rtx_destroy_model_vbo_ibo_descriptor( void );
+VkResult	vk_rtx_model_vbo_create_pipelines( void );
+VkResult	vk_rtx_model_vbo_destroy_pipelines( void );
+void		vkpt_instance_geometry( VkCommandBuffer cmd_buf, uint32_t num_instances, qboolean update_world_animations );
+#ifdef USE_RTX_GLOBAL_MODEL_VBO
+void		vk_rtx_bind_model( int index, VBO_t *vbo, IBO_t *ibo );
+#else
+void		vk_rtx_build_mdxm_vbo( model_t *mod, mdxmHeader_t *mdxm );
+#endif
+void		vk_rtx_add_entity_mesh( maliasmesh_t *mesh, shader_t *shader, int bone_offset );
+void		vk_rtx_AddMD3Surfaces( trRefEntity_t *ent, int entityNum, const model_t *model );
+void		vk_rtx_AddGhoulSurfaces( trRefEntity_t *ent, int entityNum, int *mdxm_matrix_offset, mat3x4_t *mdxm_matrix_data );
+void		vk_rtx_GhoulBounds( float *bounds );
+
+// debug
+#define PROFILER_LIST \
+	PROFILER_DO(PROFILER_FRAME_TIME,                 0) \
+	PROFILER_DO(PROFILER_INSTANCE_GEOMETRY,          1) \
+	PROFILER_DO(PROFILER_BVH_UPDATE,                 1) \
+	PROFILER_DO(PROFILER_PRIMARY_RAYS,               1) \
+	PROFILER_DO(PROFILER_REFLECT_REFRACT_1,          1) \
+	PROFILER_DO(PROFILER_REFLECT_REFRACT_2,          1) \
+	PROFILER_DO(PROFILER_ASVGF_GRADIENT_REPROJECT,   1) \
+	PROFILER_DO(PROFILER_DIRECT_LIGHTING,            1) \
+	PROFILER_DO(PROFILER_INDIRECT_LIGHTING,          1) \
+	PROFILER_DO(PROFILER_ASVGF_FULL,                 1) \
+	PROFILER_DO(PROFILER_ASVGF_RECONSTRUCT_GRADIENT, 2) \
+	PROFILER_DO(PROFILER_ASVGF_TEMPORAL,             2) \
+	PROFILER_DO(PROFILER_ASVGF_ATROUS,               2) \
+	PROFILER_DO(PROFILER_MGPU_TRANSFERS,             1) \
+	PROFILER_DO(PROFILER_INTERLEAVE,                 1) \
+	PROFILER_DO(PROFILER_ASVGF_TAA,                  2) \
+	PROFILER_DO(PROFILER_BLOOM,                      1) \
+	PROFILER_DO(PROFILER_TONE_MAPPING,               1) \
+	PROFILER_DO(PROFILER_DISTORTION,                 1) \
+	PROFILER_DO(PROFILER_UPDATE_ENVIRONMENT,         1) \
+	PROFILER_DO(PROFILER_GOD_RAYS,                   1) \
+	PROFILER_DO(PROFILER_GOD_RAYS_REFLECT_REFRACT,   1) \
+	PROFILER_DO(PROFILER_GOD_RAYS_FILTER,            1) \
+	PROFILER_DO(PROFILER_SHADOW_MAP,                 1) \
+	PROFILER_DO(PROFILER_COMPOSITING,                1) 	PROFILER_DO(PROFILER_RADIANCE_CACHE_UPDATE,      1) 	PROFILER_DO(PROFILER_RADIANCE_CACHE_RESOLVE,     1) \
+
+enum {
+#define PROFILER_DO(a, ...) a,
+	PROFILER_LIST
+#undef PROFILER_DO
+	NUM_PROFILER_ENTRIES,
+};
+
+static inline void begin_perf_marker( VkCommandBuffer cmd_buf, const char* name )
+{
+	VkDebugUtilsLabelEXT label;
+	Com_Memset( &label, 0, sizeof(VkDebugUtilsLabelEXT) );
+	label.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT;
+	label.pNext = NULL;
+	label.pLabelName = name;
+
+	if ( qvkCmdBeginDebugUtilsLabelEXT != NULL )
+		qvkCmdBeginDebugUtilsLabelEXT( cmd_buf, &label );
+}
+
+static inline void end_perf_marker( VkCommandBuffer cmd_buf, int index )
+{
+	if (qvkCmdEndDebugUtilsLabelEXT != NULL)
+		qvkCmdEndDebugUtilsLabelEXT(cmd_buf);
+}
+
+#define BEGIN_PERF_MARKER(cmd_buf, name)  begin_perf_marker(cmd_buf, #name)
+#define END_PERF_MARKER(cmd_buf, index)    end_perf_marker(cmd_buf, index)
+#endif

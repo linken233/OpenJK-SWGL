@@ -2,6 +2,8 @@
 
 #include "q_platform.h"
 
+#define Q_IsStringEmpty(s) (!(s) || !(s)[0])
+
 #if defined(__cplusplus)
 extern "C" {
 #endif

@@ -34,6 +34,69 @@ void	FX_Add( bool portal );		// called every cgame frame to add all fx into the 
 void	FX_Stop( void );	// ditches all active effects without touching the templates.
 
 bool	FX_ActiveFx(void);	// returns whether there are any active or scheduled effects
+int		FX_ActiveCount( void );	// live effects in the pool
+
+/*
+FX cost breakdown for cg_speeds 2, in rdtsc cycles, summed over one report interval.
+"update" includes the traces and the scene submission; the report subtracts them.
+*/
+#if defined(_MSC_VER)
+	#include <intrin.h>
+#elif defined(__i386__) || defined(__x86_64__)
+	#include <x86intrin.h>
+#endif
+
+struct SFxSpeeds
+{
+	int64_t	create;			// AddScheduledEffects, without FX_Add
+	int64_t	update;			// FX_Add
+	int64_t	trace;			// world traces, BSP part of CG_Trace
+	int64_t	clip;			// world traces, entity part of CG_Trace (CG_ClipMoveToEntities)
+	int64_t	g2trace;		// ghoul2 traces
+	int64_t	contents;		// CG_PointContents in UpdateOrigin
+	int64_t	submit;			// AddRefEntityToScene, AddPolyToScene, AddLightToScene
+
+	int		traces, g2traces, contentsCalls;
+	int		clipEnts;		// entities traced against by CG_ClipMoveToEntities
+	int		submits, polys, lights;
+	int		spawned;		// effects allocated
+	int		transient;		// effects drawn once outside the pool (FX_TRANSIENT_LIFE)
+	int		evicted;		// effects destroyed because the pool was full
+	int		liveSum, scheduledSum, frames;
+};
+
+extern SFxSpeeds	fxSpeeds;
+extern bool			fxSpeedsOn;		// cg_speeds >= 2, set once per frame
+
+// fxpool report: the effect ID that FX_AddPrimitive gives to new primitives. 0 = made by code, not an .efx.
+extern int	gFxTallyID;
+
+struct SFxTallyScope
+{
+	int	mPrev;
+	explicit SFxTallyScope( int id ) : mPrev( gFxTallyID )	{ gFxTallyID = id; }
+	~SFxTallyScope()										{ gFxTallyID = mPrev; }
+};
+
+void	FX_PoolReport( void );
+
+// Projectile effects are played again every frame at the new position. While gFxTransient is set,
+// FX_AddPrimitive keeps primitives of FX_TRANSIENT_LIFE ms or less out of the pool: FX_Add draws
+// them once in this frame and deletes them.
+#define FX_TRANSIENT_LIFE	33
+
+extern bool	gFxTransient;
+
+struct SFxTransientScope
+{
+	bool	mPrev;
+	SFxTransientScope() : mPrev( gFxTransient )	{ gFxTransient = true; }
+	~SFxTransientScope()						{ gFxTransient = mPrev; }
+};
+
+#define FXS_START( t )			uint64_t t = fxSpeedsOn ? __rdtsc() : 0
+#define FXS_STOP( t, field )	if ( fxSpeedsOn ) { fxSpeeds.field += (int64_t)( __rdtsc() - t ); }
+#define FXS_COUNT( field )		if ( fxSpeedsOn ) { fxSpeeds.field++; }
 
 
 CParticle *FX_AddParticle( int clientID, const vec3_t org, const vec3_t vel, const vec3_t accel, float gravity,

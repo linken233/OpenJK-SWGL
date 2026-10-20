@@ -649,7 +649,7 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 	int				depthRange, oldDepthRange;
 	int				i;
 	drawSurf_t		*drawSurf;
-	unsigned int	oldSort;
+	sortKey_t		oldSort;
 	float			originalTime;
 	trRefEntity_t	*curEnt;
 	postRender_t	*pRender;
@@ -673,7 +673,7 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 	oldFogNum = -1;
 	oldDepthRange = qfalse;
 	oldDlighted = qfalse;
-	oldSort = (unsigned int) -1;
+	oldSort = ~(sortKey_t)0;
 	depthRange = qfalse;
 
 	backEnd.pc.c_surfaces += numDrawSurfs;
@@ -744,7 +744,7 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 				fogNum = oldFogNum;
 				dlighted = oldDlighted;
 
-				oldSort = (unsigned int)-1; //invalidate this thing, cause we may want to postrender more surfs of the same sort
+				oldSort = ~(sortKey_t)0; //invalidate this thing, cause we may want to postrender more surfs of the same sort
 
 				//continue without bothering to begin a draw surf
 				continue;
@@ -1307,6 +1307,315 @@ RB_DrawSurfs
 
 =============
 */
+/*
+==================
+Character portrait capture
+
+The cgame "charportraits" command draws each character twice: on black, then on white.
+The difference of the two passes gives the alpha; the black pass gives the premultiplied color.
+==================
+*/
+static int	portraitPass = -1;
+static int	portraitWidth;		// viewport, in pixels
+static int	portraitHeight;
+static int	portraitOutWidth;	// TGA; 0 = measure the head (RB_AnalyzePortrait)
+static int	portraitOutHeight;
+static char	portraitName[MAX_QPATH];
+static byte	*portraitBlack;
+
+// r_capturePortrait <pass 0=black|1=white> <viewport width> <viewport height> <output width> <output height> <file>
+// Output width 0: measure the head (RB_AnalyzePortrait, square viewport only) and write no file.
+void R_CapturePortrait_f( void )
+{
+	if ( ri.Cmd_Argc() != 7 )
+	{
+		Com_Printf( "usage: r_capturePortrait <0|1> <viewport width> <viewport height> <output width> <output height> <file>\n" );
+		return;
+	}
+	portraitPass = atoi( ri.Cmd_Argv( 1 ) );
+	portraitWidth = atoi( ri.Cmd_Argv( 2 ) );
+	portraitHeight = atoi( ri.Cmd_Argv( 3 ) );
+	portraitOutWidth = atoi( ri.Cmd_Argv( 4 ) );
+	portraitOutHeight = atoi( ri.Cmd_Argv( 5 ) );
+	if ( portraitOutWidth != 0 )
+	{
+		portraitOutWidth = Com_Clamp( 1, 4096, portraitOutWidth );
+		portraitOutHeight = Com_Clamp( 1, 4096, portraitOutHeight );
+	}
+	Q_strncpyz( portraitName, ri.Cmd_Argv( 6 ), sizeof( portraitName ) );
+}
+
+// Premultiplied color and alpha of one source pixel.
+static void RB_PortraitSample( const byte *black, const byte *white, int index, float *rgba )
+{
+	float diff = 0;
+	for ( int c = 0; c < 3; c++ )
+	{
+		rgba[c] = black[index + c];
+		diff += white[index + c] - black[index + c];
+	}
+	rgba[3] = Com_Clamp( 0.0f, 255.0f, 255.0f - diff / 3.0f );
+}
+
+static void RB_WritePortraitTGA( const byte *black, const byte *white, int width, int height )
+{
+	// A skin or model that fails to load draws nothing: do not write an empty image.
+	int		opaque = 0;
+	float	sample[4];
+	for ( int i = 0; i < width * height; i++ )
+	{
+		RB_PortraitSample( black, white, i * 3, sample );
+		opaque += ( sample[3] > 128.0f );
+	}
+	if ( opaque < width * height / 1000 + 1 )
+	{
+		Com_Printf( S_COLOR_YELLOW "r_capturePortrait: empty image, %s not written (skin or model not loaded?)\n", portraitName );
+		return;
+	}
+
+	const int	outW = portraitOutWidth;
+	const int	outH = portraitOutHeight;
+	const int	fileSize = 18 + outW * outH * 4;
+	byte		*buffer = (byte *)R_Malloc( fileSize, TAG_TEMP_WORKSPACE, qtrue );
+	const float	scaleX = (float)width / outW;
+	const float	scaleY = (float)height / outH;
+
+	buffer[2] = 2;
+	buffer[12] = outW & 255;
+	buffer[13] = outW >> 8;
+	buffer[14] = outH & 255;
+	buffer[15] = outH >> 8;
+	buffer[16] = 32;
+	buffer[17] = 8;
+
+	// Both passes are bottom-up like the TGA default origin.
+	// Downscale: average of the source pixels under the output pixel. Upscale: bilinear.
+	for ( int y = 0; y < outH; y++ )
+	{
+		for ( int x = 0; x < outW; x++ )
+		{
+			float rgba[4] = { 0, 0, 0, 0 };
+			float sample[4];
+
+			if ( scaleX > 1.0f && scaleY > 1.0f )
+			{
+				const int x0 = (int)( x * scaleX ), x1 = Q_max( x0 + 1, Q_min( (int)( ( x + 1 ) * scaleX ), width ) );
+				const int y0 = (int)( y * scaleY ), y1 = Q_max( y0 + 1, Q_min( (int)( ( y + 1 ) * scaleY ), height ) );
+				const float weight = 1.0f / ( ( x1 - x0 ) * ( y1 - y0 ) );
+				for ( int sy = y0; sy < y1; sy++ )
+				{
+					for ( int sx = x0; sx < x1; sx++ )
+					{
+						RB_PortraitSample( black, white, ( sy * width + sx ) * 3, sample );
+						for ( int c = 0; c < 4; c++ )
+						{
+							rgba[c] += sample[c] * weight;
+						}
+					}
+				}
+			}
+			else
+			{
+				const float	sx = Com_Clamp( 0.0f, (float)( width - 1 ), ( x + 0.5f ) * scaleX - 0.5f );
+				const float	sy = Com_Clamp( 0.0f, (float)( height - 1 ), ( y + 0.5f ) * scaleY - 0.5f );
+				const int	x0 = (int)sx, x1 = Q_min( x0 + 1, width - 1 );
+				const int	y0 = (int)sy, y1 = Q_min( y0 + 1, height - 1 );
+				const float	fx = sx - x0, fy = sy - y0;
+				const int	idx[4] = { y0 * width + x0, y0 * width + x1, y1 * width + x0, y1 * width + x1 };
+				const float	w[4] = { ( 1 - fx ) * ( 1 - fy ), fx * ( 1 - fy ), ( 1 - fx ) * fy, fx * fy };
+				for ( int k = 0; k < 4; k++ )
+				{
+					RB_PortraitSample( black, white, idx[k] * 3, sample );
+					for ( int c = 0; c < 4; c++ )
+					{
+						rgba[c] += sample[c] * w[k];
+					}
+				}
+			}
+
+			byte *dst = buffer + 18 + ( y * outW + x ) * 4;
+			if ( rgba[3] >= 1.0f )
+			{
+				dst[0] = (byte)Com_Clamp( 0.0f, 255.0f, rgba[2] * 255.0f / rgba[3] );
+				dst[1] = (byte)Com_Clamp( 0.0f, 255.0f, rgba[1] * 255.0f / rgba[3] );
+				dst[2] = (byte)Com_Clamp( 0.0f, 255.0f, rgba[0] * 255.0f / rgba[3] );
+			}
+			dst[3] = (byte)rgba[3];
+		}
+	}
+
+	ri.FS_WriteFile( portraitName, buffer, fileSize );
+	R_Free( buffer );
+	Com_Printf( "Wrote %s\n", portraitName );
+}
+
+/*
+Measure the head in the silhouette and write it to the cvar r_portraitHead as
+"<head top> <chin> <head center x> <head width> <clipped> <left> <right> <bottom>", in fractions
+of the view (0 = top / left). <clipped> is 1 when the silhouette touches an edge of the view.
+<head top> <left> <right> <bottom> give the box of the silhouette.
+Rows use the pixel count, not the extent: thin parts (antennas, horns, hair spikes) have little weight.
+The head top is the first row with at least 3% of the silhouette height in pixels.
+The chin is the first row under the head with less than 70% of the head width (jaw above a
+collar, or neck). When nothing narrows (long hair, helmet), the chin is at 13% of the height.
+*/
+static void RB_AnalyzePortrait( const byte *black, const byte *white, int size )
+{
+	int		*count = (int *)R_Malloc( size * sizeof( int ), TAG_TEMP_WORKSPACE, qtrue );
+	float	*sumX = (float *)R_Malloc( size * sizeof( float ), TAG_TEMP_WORKSPACE, qtrue );
+	int		rawTop = -1, bottom = -1;
+	int		left = size, right = -1;
+	float	sample[4];
+
+	// Rows top-down; the passes are bottom-up.
+	for ( int row = 0; row < size; row++ )
+	{
+		const int y = size - 1 - row;
+		for ( int x = 0; x < size; x++ )
+		{
+			RB_PortraitSample( black, white, ( y * size + x ) * 3, sample );
+			if ( sample[3] > 96.0f )
+			{
+				count[row]++;
+				left = Q_min( left, x );
+				right = Q_max( right, x );
+				sumX[row] += x;
+			}
+		}
+		if ( count[row] >= 2 )
+		{
+			if ( rawTop < 0 )
+			{
+				rawTop = row;
+			}
+			bottom = row;
+		}
+	}
+
+	int top = -1;
+	if ( rawTop >= 0 && bottom - rawTop >= 16 )
+	{
+		const int minCount = Q_max( 2, (int)( 0.03f * ( bottom - rawTop ) ) );
+		for ( int row = rawTop; row <= bottom && top < 0; row++ )
+		{
+			if ( count[row] >= minCount )
+			{
+				top = row;
+			}
+		}
+	}
+	if ( top < 0 || bottom - top < 16 )
+	{
+		ri.Cvar_Set( "r_portraitHead", "" );
+		R_Free( count );
+		R_Free( sumX );
+		return;
+	}
+
+	const int	height = bottom - top;
+	int			chin = -1;
+
+	// Skull: the first rows of the head. Shoulders are much wider than the skull.
+	int skullWidth = 0;
+	for ( int row = top; row <= top + height / 16; row++ )
+	{
+		skullWidth = Q_max( skullWidth, count[row] );
+	}
+
+	// Chin: the first row that narrows under the head, or the first shoulder row when the neck
+	// is hidden (B1 droids: the snout hides the neck, and the waist is the first narrow row).
+	int headWidth = skullWidth;
+	for ( int row = top + height / 20; row <= top + height * 45 / 100; row++ )
+	{
+		if ( count[row] < 0.7f * headWidth || count[row] > 1.8f * skullWidth )
+		{
+			chin = row;
+			break;
+		}
+		headWidth = Q_max( headWidth, count[row] );
+	}
+	if ( chin < 0 )
+	{
+		chin = top + (int)( 0.13f * height );
+	}
+
+	// Width of the head: upper band of the head only (8% of the height). Lower rows can also hold
+	// what is beside the head (shoulder pads, lekku, a backpack) and give a false width.
+	headWidth = 0;
+	for ( int row = top; row <= top + height * 8 / 100; row++ )
+	{
+		headWidth = Q_max( headWidth, count[row] );
+	}
+
+	// Center of the head: pixels of the upper part of the head only.
+	float	center = 0;
+	int		pixels = 0;
+	for ( int row = top; row <= top + ( chin - top ) * 6 / 10; row++ )
+	{
+		center += sumX[row];
+		pixels += count[row];
+	}
+	center = pixels ? center / pixels : 0.5f * size;
+
+	const int clipped = ( count[0] || count[size - 1] || left <= 0 || right >= size - 1 ) ? 1 : 0;
+	ri.Cvar_Set( "r_portraitHead", va( "%f %f %f %f %d %f %f %f", (float)top / size, (float)chin / size, center / size,
+		(float)headWidth / size, clipped, (float)left / size, (float)( right + 1 ) / size, (float)( bottom + 1 ) / size ) );
+	R_Free( count );
+	R_Free( sumX );
+}
+
+static void RB_CapturePortrait( void )
+{
+	if ( portraitPass < 0
+		|| !( backEnd.refdef.rdflags & RDF_NOWORLDMODEL )
+		|| backEnd.viewParms.viewportWidth != portraitWidth
+		|| backEnd.viewParms.viewportHeight != portraitHeight )
+	{
+		return;
+	}
+
+	const int	count = portraitWidth * portraitHeight * 3;
+	byte		*pixels = (byte *)R_Malloc( count, TAG_TEMP_WORKSPACE, qfalse );
+	GLint		packAlign;
+
+	qglGetIntegerv( GL_PACK_ALIGNMENT, &packAlign );
+	qglPixelStorei( GL_PACK_ALIGNMENT, 1 );
+	qglReadPixels( backEnd.viewParms.viewportX, backEnd.viewParms.viewportY, portraitWidth, portraitHeight, GL_RGB, GL_UNSIGNED_BYTE, pixels );
+	qglPixelStorei( GL_PACK_ALIGNMENT, packAlign );
+
+	if ( glConfig.deviceSupportsGamma )
+	{
+		R_GammaCorrect( pixels, count );
+	}
+
+	if ( portraitPass == 0 )
+	{
+		if ( portraitBlack )
+		{
+			R_Free( portraitBlack );
+		}
+		portraitBlack = pixels;
+	}
+	else
+	{
+		if ( portraitBlack && portraitOutWidth == 0 && portraitWidth == portraitHeight )
+		{
+			RB_AnalyzePortrait( portraitBlack, pixels, portraitWidth );
+		}
+		else if ( portraitBlack && portraitOutWidth != 0 )
+		{
+			RB_WritePortraitTGA( portraitBlack, pixels, portraitWidth, portraitHeight );
+		}
+		if ( portraitBlack )
+		{
+			R_Free( portraitBlack );
+			portraitBlack = NULL;
+		}
+		R_Free( pixels );
+	}
+	portraitPass = -1;
+}
+
 const void	*RB_DrawSurfs( const void *data ) {
 	const drawSurfsCommand_t	*cmd;
 
@@ -1363,8 +1672,8 @@ const void	*RB_DrawSurfs( const void *data ) {
 		// Resize the viewport to the blur texture size.
 		const int oldViewWidth = backEnd.viewParms.viewportWidth;
 		const int oldViewHeight = backEnd.viewParms.viewportHeight;
-		backEnd.viewParms.viewportWidth = r_DynamicGlowWidth->integer;
-		backEnd.viewParms.viewportHeight = r_DynamicGlowHeight->integer;
+		backEnd.viewParms.viewportWidth = tr.dynamicGlowWidth;
+		backEnd.viewParms.viewportHeight = tr.dynamicGlowHeight;
 		SetViewportAndScissor();
 
 		// Blur the scene.
@@ -1387,6 +1696,8 @@ const void	*RB_DrawSurfs( const void *data ) {
 		// Draw the glow additively over the screen.
 		RB_DrawGlowOverlay();
 	}
+
+	RB_CapturePortrait();
 
 	return (const void *)(cmd + 1);
 }
@@ -1528,6 +1839,178 @@ RB_SwapBuffers
 
 =============
 */
+/*
+==============================================================================
+
+SOFTWARE GAMMA
+
+g_FastRendererSwitch: the window has no hardware gamma ramp, because the ramp is display
+wide and a screenshot never shows it. The ramp that WIN_SetGamma would get is applied
+here to the finished frame, so the screen, screenshots and the split view all show it.
+
+==============================================================================
+*/
+
+#define GL_PROGRAM_ERROR_POSITION_ARB	0x864B
+
+static GLuint	rb_gammaScreen, rb_gammaTable, rb_gammaProgram;
+static int		rb_gammaWidth, rb_gammaHeight;
+static qboolean	rb_gammaFailed;
+static byte		rb_gammaUploaded[256];
+
+// Each channel goes through the 256 entry table; the MAD moves the lookup to texel centres.
+static const char *rb_gammaProgramText =
+	"!!ARBfp1.0\n"
+	"TEMP c, r, g, b;\n"
+	"TEX c, fragment.texcoord[0], texture[0], 2D;\n"
+	"MAD c, c, 0.99609375, 0.001953125;\n"
+	"TEX r, c.x, texture[1], 2D;\n"
+	"TEX g, c.y, texture[1], 2D;\n"
+	"TEX b, c.z, texture[1], 2D;\n"
+	"MOV result.color.x, r.x;\n"
+	"MOV result.color.y, g.y;\n"
+	"MOV result.color.z, b.z;\n"
+	"MOV result.color.w, 1.0;\n"
+	"END\n";
+
+// The GL context goes with the window, and the handles with it.
+void RB_ResetSoftwareGamma( void )
+{
+	rb_gammaScreen = rb_gammaTable = rb_gammaProgram = 0;
+	rb_gammaWidth = rb_gammaHeight = 0;
+	rb_gammaFailed = qfalse;
+}
+
+static void RB_ApplySoftwareGamma( void )
+{
+	extern const unsigned char *R_GetGammaTable( void );
+	const int width = glConfig.vidWidth;
+	const int height = glConfig.vidHeight;
+	const unsigned char *table = R_GetGammaTable();
+
+	if ( rb_gammaFailed || !qglGenProgramsARB || !qglActiveTextureARB ) {
+		return;
+	}
+
+	if ( !rb_gammaProgram ) {
+		int errorPosition = -1;
+
+		qglGenProgramsARB( 1, &rb_gammaProgram );
+		qglBindProgramARB( GL_FRAGMENT_PROGRAM_ARB, rb_gammaProgram );
+		qglProgramStringARB( GL_FRAGMENT_PROGRAM_ARB, GL_PROGRAM_FORMAT_ASCII_ARB, (GLsizei)strlen( rb_gammaProgramText ), rb_gammaProgramText );
+		qglGetIntegerv( GL_PROGRAM_ERROR_POSITION_ARB, &errorPosition );
+		if ( errorPosition != -1 ) {
+			ri.Printf( PRINT_WARNING, "software gamma: fragment program error at %d, the frame stays without gamma\n", errorPosition );
+			rb_gammaFailed = qtrue;
+			return;
+		}
+	}
+
+	if ( !rb_gammaScreen || rb_gammaWidth != width || rb_gammaHeight != height ) {
+		if ( !rb_gammaScreen ) {
+			qglGenTextures( 1, &rb_gammaScreen );
+		}
+		qglBindTexture( GL_TEXTURE_2D, rb_gammaScreen );
+		qglTexImage2D( GL_TEXTURE_2D, 0, GL_RGB8, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL );
+		qglTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST );
+		qglTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST );
+		qglTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
+		qglTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
+		rb_gammaWidth = width;
+		rb_gammaHeight = height;
+	}
+
+	if ( !rb_gammaTable || memcmp( rb_gammaUploaded, table, sizeof( rb_gammaUploaded ) ) ) {
+		byte rgb[256 * 3];
+
+		for ( int i = 0; i < 256; i++ ) {
+			rgb[i * 3 + 0] = rgb[i * 3 + 1] = rgb[i * 3 + 2] = table[i];
+		}
+		if ( !rb_gammaTable ) {
+			qglGenTextures( 1, &rb_gammaTable );
+		}
+		qglBindTexture( GL_TEXTURE_2D, rb_gammaTable );
+		qglTexImage2D( GL_TEXTURE_2D, 0, GL_RGB8, 256, 1, 0, GL_RGB, GL_UNSIGNED_BYTE, rgb );
+		qglTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST );
+		qglTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST );
+		qglTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
+		qglTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
+		memcpy( rb_gammaUploaded, table, sizeof( rb_gammaUploaded ) );
+	}
+
+	// Copy the frame, then draw it back through the table.
+	GL_SelectTexture( 1 );
+	qglBindTexture( GL_TEXTURE_2D, rb_gammaTable );
+	GL_SelectTexture( 0 );
+	qglBindTexture( GL_TEXTURE_2D, rb_gammaScreen );
+	qglCopyTexSubImage2D( GL_TEXTURE_2D, 0, 0, 0, 0, 0, width, height );
+
+	qglViewport( 0, 0, width, height );
+	qglScissor( 0, 0, width, height );
+	qglMatrixMode( GL_PROJECTION );
+	qglLoadIdentity();
+	qglOrtho( 0, 1, 0, 1, 0, 1 );
+	qglMatrixMode( GL_MODELVIEW );
+	qglLoadIdentity();
+	GL_State( GLS_DEPTHTEST_DISABLE );
+	qglDisable( GL_CULL_FACE );
+	qglDisable( GL_CLIP_PLANE0 );
+
+	qglEnable( GL_FRAGMENT_PROGRAM_ARB );
+	qglBindProgramARB( GL_FRAGMENT_PROGRAM_ARB, rb_gammaProgram );
+	qglColor4f( 1, 1, 1, 1 );
+	qglBegin( GL_QUADS );
+	qglTexCoord2f( 0, 0 ); qglVertex2f( 0, 0 );
+	qglTexCoord2f( 1, 0 ); qglVertex2f( 1, 0 );
+	qglTexCoord2f( 1, 1 ); qglVertex2f( 1, 1 );
+	qglTexCoord2f( 0, 1 ); qglVertex2f( 0, 1 );
+	qglEnd();
+	qglDisable( GL_FRAGMENT_PROGRAM_ARB );
+
+	// The bindings above went round GL_Bind, so its record of them is wrong.
+	glState.currenttextures[0] = glState.currenttextures[1] = 0;
+	backEnd.projection2D = qfalse;
+}
+
+static byte	*captureRGBA;
+static int	captureWidth, captureHeight;
+
+void RE_CaptureNextFrame( byte *rgba, int width, int height )
+{
+	captureRGBA = rgba;
+	captureWidth = width;
+	captureHeight = height;
+}
+
+// Copies the back buffer into the requested capture buffer, nearest sampled.
+static void RB_CaptureFrame( void )
+{
+	extern byte *RB_ReadPixels( int x, int y, int width, int height, size_t *offset, int *padlen );
+	size_t offset = 0;
+	int padlen;
+	const int srcWidth = glConfig.vidWidth;
+	const int srcHeight = glConfig.vidHeight;
+	byte *source = RB_ReadPixels( 0, 0, srcWidth, srcHeight, &offset, &padlen );
+	const int srcPitch = srcWidth * 3 + padlen;
+
+	for ( int y = 0; y < captureHeight; y++ ) {
+		// The GL rows start at the bottom of the screen.
+		const int sy = srcHeight - 1 - ( y * srcHeight ) / captureHeight;
+		const byte *srcRow = source + offset + sy * srcPitch;
+		byte *dst = captureRGBA + y * captureWidth * 4;
+		for ( int x = 0; x < captureWidth; x++, dst += 4 ) {
+			const byte *src = srcRow + ( ( x * srcWidth ) / captureWidth ) * 3;
+			dst[0] = src[0];
+			dst[1] = src[1];
+			dst[2] = src[2];
+			dst[3] = 255;
+		}
+	}
+
+	R_Free( source );
+	captureRGBA = NULL;
+}
+
 extern void RB_RenderWorldEffects( void );
 const void	*RB_SwapBuffers( const void *data ) {
 	const swapBuffersCommand_t	*cmd;
@@ -1567,6 +2050,14 @@ const void	*RB_SwapBuffers( const void *data ) {
 	}
 
     GLimp_LogComment( "***************** RB_SwapBuffers *****************\n\n\n" );
+
+	if ( glConfig.deviceSupportsGamma && ri.WIN_GammaInSoftware && ri.WIN_GammaInSoftware() ) {
+		RB_ApplySoftwareGamma();
+	}
+
+	if ( captureRGBA ) {
+		RB_CaptureFrame();
+	}
 
 	ri.WIN_Present(&window);
 
@@ -1928,16 +2419,16 @@ static inline void RB_DrawGlowOverlay()
 	qglBindTexture( GL_TEXTURE_RECTANGLE_ARB, tr.blurImage );
 	qglBegin(GL_QUADS);
 		qglColor4f( 1.0f, 1.0f, 1.0f, 1.0f );
-		qglTexCoord2f( 0, r_DynamicGlowHeight->integer );
+		qglTexCoord2f( 0, tr.dynamicGlowHeight );
 		qglVertex2f( 0, 0 );
 
 		qglTexCoord2f( 0, 0 );
 		qglVertex2f( 0, glConfig.vidHeight );
 
-		qglTexCoord2f( r_DynamicGlowWidth->integer, 0 );
+		qglTexCoord2f( tr.dynamicGlowWidth, 0 );
 		qglVertex2f( glConfig.vidWidth, glConfig.vidHeight );
 
-		qglTexCoord2f( r_DynamicGlowWidth->integer, r_DynamicGlowHeight->integer );
+		qglTexCoord2f( tr.dynamicGlowWidth, tr.dynamicGlowHeight );
 		qglVertex2f( glConfig.vidWidth, 0 );
 	qglEnd();
 

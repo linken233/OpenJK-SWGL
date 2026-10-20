@@ -21,7 +21,7 @@ if(NOT InOpenJK)
 	message(FATAL_ERROR "Use the top-level cmake script!")
 endif(NOT InOpenJK)
 
-set(SPGameDefines ${SharedDefines} "SP_GAME")
+set(SPGameDefines ${SharedDefines} "Q_MATH_INLINE" "SP_GAME")
 set(SPGameIncludeDirectories
 	${SharedDir}
 	${SPDir}
@@ -66,6 +66,8 @@ set(SPGameGameFiles
 	"${SPDir}/game/AI_Utils.cpp"
 	"${SPDir}/game/AI_Wampa.cpp"
 	"${SPDir}/game/AI_Vehicle.cpp"
+	"${SPDir}/game/ai_time.h"
+	"${SPDir}/game/ai_time.cpp"
 	"${SPDir}/game/g_active.cpp"
 	"${SPDir}/game/g_breakable.cpp"
 	"${SPDir}/game/g_camera.cpp"
@@ -85,6 +87,7 @@ set(SPGameGameFiles
 	"${SPDir}/game/g_misc.cpp"
 	"${SPDir}/game/g_misc_model.cpp"
 	"${SPDir}/game/g_missile.cpp"
+	"${SPDir}/game/g_lightedit.cpp"
 	"${SPDir}/game/g_mover.cpp"
 	"${SPDir}/game/g_nav.cpp"
 	"${SPDir}/game/g_navigator.cpp"
@@ -105,8 +108,16 @@ set(SPGameGameFiles
 	"${SPDir}/game/g_usable.cpp"
 	"${SPDir}/game/g_utils.cpp"
 	"${SPDir}/game/g_weapon.cpp"
-	"${SPDir}/game/g_weaponLoad.h"
+	"${SPDir}/game/g_parseUtils.cpp"
+	"${SPDir}/game/g_parseUtils.h"
 	"${SPDir}/game/g_weaponLoad.cpp"
+	"${SPDir}/game/g_weaponLoad.h"
+	"${SPDir}/game/g_characters.cpp"
+	"${SPDir}/game/g_characters.h"
+	"${SPDir}/game/g_charactersLoad.cpp"
+	"${SPDir}/game/g_charactersLoad.h"
+	"${SPDir}/game/g_characterRandom.cpp"
+	"${SPDir}/game/g_characterRandom.h"
 	"${SPDir}/game/genericparser2.cpp"
 	"${SPDir}/game/NPC.cpp"
 	"${SPDir}/game/NPC_behavior.cpp"
@@ -185,13 +196,35 @@ set(SPGameCGameFiles
 	"${SPDir}/cgame/cg_camera.cpp"
 	"${SPDir}/cgame/cg_consolecmds.cpp"
 	"${SPDir}/cgame/cg_credits.cpp"
+	"${SPDir}/cgame/cg_characters.cpp"
+	"${SPDir}/cgame/cg_characters.h"
 	"${SPDir}/cgame/cg_draw.cpp"
+	"${SPDir}/cgame/cg_hud_jk2.cpp"
 	"${SPDir}/cgame/cg_drawtools.cpp"
 	"${SPDir}/cgame/cg_effects.cpp"
 	"${SPDir}/cgame/cg_ents.cpp"
 	"${SPDir}/cgame/cg_event.cpp"
+	"${SPDir}/cgame/cg_freecam.cpp"
+	"${SPDir}/cgame/cg_freecam.h"
 	"${SPDir}/cgame/cg_headers.cpp"
 	"${SPDir}/cgame/cg_info.cpp"
+	"${SPDir}/cgame/cg_lightedit.cpp"
+	"${SPDir}/cgame/cg_lightedit.h"
+	"${SPDir}/cgame/cg_lightedit_cam.cpp"
+	"${SPDir}/cgame/cg_lightedit_clone.cpp"
+	"${SPDir}/cgame/cg_lightedit_emissive.cpp"
+	"${SPDir}/cgame/cg_lightedit_grid.cpp"
+	"${SPDir}/cgame/cg_lightedit_label.cpp"
+	"${SPDir}/cgame/cg_lightedit_keys.cpp"
+	"${SPDir}/cgame/cg_lightedit_local.h"
+	"${SPDir}/cgame/cg_lightedit_move.cpp"
+	"${SPDir}/cgame/cg_lightedit_pipette.cpp"
+	"${SPDir}/cgame/cg_lightedit_props.cpp"
+	"${SPDir}/cgame/cg_lightedit_rect.cpp"
+	"${SPDir}/cgame/cg_lightedit_sky.cpp"
+	"${SPDir}/cgame/cg_lightedit_solo.cpp"
+	"${SPDir}/cgame/cg_lightedit_spot.cpp"
+	"${SPDir}/cgame/cg_lightedit_undo.cpp"
 	"${SPDir}/cgame/cg_lights.cpp"
 	"${SPDir}/cgame/cg_localents.cpp"
 	"${SPDir}/cgame/cg_main.cpp"
@@ -353,6 +386,7 @@ set(SPGameFiles ${SPGameFiles} ${SPGameG2Files})
 
 set(SPGameRendererFiles
 	"${SPDir}/rd-common/mdx_format.h"
+	"${SPDir}/rd-common/mdx_merge.h"
 	"${SPDir}/rd-common/tr_types.h"
 	)
 source_group("renderer" FILES ${SPGameRendererFiles})

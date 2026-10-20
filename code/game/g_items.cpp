@@ -78,12 +78,149 @@ G_InventorySelectable
 */
 qboolean G_InventorySelectable( int index,gentity_t *other)
 {
+	if (index >= INV_JETPACK_TYPE)
+	{//state of the fuel items, not an item
+		return qfalse;
+	}
+
 	if (other->client->ps.inventory[index])
 	{
 		return qtrue;
 	}
 
 	return qfalse;
+}
+
+/*
+==============================================================================
+
+FUEL ITEMS
+
+Holdables that work for as long as their fuel lasts: the jetpack and the wrist flamethrower.
+inventory[tag] is 1 when one is carried, inventory[typeSlot] is the item (its index in bg_itemlist)
+and inventory[fuelSlot] is the fuel. Dropped, an item keeps its fuel: count is the fuel + 1, 0 is a full tank.
+
+==============================================================================
+*/
+typedef struct
+{
+	int			tag;
+	int			typeSlot;
+	int			fuelSlot;
+	void		(*off)( gentity_t *ent );	// switches the item off
+	qboolean	swapOnTouch;				// touching another one swaps it with the one carried, else only using it does
+} fuelItem_t;
+
+static const fuelItem_t fuelItems[] =
+{
+	{ INV_JETPACK,		INV_JETPACK_TYPE,		INV_JETPACK_FUEL,		G_JetpackOff,		qfalse },
+	{ INV_WRIST_FLAMER,	INV_WRIST_FLAMER_TYPE,	INV_WRIST_FLAMER_FUEL,	G_WristFlamerOff,	qtrue },
+};
+
+static const fuelItem_t *G_FuelItemInfo( int tag )
+{
+	for ( int i = 0; i < (int)ARRAY_LEN( fuelItems ); i++ )
+	{
+		if ( fuelItems[i].tag == tag )
+		{
+			return &fuelItems[i];
+		}
+	}
+	return NULL;
+}
+
+qboolean G_IsFuelItemTag( int tag )
+{
+	return (qboolean)( G_FuelItemInfo( tag ) != NULL );
+}
+
+static qboolean G_IsFuelItem( int index, int tag )
+{
+	return (qboolean)( index > 0 && index < bg_numItems
+		&& bg_itemlist[index].giType == IT_HOLDABLE && bg_itemlist[index].giTag == tag );
+}
+
+// The item of that kind carried, NULL when none.
+const gitem_t *G_FuelItem( const playerState_t *ps, int tag )
+{
+	const fuelItem_t *info = G_FuelItemInfo( tag );
+
+	if ( !info || ps->inventory[tag] <= 0 )
+	{
+		return NULL;
+	}
+	if ( G_IsFuelItem( ps->inventory[info->typeSlot], tag ) )
+	{
+		return &bg_itemlist[ps->inventory[info->typeSlot]];
+	}
+	for ( int i = 1; i < bg_numItems; i++ )
+	{//no type set, take the first one defined
+		if ( G_IsFuelItem( i, tag ) )
+		{
+			return &bg_itemlist[i];
+		}
+	}
+	return NULL;
+}
+
+int G_FuelItemFuel( const playerState_t *ps, int tag )
+{
+	const fuelItem_t *info = G_FuelItemInfo( tag );
+
+	return ( info && ps->inventory[tag] > 0 ) ? ps->inventory[info->fuelSlot] : 0;
+}
+
+void G_GiveFuelItem( gentity_t *ent, const gitem_t *item, int fuel )
+{
+	gclient_t			*client = ent->client;
+	const fuelItem_t	*info = item ? G_FuelItemInfo( item->giTag ) : NULL;
+
+	if ( !client || !info )
+	{
+		return;
+	}
+
+	if ( client->ps.inventory[info->typeSlot] != item - bg_itemlist )
+	{
+		info->off( ent );
+	}
+	client->ps.inventory[info->tag] = 1;
+	client->ps.inventory[info->typeSlot] = item - bg_itemlist;
+	client->ps.inventory[info->fuelSlot] = fuel;
+	client->ps.stats[STAT_ITEMS] |= (1<<info->tag);
+	RegisterItem( (gitem_t *)item );
+}
+
+// The item leaves the inventory.
+static void G_ClearFuelItem( gclient_t *client, int tag )
+{
+	const fuelItem_t *info = G_FuelItemInfo( tag );
+
+	client->ps.inventory[info->tag] = 0;
+	client->ps.inventory[info->typeSlot] = 0;
+	client->ps.inventory[info->fuelSlot] = 0;
+	client->ps.stats[STAT_ITEMS] &= ~(1<<info->tag);
+}
+
+// Drops the item carried; the fuel left goes with it.
+void G_DropFuelItem( gentity_t *ent, int tag )
+{
+	gclient_t		*client = ent->client;
+	const gitem_t	*item = client ? G_FuelItem( &client->ps, tag ) : NULL;
+
+	if ( !item )
+	{
+		return;
+	}
+
+	gentity_t *dropped = Drop_Item( ent, (gitem_t *)item, 0, qfalse );
+	if ( dropped )
+	{
+		dropped->count = G_FuelItemFuel( &client->ps, tag ) + 1;
+	}
+
+	G_FuelItemInfo( tag )->off( ent );
+	G_ClearFuelItem( client, tag );
 }
 
 extern qboolean INV_GoodieKeyGive( gentity_t *target );
@@ -105,6 +242,12 @@ int Pickup_Holdable( gentity_t *ent, gentity_t *other )
 		//FIXME: temp message
 		gi.SendServerCommand( 0, "cp @SP_INGAME_YOU_TOOK_SUPPLY_KEY" );
 		INV_GoodieKeyGive( other );
+	}
+	else if ( G_IsFuelItemTag( ent->item->giTag ) )
+	{
+		// the same item is refilled, another one comes with the fuel it was dropped with (a full tank when never used)
+		const qboolean sameItem = (qboolean)( G_FuelItem( &other->client->ps, ent->item->giTag ) == ent->item );
+		G_GiveFuelItem( other, ent->item, ( sameItem || ent->count <= 0 ) ? FUEL_MAX : ent->count - 1 );
 	}
 	else
 	{// Picking up a normal item?
@@ -887,6 +1030,20 @@ void Touch_Item (gentity_t *ent, gentity_t *other, trace_t *trace) {
 			return;
 		}
 	}
+	if ( ent->item->giType == IT_HOLDABLE && G_IsFuelItemTag( ent->item->giTag ) && !other->s.number )
+	{//a fuel item of another kind than the one worn: using it swaps them, touching it swaps only if swapOnTouch
+		//Last check before the pickup: the item worn is dropped only when the new one is taken for sure.
+		const gitem_t *worn = G_FuelItem( &other->client->ps, ent->item->giTag );
+		if ( worn && worn != ent->item )
+		{
+			if ( trace && !G_FuelItemInfo( ent->item->giTag )->swapOnTouch )
+			{
+				return;
+			}
+			G_DropFuelItem( other, ent->item->giTag );
+		}
+	}
+
 	qboolean bHadWeapon = qfalse;
 	// call the item-specific pickup function
 	switch( ent->item->giType )
@@ -1722,3 +1879,482 @@ void ItemUse_Bacta(gentity_t *ent)
 		G_SoundOnEnt( ent, CHAN_VOICE, va( "sound/weapons/force/heal%d_%c.mp3", Q_irand( 1, 4 ), g_sex->string[0] ) );
 }
 
+
+/*
+==============================================================================
+
+JETPACK
+
+A jetpack is an item with the tag INV_JETPACK, defined in an item file with its own model.
+The inventory is described with the fuel items above. The movement is in PM_JetpackMove (bg_pmove.cpp).
+
+==============================================================================
+*/
+extern Vehicle_t *G_IsRidingVehicle( gentity_t *pEnt );
+extern bool in_camera;
+
+#define JETPACK_DEFAULT_MODEL	"models/weapons2/jetpack/model.glm"
+#define JETPACK_FUEL_TO_START	1
+#define JETPACK_DEFAULT_DRAIN	700		// about 70 seconds of idle use from a full tank, a third of it when thrusting
+#define JETPACK_TOGGLE_TIME		1000
+#define JETPACK_HOVER_SOUND		"sound/chars/boba/jethover.wav"
+
+// Builds the model of a fuel item on the player model, bolted to boltName (fallbackBolt for a model without it).
+// Returns its ghoul2 index, -1 when it cannot be loaded.
+static int G_AttachWornModel( gentity_t *ent, const char *model, const char *boltName, int fallbackBolt, const gitem_t *item )
+{
+	const int index = gi.G2API_InitGhoul2Model( ent->ghoul2, model, G_ModelIndex( model ), NULL_HANDLE, NULL_HANDLE, 0, 0 );
+
+	if ( index <= 0 )
+	{
+		gi.Printf( S_COLOR_YELLOW"WARNING: '%s' cannot load model %s\n", item->classname, model );
+		return -1;
+	}
+
+	int bolt = gi.G2API_AddBolt( &ent->ghoul2[ent->playerModel], boltName );
+	if ( bolt == -1 )
+	{
+		bolt = fallbackBolt;
+	}
+	gi.G2API_AttachG2Model( &ent->ghoul2[index], &ent->ghoul2[ent->playerModel], bolt, ent->playerModel );
+	return index;
+}
+
+static qboolean G_JetpackModelValid( const gentity_t *ent )
+{
+	return (qboolean)( ent->jetpackModel > 0
+		&& ent->ghoul2.size() > ent->jetpackModel
+		&& ent->ghoul2[ent->jetpackModel].mModelindex != -1 );
+}
+
+void G_JetpackRemoveModel( gentity_t *ent )
+{
+	if ( G_JetpackModelValid( ent ) )
+	{
+		gi.G2API_RemoveGhoul2Model( ent->ghoul2, ent->jetpackModel );
+	}
+	ent->jetpackModel = -1;
+	if ( ent->client )
+	{
+		ent->client->jetPackShown = 0;
+	}
+}
+
+// A character with its own jetpack (Boba Fett...) has the jet tags: it wears no model, its own jets burn.
+static qboolean G_PlayerHasJets( gentity_t *ent )
+{
+	if ( ent->playerModel == -1 || !ent->ghoul2.size() )
+	{
+		return qfalse;
+	}
+	return (qboolean)( gi.G2API_AddBolt( &ent->ghoul2[ent->playerModel], "*jet1" ) != -1 );
+}
+
+static void G_PlayerJetEffects( gentity_t *ent, qboolean start )
+{
+	static const char *jetBolts[2] = { "*jet1", "*jet2" };
+
+	for ( int i = 0; i < 2; i++ )
+	{
+		const int bolt = gi.G2API_AddBolt( &ent->ghoul2[ent->playerModel], jetBolts[i] );
+		if ( bolt == -1 )
+		{
+			continue;
+		}
+		if ( start )
+		{
+			G_PlayEffect( G_EffectIndex( "boba/jetSP" ), ent->playerModel, bolt, ent->s.number, ent->currentOrigin, qtrue, qtrue );
+		}
+		else
+		{
+			G_StopEffect( "boba/jetSP", ent->playerModel, bolt, ent->s.number );
+		}
+	}
+}
+
+// Wears the model of the jetpack carried, and nothing when there is none or the player is dead.
+static void G_JetpackSyncModel( gentity_t *ent )
+{
+	gclient_t		*client = ent->client;
+	const gitem_t	*item = ( ent->health > 0 ) ? G_FuelItem( &client->ps, INV_JETPACK ) : NULL;
+	const int		wanted = ( item && !G_PlayerHasJets( ent ) ) ? (int)( item - bg_itemlist ) : 0;
+
+	if ( wanted == client->jetPackShown && ( !wanted || G_JetpackModelValid( ent ) ) )
+	{
+		return;
+	}
+
+	G_JetpackRemoveModel( ent );
+	if ( !wanted || ent->playerModel == -1 || !ent->ghoul2.size() )
+	{
+		return;
+	}
+
+	const char *model = ( item->wornModel && item->wornModel[0] ) ? item->wornModel : JETPACK_DEFAULT_MODEL;
+	ent->jetpackModel = G_AttachWornModel( ent, model, "*chestg", ent->chestBolt, item );
+	client->jetPackShown = wanted;	// also when the model failed: do not retry every frame
+}
+
+void G_JetpackOff( gentity_t *ent )
+{
+	if ( !ent->client || !ent->client->jetPackOn )
+	{
+		return;
+	}
+	ent->client->jetPackOn = qfalse;
+	if ( G_PlayerHasJets( ent ) )
+	{
+		G_PlayerJetEffects( ent, qfalse );
+	}
+}
+
+void G_JetpackToggle( gentity_t *ent )
+{
+	gclient_t *client = ent->client;
+
+	if ( !client || ent->health < 1 || in_camera || client->jetPackToggleTime >= level.time )
+	{
+		return;
+	}
+	if ( !G_FuelItem( &client->ps, INV_JETPACK ) )
+	{
+		return;
+	}
+
+	if ( client->jetPackOn )
+	{
+		G_JetpackOff( ent );
+	}
+	else
+	{
+		if ( client->ps.inventory[INV_JETPACK_FUEL] < JETPACK_FUEL_TO_START || G_IsRidingVehicle( ent ) )
+		{
+			return;
+		}
+		G_JetpackSyncModel( ent );
+		client->jetPackOn = qtrue;
+		client->jetPackDebReduce = level.time + JETPACK_DEFAULT_DRAIN;
+		G_SoundOnEnt( ent, CHAN_AUTO, "sound/chars/boba/jeton.wav" );
+		if ( G_PlayerHasJets( ent ) )
+		{
+			G_PlayerJetEffects( ent, qtrue );
+		}
+	}
+	client->jetPackToggleTime = level.time + JETPACK_TOGGLE_TIME;
+}
+
+// Moving forward with the speed key held, with the jetpack on. The client makes the move a run when the key
+// and cl_run differ, so the key is held when the run does not match cl_run.
+qboolean G_JetpackBoosting( const usercmd_t *cmd )
+{
+	const qboolean running = (qboolean)!( cmd->buttons & BUTTON_WALKING );
+
+	return (qboolean)( cmd->forwardmove > 0 && running != ( gi.Cvar_VariableIntegerValue( "cl_run" ) != 0 ) );
+}
+
+// Every frame of the player: model, fuel, and the cases that stop the jetpack.
+void G_JetpackThink( gentity_t *ent )
+{
+	gclient_t *client = ent->client;
+
+	if ( !client || ent->s.number != 0 )
+	{
+		return;
+	}
+
+	const gitem_t *item = G_FuelItem( &client->ps, INV_JETPACK );
+
+	if ( client->jetPackOn
+		&& ( !item || ent->health <= 0 || client->ps.pm_type == PM_DEAD || G_IsRidingVehicle( ent )
+			|| (client->ps.eFlags & (EF_LOCKED_TO_WEAPON|EF_HELD_BY_RANCOR|EF_HELD_BY_WAMPA|EF_HELD_BY_SAND_CREATURE)) ) )
+	{
+		G_JetpackOff( ent );
+	}
+
+	G_JetpackSyncModel( ent );
+
+	if ( !item )
+	{
+		return;
+	}
+
+	if ( client->jetPackOn )
+	{
+		if ( client->jetPackDebReduce <= level.time )
+		{
+			// thrusting and running forward each cost three times more
+			int cost = 1;
+			if ( client->usercmd.upmove > 0 )
+			{
+				cost *= 3;
+			}
+			if ( G_JetpackBoosting( &client->usercmd ) )
+			{
+				cost *= 3;
+			}
+			client->ps.inventory[INV_JETPACK_FUEL] -= cost;
+			if ( client->ps.inventory[INV_JETPACK_FUEL] <= 0 )
+			{
+				// an empty jetpack is gone
+				G_JetpackOff( ent );
+				G_ClearFuelItem( client, INV_JETPACK );
+				return;
+			}
+			client->jetPackDebReduce = level.time + ( item->fuelDrain > 0 ? item->fuelDrain : JETPACK_DEFAULT_DRAIN );
+		}
+	}
+}
+
+
+/*
+==============================================================================
+
+WRIST FLAMETHROWER
+
+A bracer worn on the left forearm: an item with the tag INV_WRIST_FLAMER, defined in an item file with its own
+model. Used, it burns like the main attack of a flamethrower weapon (the flameweapon of the item file), with the
+pose and the flame of Boba Fett. The model has a tag *flash where the flame comes out, along the forearm.
+The inventory is described with the fuel items above.
+
+==============================================================================
+*/
+#define WRIST_FLAMER_DEFAULT_MODEL	"models/weapons2/wrist_flamer/model.glm"
+#define WRIST_FLAMER_DEFAULT_WEAPON	"weapon_flame_thrower"
+#define WRIST_FLAMER_DEFAULT_DRAIN	500		// 50 seconds of fire from a full tank
+#define WRIST_FLAMER_FUEL_TO_START	1
+#define WRIST_FLAMER_TOGGLE_TIME	1000
+#define WRIST_FLAMER_DAMAGE_SCALE	2		// damage of the flame weapon times this
+#define WRIST_FLAMER_DRAIN_SCALE	2		// fuel used this times faster than the item file says
+
+// Msec per unit of fuel.
+static int G_WristFlamerDrain( const gitem_t *item )
+{
+	return ( item->fuelDrain > 0 ? item->fuelDrain : WRIST_FLAMER_DEFAULT_DRAIN ) / WRIST_FLAMER_DRAIN_SCALE;
+}
+#define WRIST_FLAMER_EFFECT			"boba/fthrw"
+
+extern int WP_GetWeaponID( const char *weaponName );
+
+static qboolean G_WristFlamerModelValid( const gentity_t *ent )
+{
+	return (qboolean)( ent->wristFlameModel > 0
+		&& ent->ghoul2.size() > ent->wristFlameModel
+		&& ent->ghoul2[ent->wristFlameModel].mModelindex != -1 );
+}
+
+// The bolt of the flame on the model worn, -1 when there is none.
+static int G_WristFlamerBolt( gentity_t *ent )
+{
+	return G_WristFlamerModelValid( ent ) ? gi.G2API_AddBolt( &ent->ghoul2[ent->wristFlameModel], "*flash" ) : -1;
+}
+
+// The attack of the weapon that gives the flame of the item.
+static const weaponAttackData_t *G_WristFlamerAttack( const gitem_t *item )
+{
+	const int weapon = WP_GetWeaponID( ( item->flameWeapon && item->flameWeapon[0] ) ? item->flameWeapon : WRIST_FLAMER_DEFAULT_WEAPON );
+
+	return ( weapon > 0 ) ? &weaponData[weapon].attackData[0] : NULL;
+}
+
+void G_WristFlamerOff( gentity_t *ent )
+{
+	gclient_t *client = ent->client;
+
+	if ( !client || !client->wristFlameOn )
+	{
+		return;
+	}
+	client->wristFlameOn = qfalse;
+
+	const int bolt = G_WristFlamerBolt( ent );
+	if ( bolt != -1 )
+	{
+		G_StopEffect( WRIST_FLAMER_EFFECT, ent->wristFlameModel, bolt, ent->s.number );
+	}
+	client->ps.torsoAnimTimer = 0;
+	G_SoundOnEnt( ent, CHAN_WEAPON, "sound/null.wav" );
+}
+
+void G_WristFlamerRemoveModel( gentity_t *ent )
+{
+	G_WristFlamerOff( ent );	// the flame is bolted to the model
+	if ( G_WristFlamerModelValid( ent ) )
+	{
+		gi.G2API_RemoveGhoul2Model( ent->ghoul2, ent->wristFlameModel );
+	}
+	ent->wristFlameModel = -1;
+	if ( ent->client )
+	{
+		ent->client->wristFlameShown = 0;
+	}
+}
+
+// Wears the model of the wrist flamethrower carried, and nothing when there is none or the player is dead.
+static void G_WristFlamerSyncModel( gentity_t *ent )
+{
+	gclient_t		*client = ent->client;
+	const gitem_t	*item = ( ent->health > 0 ) ? G_FuelItem( &client->ps, INV_WRIST_FLAMER ) : NULL;
+	const int		wanted = item ? (int)( item - bg_itemlist ) : 0;
+
+	if ( wanted == client->wristFlameShown && ( !wanted || G_WristFlamerModelValid( ent ) ) )
+	{
+		return;
+	}
+
+	G_WristFlamerRemoveModel( ent );
+	if ( !wanted || ent->playerModel == -1 || !ent->ghoul2.size() )
+	{
+		return;
+	}
+
+	const char *model = ( item->wornModel && item->wornModel[0] ) ? item->wornModel : WRIST_FLAMER_DEFAULT_MODEL;
+	ent->wristFlameModel = G_AttachWornModel( ent, model, "lradius", ent->handRBolt, item );
+	client->wristFlameShown = wanted;	// also when the model failed: do not retry every frame
+}
+
+void G_WristFlamerToggle( gentity_t *ent )
+{
+	gclient_t		*client = ent->client;
+	const gitem_t	*item = client ? G_FuelItem( &client->ps, INV_WRIST_FLAMER ) : NULL;
+
+	if ( !item || ent->health < 1 || in_camera || client->wristFlameToggleTime >= level.time )
+	{
+		return;
+	}
+
+	if ( client->wristFlameOn )
+	{
+		G_WristFlamerOff( ent );
+	}
+	else
+	{
+		const weaponAttackData_t *attack = G_WristFlamerAttack( item );
+
+		if ( !attack || client->ps.inventory[INV_WRIST_FLAMER_FUEL] < WRIST_FLAMER_FUEL_TO_START || G_IsRidingVehicle( ent ) )
+		{
+			return;
+		}
+		G_WristFlamerSyncModel( ent );
+		const int bolt = G_WristFlamerBolt( ent );
+		if ( bolt == -1 )
+		{//no model, no flame
+			return;
+		}
+		client->wristFlameOn = qtrue;
+		client->wristFlameDebReduce = level.time + G_WristFlamerDrain( item );
+		client->wristFlameFireTime = level.time;
+		if ( attack->startSnd[0] )
+		{
+			G_SoundOnEnt( ent, CHAN_WEAPON, attack->startSnd );
+		}
+		G_PlayEffect( G_EffectIndex( WRIST_FLAMER_EFFECT ), ent->wristFlameModel, bolt, ent->s.number, ent->s.origin, 1 );
+	}
+	client->wristFlameToggleTime = level.time + WRIST_FLAMER_TOGGLE_TIME;
+}
+
+// Burns what is in front of the flame, from the bolt of the model along the aim of the player.
+static void G_WristFlamerBurn( gentity_t *ent, const weaponAttackData_t *attack )
+{
+	const int bolt = G_WristFlamerBolt( ent );
+	mdxaBone_t	boltMatrix;
+	vec3_t		start, dir;
+
+	if ( bolt == -1 )
+	{
+		return;
+	}
+	gi.G2API_GetBoltMatrix( ent->ghoul2, ent->wristFlameModel, bolt, &boltMatrix, ent->currentAngles, ent->currentOrigin,
+		( cg.time ? cg.time : level.time ), NULL, ent->s.modelScale );
+	gi.G2API_GiveMeVectorFromMatrix( boltMatrix, ORIGIN, start );
+	AngleVectors( ent->client->ps.viewangles, dir, NULL, NULL );
+	weaponAttackData_t boosted = *attack;
+
+	boosted.damage *= WRIST_FLAMER_DAMAGE_SCALE;
+	WP_FlameThrowerBurn( ent, &boosted, start, dir );
+}
+
+// Every frame of the player: model, fuel, flame, and the cases that stop it.
+void G_WristFlamerThink( gentity_t *ent )
+{
+	gclient_t *client = ent->client;
+
+	if ( !client || ent->s.number != 0 )
+	{
+		return;
+	}
+
+	const gitem_t *item = G_FuelItem( &client->ps, INV_WRIST_FLAMER );
+	const weaponAttackData_t *attack = item ? G_WristFlamerAttack( item ) : NULL;
+
+	if ( client->wristFlameOn
+		&& ( !attack || ent->health <= 0 || client->ps.pm_type == PM_DEAD || G_IsRidingVehicle( ent ) || !WP_checkWaterFire( ent, attack )
+			|| (client->ps.eFlags & (EF_LOCKED_TO_WEAPON|EF_HELD_BY_RANCOR|EF_HELD_BY_WAMPA|EF_HELD_BY_SAND_CREATURE)) ) )
+	{
+		G_WristFlamerOff( ent );
+	}
+
+	G_WristFlamerSyncModel( ent );
+
+	if ( !client->wristFlameOn )
+	{
+		return;
+	}
+
+	if ( client->ps.torsoAnim != BOTH_FORCELIGHTNING_HOLD || client->ps.torsoAnimTimer <= 25 )
+	{//the pose is set again only when it runs out, as the flamethrower of Boba Fett does
+		Boba_HoldFlameAnim( ent );
+	}
+	if ( client->wristFlameFireTime <= level.time )
+	{
+		G_WristFlamerBurn( ent, attack );
+		client->wristFlameFireTime = level.time + attack->fireTime;
+	}
+
+	if ( client->wristFlameDebReduce <= level.time )
+	{
+		client->ps.inventory[INV_WRIST_FLAMER_FUEL]--;
+		if ( client->ps.inventory[INV_WRIST_FLAMER_FUEL] <= 0 )
+		{
+			// an empty wrist flamethrower is gone
+			G_WristFlamerOff( ent );
+			G_ClearFuelItem( client, INV_WRIST_FLAMER );
+			return;
+		}
+		client->wristFlameDebReduce = level.time + G_WristFlamerDrain( item );
+	}
+}
+
+
+// The loop sound of the fuel items, every frame of the player: the flame has priority over the hover.
+// A loop sound of an item that is off, left by a load, is cleared.
+void G_FuelItemsLoopSound( gentity_t *ent )
+{
+	gclient_t *client = ent->client;
+
+	if ( !client || ent->s.number != 0 )
+	{
+		return;
+	}
+	if ( !client->jetPackOn && !client->wristFlameOn && !ent->s.loopSound )
+	{
+		return;
+	}
+
+	const gitem_t *flameItem = G_FuelItem( &client->ps, INV_WRIST_FLAMER );
+	const weaponAttackData_t *attack = flameItem ? G_WristFlamerAttack( flameItem ) : NULL;
+	const int hover = G_SoundIndex( JETPACK_HOVER_SOUND );
+	const int flame = ( attack && attack->firingSnd[0] ) ? G_SoundIndex( attack->firingSnd ) : 0;
+
+	if ( client->wristFlameOn && flame )
+	{
+		ent->s.loopSound = flame;
+	}
+	else if ( client->jetPackOn )
+	{
+		ent->s.loopSound = hover;
+	}
+	else if ( ent->s.loopSound == hover || ( flame && ent->s.loopSound == flame ) )
+	{
+		ent->s.loopSound = 0;
+	}
+}

@@ -40,11 +40,21 @@ int		gl_filter_max = GL_LINEAR;
 #define FILE_HASH_SIZE		1024	// actually, the shader code needs this (from another module, great).
 //static	image_t*		hashTable[FILE_HASH_SIZE];
 
+// The table WIN_SetGamma gets: gamma, then overbright.
+const unsigned char *R_GetGammaTable( void ) {
+	return s_gammatable;
+}
+
 /*
 ** R_GammaCorrect
 */
 void R_GammaCorrect( byte *buffer, int bufSize ) {
 	int i;
+
+	// The frame already went through the table (RB_ApplySoftwareGamma).
+	if ( ri.WIN_GammaInSoftware && ri.WIN_GammaInSoftware() ) {
+		return;
+	}
 
 	for ( i = 0; i < bufSize; i++ ) {
 		buffer[i] = s_gammatable[buffer[i]];
@@ -1351,17 +1361,31 @@ void R_CreateBuiltinImages( void ) {
 	qglTexParameteri( GL_TEXTURE_RECTANGLE_ARB, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
 
 	// Create the minimized scene blur image.
-	if ( r_DynamicGlowWidth->integer > glConfig.vidWidth  )
+	// 0 (the default) means auto: computed from the current resolution and
+	// r_DynamicGlowScale. These cvars are shared with other renderers that may
+	// register them first with a different default, so 0 must stay a safe,
+	// meaningful value here rather than producing a degenerate 0x0 texture.
+	if ( !r_DynamicGlowWidth->integer || !r_DynamicGlowHeight->integer )
 	{
-		r_DynamicGlowWidth->integer = glConfig.vidWidth;
+		tr.dynamicGlowWidth = (int)( glConfig.vidWidth * r_DynamicGlowScale->value );
+		tr.dynamicGlowHeight = (int)( glConfig.vidHeight * r_DynamicGlowScale->value );
 	}
-	if ( r_DynamicGlowHeight->integer > glConfig.vidHeight  )
+	else
 	{
-		r_DynamicGlowHeight->integer = glConfig.vidHeight;
+		tr.dynamicGlowWidth = r_DynamicGlowWidth->integer;
+		tr.dynamicGlowHeight = r_DynamicGlowHeight->integer;
+	}
+	if ( tr.dynamicGlowWidth > glConfig.vidWidth  )
+	{
+		tr.dynamicGlowWidth = glConfig.vidWidth;
+	}
+	if ( tr.dynamicGlowHeight > glConfig.vidHeight  )
+	{
+		tr.dynamicGlowHeight = glConfig.vidHeight;
 	}
 	tr.blurImage = 1024 + giTextureBindNum++;
 	qglBindTexture( GL_TEXTURE_RECTANGLE_ARB, tr.blurImage );
-	qglTexImage2D( GL_TEXTURE_RECTANGLE_ARB, 0, GL_RGBA16, r_DynamicGlowWidth->integer, r_DynamicGlowHeight->integer, 0, GL_RGB, GL_FLOAT, 0 );
+	qglTexImage2D( GL_TEXTURE_RECTANGLE_ARB, 0, GL_RGBA16, tr.dynamicGlowWidth, tr.dynamicGlowHeight, 0, GL_RGB, GL_FLOAT, 0 );
 	qglTexParameteri( GL_TEXTURE_RECTANGLE_ARB, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
 	qglTexParameteri( GL_TEXTURE_RECTANGLE_ARB, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
 	qglTexParameteri( GL_TEXTURE_RECTANGLE_ARB, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );

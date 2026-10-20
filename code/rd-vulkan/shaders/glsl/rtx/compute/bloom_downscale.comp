@@ -1,0 +1,130 @@
+/*
+Copyright (C) 2019, NVIDIA CORPORATION. All rights reserved.
+
+This program is free software; you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation; either version 2 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along
+with this program; if not, write to the Free Software Foundation, Inc.,
+51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+*/
+
+// TAA_OUTPUT (HDR, full res) -> BLOOM_VBLUR (quarter res), bright parts only.
+//
+// JKA's dynamic glow blurs what glows and adds it on top. It does not blur the whole
+// image. Keep only the light above the threshold, so a lit wall gives no haze and a
+// light panel gets a halo.
+
+#version 460
+#extension GL_GOOGLE_include_directive    : enable
+#extension GL_EXT_nonuniform_qualifier    : enable
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+layout (push_constant) uniform push_constant_block {
+	float threshold;	// in tone mapper units: 1 is the level of a lightmap value of 1
+} push;
+
+#define GLOBAL_UBO_DESC_SET_IDX 3
+#include "../global_ubo.h"
+
+#define GLOBAL_TEXTURES_DESC_SET_IDX 1
+#include "../global_textures.h"
+
+#include "../utils.glsl"
+
+void main()
+{
+	ivec2 ipos = ivec2(gl_GlobalInvocationID);
+	ivec2 bloom_extent = ivec2(global_ubo.taa_output_width / 4, global_ubo.taa_output_height / 4);
+
+	if(any(greaterThanEqual(ipos, bloom_extent)))
+		return;
+
+	// The tone mapper shows an HDR value h as about h * 2^(bias - 2) / adapted luminance.
+	// TAA_OUTPUT holds h * STORAGE_SCALE_HDR, PT_GLOW holds h. Work in screen units.
+	// Before the first exposure there is nothing to measure against.
+	if (global_ubo.prev_adapted_luminance <= 0.0)
+	{
+		imageStore(IMG_BLOOM_VBLUR, ipos, vec4(0, 0, 0, 1));
+		return;
+	}
+
+	float to_display = exp2(global_ubo.tm_exposure_bias - 2.0) / global_ubo.prev_adapted_luminance;
+
+	// Four bilinear taps on the corners of the 2x2 blocks give the 4x4 box average. Each
+	// tap keeps what goes past the threshold. The excess is compressed, so a halo is never
+	// brighter than a white surface lit to 1. A saber or a bolt is thousands of times past
+	// the threshold, and uncompressed it washed the whole screen.
+	vec2 inv_size = vec2(1.0) / vec2(global_ubo.taa_image_width, global_ubo.taa_image_height);
+	vec2 base = vec2(ipos * 4);
+	vec3 bright = vec3(0);
+
+	for (int y = 1; y < 4; y += 2)
+	{
+		for (int x = 1; x < 4; x += 2)
+		{
+			vec3 c = textureLod(TEX_TAA_OUTPUT, (base + vec2(x, y)) * inv_size, 0).rgb;
+
+			if (any(isnan(c)) || any(isinf(c)))
+				continue;
+
+			c *= to_display / STORAGE_SCALE_HDR;
+
+			float lum = luminance(c);
+			float excess = lum - push.threshold;
+
+			if (excess <= 0.0)
+				continue;
+
+			bright += c * ((excess / (1.0 + excess)) / lum) * 0.25;
+		}
+	}
+
+	// The glow stages, as the dynamic glow of the rasterizer: their color on the screen, blurred
+	// and added. The glow image has the render size, not the TAA output size.
+	// The primary rays store it in two checkerboard fields side by side, as
+	// checkerboard_interleave.comp reads it.
+	vec2 to_render = vec2(global_ubo.width, global_ubo.height) / vec2(global_ubo.taa_output_width, global_ubo.taa_output_height);
+
+	for (int y = 0; y < 4; y++)
+	{
+		for (int x = 0; x < 4; x++)
+		{
+			ivec2 flat_pos = ivec2((base + vec2(x, y) + 0.5) * to_render);
+			bool is_even_checkerboard = (flat_pos.x & 1) == (flat_pos.y & 1);
+			if (global_ubo.pt_swap_checkerboard != 0)
+				is_even_checkerboard = !is_even_checkerboard;
+
+			ivec2 field_pos = ivec2(flat_pos.x / 2, flat_pos.y);
+			if (!is_even_checkerboard)
+				field_pos.x += global_ubo.width / 2;
+
+			vec3 g = texelFetch(TEX_PT_GLOW, field_pos, 0).rgb;
+
+			if (any(isnan(g)) || any(isinf(g)))
+				continue;
+
+			// At most 1, as the glow buffer of the rasterizer, but divided by its largest channel:
+			// a clamp per channel turns a bright red to pink.
+			vec3 screen = g * to_display;
+			float peak = max(screen.r, max(screen.g, screen.b));
+			if (peak > 1.0)
+				screen /= peak;
+
+			bright += screen * (1.0 / 16.0);
+		}
+	}
+
+	// Back to the units of TAA_OUTPUT, so the composite adds it to the HDR image.
+	bright *= STORAGE_SCALE_HDR / to_display;
+
+	imageStore(IMG_BLOOM_VBLUR, ipos, vec4(bright, 1));
+}

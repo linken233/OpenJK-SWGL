@@ -1222,6 +1222,9 @@ static void DoSprite( vec3_t origin, float radius, float rotation )
 //------------------
 // RB_SurfaceSaber
 //------------------
+#define MAX_SABER_GLOW_LENGTH	65536.0f	// longer than any map
+#define MAX_SABER_GLOW_SPRITES	512
+
 static void RB_SurfaceSaberGlow()
 {
 	vec3_t		end;
@@ -1229,8 +1232,22 @@ static void RB_SurfaceSaberGlow()
 
 	e = &backEnd.currentEntity->e;
 
+	// A length of +inf (bad SFX saber trail points) never ends the loop, and a radius
+	// near 0 makes thousands of sprites: skip bad values, cap the sprite count.
+	// The comparisons are false for NaN.
+	if ( !( e->saberLength < MAX_SABER_GLOW_LENGTH ) || !( e->radius > -MAX_SABER_GLOW_LENGTH && e->radius < MAX_SABER_GLOW_LENGTH ) )
+	{
+		static qboolean warned = qfalse;
+		if ( !warned ) {
+			warned = qtrue;
+			ri.Printf( PRINT_DEVELOPER, "RB_SurfaceSaberGlow: skipped a glow, length %f radius %f\n", e->saberLength, e->radius );
+		}
+		return;
+	}
+
 	// Render the glow part of the blade
-	for ( float i = e->saberLength; i > 0; i -= e->radius * 0.65f )
+	int numSprites = 0;
+	for ( float i = e->saberLength; i > 0 && numSprites < MAX_SABER_GLOW_SPRITES; i -= e->radius * 0.65f, numSprites++ )
 	{
 		VectorMA( e->origin, i, e->axis[0], end );
 

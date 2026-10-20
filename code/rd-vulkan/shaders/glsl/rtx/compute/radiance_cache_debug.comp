@@ -1,0 +1,113 @@
+/*
+===========================================================================
+Copyright (C) 1999 - 2005, Id Software, Inc.
+Copyright (C) 2000 - 2013, Raven Software, Inc.
+Copyright (C) 2001 - 2013, Activision, Inc.
+Copyright (C) 2013 - 2015, OpenJK contributors
+
+This file is part of the OpenJK source code.
+
+OpenJK is free software; you can redistribute it and/or modify it
+under the terms of the GNU General Public License version 2 as
+published by the Free Software Foundation.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program; if not, see <http://www.gnu.org/licenses/>.
+===========================================================================
+*/
+
+// ========================================================================== //
+// The debug view of the radiance cache (pt_rc_debug). It replaces the color of
+// the surface of the G-buffer with a value of its cell. The alpha channel
+// stays: it holds the checkerboard flags.
+// With two bounce rays the G-buffer has no position, and the view is black.
+// ========================================================================== //
+
+#version 460
+#extension GL_GOOGLE_include_directive    : enable
+#extension GL_EXT_nonuniform_qualifier    : enable
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+#define GLOBAL_UBO_DESC_SET_IDX 3
+#include "../global_ubo.h"
+
+#define GLOBAL_TEXTURES_DESC_SET_IDX 1
+#include "../global_textures.h"
+
+#include "../utils.glsl"
+#include "../brdf.glsl"
+
+#define VERTEX_BUFFER_DESC_SET_IDX 0
+#include "../vertex_buffer.h"
+
+#include "../radiance_cache.h"
+
+vec3
+rc_hash_colour(uint h)
+{
+	return vec3(float(h & 255u), float((h >> 8) & 255u), float((h >> 16) & 255u)) * (1.0 / 255.0);
+}
+
+// A colour that changes smoothly with the level
+vec3
+rc_level_colour(uint level)
+{
+	return 0.5 + 0.5 * cos(2.0 * M_PI * (float(level) / float(RC_MAX_LEVEL + 1) + vec3(0.0, 0.33, 0.67)));
+}
+
+void
+main()
+{
+	ivec2 ipos = ivec2(gl_GlobalInvocationID.xy);
+	if(any(greaterThanEqual(ipos, ivec2(global_ubo.width, global_ubo.height))))
+		return;
+
+	vec4 position_material = texelFetch(TEX_PT_SHADING_POSITION, ipos, 0);
+	vec4 color = imageLoad(IMG_DENOISED_COLOR, ipos);
+	vec3 view_value = vec3(0);
+
+	if(floatBitsToUint(position_material.w) != 0u && global_ubo.pt_num_bounce_rays <= 1.0 && abs(texelFetch(TEX_PT_VIEW_DEPTH_A, ipos, 0).x) < PRIMARY_RAY_T_MAX)
+	{
+		vec3 position = position_material.xyz;
+		vec3 geo_normal = decode_normal(texelFetch(TEX_PT_GEO_NORMAL_A, ipos, 0).x);
+
+		uint h1, h2;
+		rc_get_key(position, geo_normal, h1, h2);
+
+		vec3 radiance;
+		float weight;
+		bool found = rc_fetch(h1, h2, radiance, weight);
+
+		switch(int(global_ubo.pt_rc_debug))
+		{
+			case RC_DEBUG_RADIANCE:
+				if(found && weight >= global_ubo.pt_rc_min_weight)
+				{
+					vec4 base_color = texelFetch(TEX_PT_BASE_COLOR_A, ipos, 0);
+					float metallic = texelFetch(TEX_PT_METALLIC_A, ipos, 0).x;
+					vec3 albedo, base_reflectivity;
+					get_reflectivity(base_color.rgb, metallic, albedo, base_reflectivity);
+
+					view_value = radiance * albedo;
+				}
+				break;
+
+			case RC_DEBUG_CELL:
+				if(found)
+					view_value = rc_hash_colour(h1);
+				break;
+
+			case RC_DEBUG_LEVEL:
+				view_value = rc_level_colour(rc_get_level(position));
+				break;
+		}
+	}
+
+	imageStore(IMG_DENOISED_COLOR, ipos, vec4(view_value * STORAGE_SCALE_HDR, color.a));
+}

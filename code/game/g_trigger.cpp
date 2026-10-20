@@ -278,9 +278,8 @@ void Touch_Multi( gentity_t *self, gentity_t *other, trace_t *trace )
 			return;
 		}
 
-		if( !( other->client->ps.eFlags & EF_FIRING /*usercmd.buttons & BUTTON_ATTACK*/ ) &&
-			!( other->client->ps.eFlags & EF_ALT_FIRING/*usercmd.buttons & BUTTON_ALT_ATTACK*/ ) )
-		{//not pressing fire button or altfire button
+		if( !( other->client->ps.eFlags & EF_FIRING ) )
+		{//not pressing a fire button
 			return;
 		}
 
@@ -304,8 +303,7 @@ void Touch_Multi( gentity_t *self, gentity_t *other, trace_t *trace )
 
 		if ( G_PointInBounds( eyeSpot, self->absmin, self->absmax ) )
 		{
-			if( !( other->client->ps.eFlags & EF_FIRING ) &&
-				!( other->client->ps.eFlags & EF_ALT_FIRING ) )
+			if( !( other->client->ps.eFlags & EF_FIRING ) )
 			{//not attacking, so hiding bonus
 				//FIXME:  should really have sound events clear the hiddenDist
 				other->client->hiddenDist = self->radius;

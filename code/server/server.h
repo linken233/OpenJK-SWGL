@@ -67,6 +67,8 @@ typedef struct {
 	int				time;				// all entities are correct for this time		// These 2 saved out
 	int				timeResidual;		// <= 1000 / sv_frame->value					//   during savegame.
 	float			timeResidualFraction;	// fraction of a msec accumulated
+	qboolean		frameSliced;		// a game frame runs in slices over several SV_Frame calls
+	qboolean		inFrameSlice;		// the game runs a slice now
 	int				nextFrameTime;		// when time > nextFrameTime, process world		// this doesn't get used anywhere! -Ste
 	char			*configstrings[MAX_CONFIGSTRINGS];
 	//
@@ -160,6 +162,9 @@ extern	server_t		sv;					// cleared each map
 extern	game_export_t	*ge;
 
 extern	cvar_t	*sv_fps;
+extern	cvar_t	*sv_frameSlices;
+
+void SV_FinishSlicedFrame( void );
 extern	cvar_t	*sv_timeout;
 extern	cvar_t	*sv_zombietime;
 extern	cvar_t	*sv_reconnectlimit;
@@ -314,7 +319,7 @@ void SG_TestSave(void);
 // What it's used for is for things like mission pack etc if we need to distinguish "street-copy" savegames from
 //	any new enhanced ones that need to ask for new chunks during loading.
 //
-#define iSAVEGAME_VERSION 1
+#define iSAVEGAME_VERSION 4	// 4: wristFlameModel in gentity_t; 3: jetpackModel in gentity_t; 2: weapon manifest, items saved by name, attack_index in playerState_t, weapons in autosaves
 int SG_Version(void);	// call this to know what version number a successfully-opened savegame file was
 //
 extern SavedGameJustLoaded_e eSavedGameJustLoaded;

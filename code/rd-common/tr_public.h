@@ -30,7 +30,21 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "../ghoul2/G2.h"
 #include "../ghoul2/ghoul2_gore.h"
 
-#define	REF_API_VERSION		19
+// Vulkan opaque handle forward declarations (see shared/sys/sys_public.h for
+// why these are hand-declared instead of including the Vulkan SDK headers).
+#ifndef OPENJK_VK_HANDLES_DECLARED
+#define OPENJK_VK_HANDLES_DECLARED
+#ifndef VULKAN_CORE_H_
+typedef struct VkInstance_T* VkInstance;
+#if defined(__LP64__) || defined(_WIN64) || (defined(__x86_64__) && !defined(__ILP32__)) || defined(_M_X64) || defined(__ia64) || defined(_M_IA64) || defined(__aarch64__) || defined(__powerpc64__)
+typedef struct VkSurfaceKHR_T* VkSurfaceKHR;
+#else
+typedef uint64_t VkSurfaceKHR;
+#endif
+#endif // VULKAN_CORE_H_
+#endif // OPENJK_VK_HANDLES_DECLARED
+
+#define	REF_API_VERSION		20
 
 typedef struct {
 	void				(QDECL *Printf)						( int printLevel, const char *fmt, ...) __attribute__ ((format (printf, 2, 3)));
@@ -126,6 +140,29 @@ typedef struct {
 	qboolean			*(*gbUsingCachedMapDataRightNow)	( void );
 	qboolean			*(*gbAlreadyDoingLoad)				( void );
 	int					(*com_frameTime)					( void );
+
+	qboolean			(*VK_IsMinimized)					( void );
+	void *				(*VK_GetInstanceProcAddress)		( void );
+	qboolean			(*VK_createSurfaceImpl)				( VkInstance instance, VkSurfaceKHR *surface );
+	void				(*VK_destroyWindow)					( void );
+
+	// g_FastRendererSwitch: set for the second renderer only. That renderer then uses
+	// the ghoul2 instances of the first renderer, not its own.
+	IGhoul2InfoArray &	(*TheGhoul2InfoArray)				( void );
+
+	// g_FastRendererSwitch: the window has no hardware gamma ramp. A renderer that relies on
+	// one applies its ramp to the finished frame instead.
+	qboolean			(*WIN_GammaInSoftware)				( void );
+
+	// Job pool (qcommon/jobs.h). Job functions must be thread-safe.
+	void				(*Jobs_ParallelFor)					( int count, int grain, void (*fn)( int begin, int end, void *ctx ), void *ctx );
+	int					(*Jobs_NumThreads)					( void );
+	qboolean			(*Jobs_IsWorkerThread)				( void );
+	// The calling thread raises the error of a job worker through fn (it must not return) instead of Com_Error.
+	void				(*Jobs_SetThreadErrorHook)			( void (*fn)( int level, const char *text ) );
+
+	// A renderer with its own thread turns the lock of the zone allocator on while that thread runs.
+	void				(*Z_SetThreadSafe)					( qboolean bOn );
 
 } refimport_t;
 
@@ -336,6 +373,7 @@ typedef struct {
 	qboolean	(*G2API_RemoveSurface)(CGhoul2Info *ghlInfo, const int index);
 	void		(*G2API_SaveGhoul2Models)(CGhoul2Info_v &ghoul2);
 	qboolean	(*G2API_SetAnimIndex)(CGhoul2Info *ghlInfo, const int index);
+	qboolean	(*G2API_SetAnimOverride)(CGhoul2Info *ghlInfo, const char *glaName);
 	qboolean	(*G2API_SetBoneAnim)(CGhoul2Info *ghlInfo, const char *boneName, const int startFrame, const int endFrame,
 					const int flags, const float animSpeed, const int AcurrentTime, const float setFrame, const int blendTime);
 	qboolean	(*G2API_SetBoneAnimIndex)(CGhoul2Info *ghlInfo, const int index, const int startFrame, const int endFrame,
@@ -375,6 +413,14 @@ typedef struct {
 	// Performance analysis (perform anal)
 	void		(*G2Time_ResetTimers)(void);
 	void		(*G2Time_ReportTimers)(void);
+
+	// g_FastRendererSwitch: the next EndFrame copies its final image into rgba before it
+	// presents. The image is width x height, 4 bytes per pixel, top row first.
+	void		(*CaptureNextFrame)(byte *rgba, int width, int height);
+
+	// Returns the table of a named extension, or NULL when the renderer does not have it.
+	// See rtx_light_edit_api.h.
+	void		*(*GetExtension)(const char *name);
 } refexport_t;
 
 // this is the only function actually exported at the linker level

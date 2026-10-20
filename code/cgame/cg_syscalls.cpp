@@ -267,6 +267,10 @@ qhandle_t cgi_R_RegisterShaderNoMip(const char* name) {
 	return Q_syscall(CG_R_REGISTERSHADERNOMIP, name);
 }
 
+void* cgi_R_GetExtension(const char* name) {
+	return (void*)Q_syscall(CG_R_GETEXTENSION, name);
+}
+
 qhandle_t cgi_R_RegisterFont(const char* name) {
 	return Q_syscall(CG_R_REGISTERFONT, name);
 }
@@ -509,6 +513,11 @@ void cgi_UI_SetActive_Menu(char* name)
 void cgi_UI_Menu_OpenByName(char* buf)
 {
 	Q_syscall(CG_UI_MENU_OPENBYNAME, buf);
+}
+
+void cgi_UI_Run_Command(const char* buf)
+{
+	Q_syscall(CG_UI_RUN_COMMAND, buf);
 }
 
 void cgi_UI_Menu_Reset(void)

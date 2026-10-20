@@ -1836,7 +1836,14 @@ static void CG_DrawHUD( centity_t *cent )
 	int	sectionXPos,sectionYPos,sectionWidth,sectionHeight;
 	float hudRatio = cg_hudRatio.integer ? cgs.widthRatioCoef : 1.0f;
 
-	if ( cg_hudFiles.integer )
+	//JK2 Hud gated with valid jko to avoir problems.
+	if ( CG_JK2HudActive() )
+	{
+		CG_DrawJK2HUD( cent, hudRatio );
+		return;
+	}
+
+	if ( cg_hudFiles.integer == 1 )
 	{
 		int x = 0;
 		int y = SCREEN_HEIGHT - 80;
@@ -2347,12 +2354,12 @@ static void CG_DrawZoomMask( void )
 
 			// TODO: Take into Account WEAPON_CHARGING
 			// FIXME: doesn't know about ammo!! which is bad because it draws charge beyond what ammo you may have..
-			if (cg_entities[0].gent->client->ps.weaponstate == WEAPON_CHARGING_ALT || cg_entities[0].gent->client->ps.weaponstate == WEAPON_CHARGING)
+			if (cg_entities[0].gent->client->ps.weaponstate == WEAPON_CHARGING)
 			{
 				cgi_R_SetColor(colorTable[CT_WHITE]);
-				int attackIndex = cg_entities[0].gent->client->ps.weaponstate == WEAPON_CHARGING_ALT ? 3 : 2;
+				int attackIndex = cg_entities[0].gent->client->ps.attack_index;
 				// draw the charge level
-				max = (cg.time - cg_entities[0].gent->client->ps.weaponChargeTime) / (weaponData[cent->gent->s.weapon].attackData[3].maxChargeUnits * weaponData[cent->gent->s.weapon].attackData[3].chargeUnitTime);
+				max = (cg.time - cg_entities[0].gent->client->ps.weaponChargeTime) / (weaponData[cent->gent->s.weapon].attackData[attackIndex].maxChargeUnits * weaponData[cent->gent->s.weapon].attackData[attackIndex].chargeUnitTime);
 
 				if (max > 1.0f)
 				{
@@ -2628,6 +2635,35 @@ void CG_DrawHealthBar(centity_t *cent, float chX, float chY, float chW, float ch
 
 	//then draw the other part greyed out
 	CG_FillRect(x+(percent*chW), y+1.0f, chW-(percent*chW)-1.0f, chH-1.0f, cColor);
+}
+
+extern int G_FuelItemFuel( const playerState_t *ps, int tag );
+
+// Fuel gauge of a fuel item: a vertical bar in the free strip right of the right-hand status arc, shown while one is carried.
+// With several fuel items carried, the bars share the strip side by side: the jetpack first, the wrist flamethrower after.
+static void CG_DrawFuelGauge( int tag )
+{
+	if ( cg.snap->ps.inventory[tag] <= 0 )
+	{
+		return;
+	}
+
+	float fuel = G_FuelItemFuel( &cg.snap->ps, tag ) / (float)FUEL_MAX;
+	fuel = Com_Clamp( 0.0f, 1.0f, fuel );
+
+	const int	count = ( cg.snap->ps.inventory[INV_JETPACK] > 0 ? 1 : 0 ) + ( cg.snap->ps.inventory[INV_WRIST_FLAMER] > 0 ? 1 : 0 );
+	const int	position = ( tag == INV_WRIST_FLAMER && cg.snap->ps.inventory[INV_JETPACK] > 0 ) ? 1 : 0;
+	const float	w = 9.5f * cgs.widthRatioCoef / count;
+	const float	h = 93.0f;
+	const float	x = SCREEN_WIDTH - 16.0f * cgs.widthRatioCoef + w * position;
+	const float	y = 331.0f;
+	vec4_t		back = { 0.0f, 0.0f, 0.0f, 0.5f };
+	vec4_t		frame = { 0.7f, 0.7f, 0.7f, 0.8f };
+	vec4_t		color = { ( fuel < 0.5f ) ? 1.0f : 2.0f * ( 1.0f - fuel ), ( fuel > 0.5f ) ? 1.0f : 2.0f * fuel, 0.1f, 0.85f };
+
+	CG_FillRect( x, y, w, h, back );
+	CG_FillRect( x, y + h * ( 1.0f - fuel ), w, h * fuel, color );
+	CG_DrawRect( x - 1.0f, y - 1.0f, w + 2.0f, h + 2.0f, 1.0f, frame );
 }
 
 #define MAX_HEALTH_BAR_ENTS 32
@@ -3515,12 +3551,11 @@ static void CG_RunRocketLocking(void)
 {
 	centity_t* player = &cg_entities[0];
 
-	// Only bother with this when the player is holding down the alt-fire button of the rocket launcher
-	qboolean altFire = (player->currentState.eFlags & EF_ALT_FIRING) ? qtrue : qfalse;
-	int attackIndex = CG_GetAttackIndex(player->gent,altFire);
+	// Only bother with this when the player fires an attack that locks on a target
+	int attackIndex = player->gent->client->ps.attack_index;
 	weaponAttackData_t* atkData = &weaponData[player->currentState.weapon].attackData[attackIndex];
 
-	if (atkData->firingLogic == FL_MISSILE_AIMED && (player->currentState.eFlags & (EF_ALT_FIRING | EF_FIRING)))
+	if (atkData->firingLogic == FL_MISSILE_AIMED && (player->currentState.eFlags & EF_FIRING))
 	{
 		CG_ScanForRocketLock();
 
@@ -4084,6 +4119,12 @@ static void CG_Draw2D( void )
 		return;
 	}
 
+	// The free camera (tfc) draws the map and the entities only. A cutscene keeps its captions.
+	if ( CG_FreeCam_Active() && !in_camera )
+	{
+		return;
+	}
+
 	if ( cg.snap->ps.pm_type == PM_INTERMISSION )
 	{
 		CG_DrawIntermission();
@@ -4134,6 +4175,11 @@ static void CG_Draw2D( void )
 		return;
 	}
 
+	if ( CG_LightEdit_Draw2D() )
+	{
+		return;
+	}
+
 	if ( (cg.snap->ps.forcePowersActive&(1<<FP_SEE)) )
 	{//force sight is on
 		//indicate this with sight cone thingy
@@ -4152,6 +4198,10 @@ static void CG_Draw2D( void )
 		if ( !(cent->gent && cent->gent->s.eFlags & (EF_LOCKED_TO_WEAPON )))//|EF_IN_ATST
 		{
 			//CG_DrawIconBackground();
+			if ( CG_JK2HudActive() )
+			{
+				CG_DrawJK2IconBackground();
+			}
 		}
 
 		CG_DrawWeaponSelect();
@@ -4178,6 +4228,9 @@ static void CG_Draw2D( void )
 		CG_RunRocketLocking();
 
 		CG_DrawInventorySelect();
+
+		CG_DrawFuelGauge( INV_JETPACK );
+		CG_DrawFuelGauge( INV_WRIST_FLAMER );
 
 		CG_DrawForceSelect();
 
@@ -4279,7 +4332,7 @@ void CG_DrawIconBackground(void)
 	qhandle_t		background;
 	const float		shutdownTime = 130.0f;
 
-	if ( cg_hudFiles.integer )
+	if ( cg_hudFiles.integer == 1 )
 	{ //simple hud
 		return;
 	}

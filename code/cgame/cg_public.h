@@ -34,7 +34,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 // needs to be larger than PACKET_BACKUP
 
 
-#define	MAX_ENTITIES_IN_SNAPSHOT	512
+#define	MAX_ENTITIES_IN_SNAPSHOT	1024	// as the server limit MAX_SNAPSHOT_ENTITIES
 
 #define	SNAPFLAG_RATE_DELAYED		1		// the server withheld a packet to save bandwidth
 #define	SNAPFLAG_DROPPED_COMMANDS	2		// the server lost some cmds coming from the client
@@ -200,6 +200,7 @@ Ghoul2 Insert End
 	CG_UI_MENU_NEW,
 	CG_UI_SETACTIVE_MENU,
 	CG_UI_MENU_OPENBYNAME,
+	CG_UI_RUN_COMMAND,
 	CG_UI_PARSE_INT,
 	CG_UI_PARSE_STRING,
 	CG_UI_PARSE_FLOAT,
@@ -223,6 +224,8 @@ Ghoul2 Insert End
 
 	CG_OPENJK_MENU_PAINT,
 	CG_OPENJK_GETMENU_BYNAME,
+
+	CG_R_GETEXTENSION,
 } cgameImport_t;
 
 #ifdef JK2_MODE
@@ -348,6 +351,8 @@ Ghoul2 Insert End
 
 	CG_OPENJK_MENU_PAINT_JK2,
 	CG_OPENJK_GETMENU_BYNAME_JK2,
+
+	CG_R_GETEXTENSION_JK2,
 } cgameJK2Import_t;
 #endif
 

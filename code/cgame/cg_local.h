@@ -157,7 +157,6 @@ struct centity_s
 	qboolean		currentValid;	// true if cg.frame holds this entity
 
 	int				muzzleFlashTime;	// move to playerEntity?
-	qboolean		altFire;			// move to playerEntity?
 	int				attack_index;			// move to playerEntity?
 
 	int				previousEvent;
@@ -643,9 +642,17 @@ extern	vmCvar_t		cg_panoNumShots;
 
 extern	vmCvar_t		fx_freeze;
 extern	vmCvar_t		fx_debug;
+extern	vmCvar_t		cg_speeds;
+extern	vmCvar_t		cg_clipCull;
 
 extern	vmCvar_t		cg_missionInfoFlashTime;
 extern	vmCvar_t		cg_hudFiles;
+extern	vmCvar_t		cg_validJKO;
+qboolean CG_JK2HudRequested( void );
+qboolean CG_JK2HudActive( void );
+void CG_RegisterJK2Hud( void );
+void CG_DrawJK2HUD( const centity_t *cent, const float hudRatio );
+void CG_DrawJK2IconBackground( void );
 
 extern	vmCvar_t		cg_turnAnims;
 extern	vmCvar_t		cg_motionBoneComp;
@@ -755,6 +762,15 @@ void CG_PrintInterfaceGraphics(int min,int max);
 void CG_DrawNumField (int x, int y, int width, int value,int charWidth,int charHeight,int style,qboolean zeroFill);
 void CG_DrawProportionalString(int x, int y, const char* str, int style, vec4_t color, float aspectCorrection = 1.0f);
 
+// Horizontal alignment for CG_DrawTextInBox.
+typedef enum textBoxAlign_s {
+	ALIGN_LEFT,		// flush against the left edge of the box
+	ALIGN_CENTER,		// centred, the default
+	ALIGN_RIGHT		// flush against the right edge
+} textBoxAlign_t;
+
+void CG_DrawTextInBox(int iBoxX, int iBoxY, int iBoxWidth, int iBoxHeight, const char* psText, int iFontHandle, const vec4_t v4Color, textBoxAlign_t iAlign = ALIGN_CENTER);
+
 
 void CG_DrawStringExt( int x, int y, const char *string, const float *setColor,
 		qboolean forceColor, qboolean shadow, int charWidth, int charHeight );
@@ -797,6 +813,8 @@ void CG_GetTagWorldPosition( refEntity_t *model, char *tag, vec3_t pos, vec3_t a
 // cg_predict.c
 //
 int	CG_PointContents( const vec3_t point, int passEntityNum );
+int	CG_ClipMoveToEntities( const vec3_t start, const vec3_t mins, const vec3_t maxs, const vec3_t end,
+						   int skipNumber, int mask, trace_t *tr );
 void CG_Trace( trace_t *result, const vec3_t start, const vec3_t mins, const vec3_t maxs, const vec3_t end,
 					 const int skipNumber, const int mask, const EG2_Collision eG2TraceType=G2_NOCOLLIDE, const int useLod=0 );
 void CG_PredictPlayerState( void );
@@ -847,11 +865,11 @@ void CG_LDO_NextPage_f(void);
 void CG_NPC_NextWeapon_f(void);
 void CG_NPC_PrevWeapon_f(void);
 void CG_NPC_UpdateLabel(void);
-void CG_DrawNpcWeaponLabel();
+void CG_LDO_ClearSlot_f(void);
+void CG_LDO_Escape_f(void);
 void CG_PC_NextWeapon_f(int index);
 void CG_PC_PrevWeapon_f(int index);
 void CG_PC_UpdateLabel(int index);
-void CG_DrawPCWeaponLabel(int index);
 void CG_Dualwield_f(void);
 
 void CG_DPNextInventory_f( void );
@@ -865,7 +883,7 @@ void CG_InitItemForAmmo(gitem_t* item, int weaponNum);
 qboolean CG_IsChargedAttack(centity_t* cent);
 const char* CG_GetMuzzleEffect(const centity_t* cent, const weaponData_t* wData);
 void CG_RegisterWeapon( int weaponNum );
-int CG_GetAttackIndex(gentity_t *gent,qboolean alt_fire);
+int CG_CurrentAttackIndex(const centity_t *cent);
 void CG_RegisterItemVisuals( int itemNum );
 void CG_RegisterItemSounds( int itemNum );
 
@@ -935,6 +953,9 @@ extern void CG_MissionCompletion(void);
 //
 qboolean CG_ConsoleCommand( void );
 void CG_InitConsoleCommands( void );
+
+#include "cg_lightedit.h"
+#include "cg_freecam.h"
 
 //
 // cg_servercmds.c
@@ -1060,6 +1081,7 @@ qhandle_t	cgi_R_RegisterModel( const char *name );			// returns rgb axis if not 
 qhandle_t	cgi_R_RegisterSkin( const char *name );
 qhandle_t	cgi_R_RegisterShader( const char *name );			// returns default shader if not found
 qhandle_t	cgi_R_RegisterShaderNoMip( const char *name );			// returns all white if not found
+void *		cgi_R_GetExtension( const char *name );			// returns NULL if the renderer lacks it
 qhandle_t	cgi_R_RegisterFont( const char *name );
 int			cgi_R_Font_StrLenPixels(const char* text, const int iFontIndex, const float scale = 1.0f, const float aspectCorrection = 1.0f);
 int			cgi_R_Font_StrLenChars(const char *text);
@@ -1213,7 +1235,7 @@ void CG_BounceEffect( centity_t *cent, int weapon, vec3_t origin, vec3_t normal 
 void CG_MissileStick( centity_t *cent, int weapon, vec3_t origin );
 
 void CG_MissileHitPlayer( centity_t *cent, int weapon, vec3_t origin, vec3_t dir, int attackIndex );
-void CG_MissileHitWall( centity_t *cent, int weapon, vec3_t origin, vec3_t dir, qboolean altFire);
+void CG_MissileHitWall( centity_t *cent, int weapon, vec3_t origin, vec3_t dir );
 
 void CG_DrawTargetBeam( vec3_t start, vec3_t end, vec3_t norm, const char *beamFx, const char *impactFx );
 
@@ -1250,6 +1272,7 @@ int		cgi_SP_GetStringTextString(const char *text, char *buf, int bufferlength);
 void	cgi_UI_Menu_Reset( void );
 void	cgi_UI_Menu_New(char *buf );
 void	cgi_UI_Menu_OpenByName(char *buf);
+void	cgi_UI_Run_Command(const char* buf);
 void	cgi_UI_SetActive_Menu(char *name);
 void	cgi_UI_Parse_Int(int *value);
 void	cgi_UI_Parse_String(char *buf);

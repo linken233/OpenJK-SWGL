@@ -26,6 +26,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 #include "../client/vmachine.h"
 #include "g_local.h"
+#include "cg_characters.h"
 
 #include "../qcommon/sstring.h"
 #include "qcommon/ojk_saved_game_helper.h"
@@ -89,10 +90,11 @@ int	force_icons[NUM_FORCE_POWERS];
 void CG_DrawDataPadHUD( centity_t *cent );
 void CG_DrawDataPadLoadoutFrame( centity_t *cent );
 void CG_DrawDataPadObjectives(const centity_t *cent );
-void CG_DrawDataPadIconBackground(const int backgroundType);
 void CG_DrawDataPadWeaponSelect( void );
 void CG_LDO_DrawWeapons( void );
+void CG_DrawWeaponSlot( int slot, int x, int y, int w, int h );
 void CG_DrawDataPadForceSelect( void );
+qboolean CG_GetAmmoName( int ammoIndex, char *name, int nameSize );
 
 /*
 ================
@@ -161,52 +163,10 @@ Ghoul2 Insert End
 		}
 		return 0;
 
-	case CG_DRAW_NPC_WEAPON_LABEL:
+	case CG_DRAW_WEAPON_SLOT:
 		if (cg.snap)
 		{
-			CG_DrawNpcWeaponLabel();
-		}
-		return 0;
-
-	case CG_DRAW_PLAYER_WEAPON_LABEL_1:
-		if (cg.snap)
-		{
-			CG_DrawPCWeaponLabel(1);
-		}
-		return 0;
-
-	case CG_DRAW_PLAYER_WEAPON_LABEL_2:
-		if (cg.snap)
-		{
-			CG_DrawPCWeaponLabel(2);
-		}
-		return 0;
-
-	case CG_DRAW_PLAYER_WEAPON_LABEL_3:
-		if (cg.snap)
-		{
-			CG_DrawPCWeaponLabel(3);
-		}
-		return 0;
-
-	case CG_DRAW_PLAYER_WEAPON_LABEL_4:
-		if (cg.snap)
-		{
-			CG_DrawPCWeaponLabel(4);
-		}
-		return 0;
-
-	case CG_DRAW_PLAYER_WEAPON_LABEL_5:
-		if (cg.snap)
-		{
-			CG_DrawPCWeaponLabel(5);
-		}
-		return 0;
-
-	case CG_DRAW_PLAYER_WEAPON_LABEL_6:
-		if (cg.snap)
-		{
-			CG_DrawPCWeaponLabel(6);
+			CG_DrawWeaponSlot((int)arg0, (int)arg1, (int)arg2, (int)arg3, (int)arg4);
 		}
 		return 0;
 
@@ -221,31 +181,37 @@ Ghoul2 Insert End
 	case CG_DRAW_DATAPAD_WEAPONS:
 		if (cg.snap)
 		{
-			CG_DrawDataPadIconBackground(ICON_WEAPONS);
 			CG_DrawDataPadWeaponSelect();
 		}
 		return 0;
 	case CG_DRAW_DATAPAD_LOADOUT:
 		if (cg.snap)
 		{
-			CG_DrawDataPadIconBackground(ICON_INVENTORY);
 			CG_LDO_DrawWeapons();
 		}
 		return 0;
 	case CG_DRAW_DATAPAD_INVENTORY:
 		if (cg.snap)
 		{
-			CG_DrawDataPadIconBackground(ICON_INVENTORY);
 			CG_DrawDataPadInventorySelect();
 		}
 		return 0;
 	case CG_DRAW_DATAPAD_FORCEPOWERS:
 		if (cg.snap)
 		{
-			CG_DrawDataPadIconBackground(ICON_FORCE);
 			CG_DrawDataPadForceSelect();
 		}
 		return 0;
+	case CG_DRAW_CHARACTERS:
+		if (cg.snap)
+		{
+			CG_DrawCharactersMenu();
+		}
+		return 0;
+	case CG_GET_AMMO_NAME:
+		return CG_GetAmmoName((int)arg0, (char *)arg1, (int)arg2);
+	case CG_KEY_EVENT:
+		return CG_LightEdit_KeyEvent((int)arg0, (qboolean)arg1, (int)arg2) ? 1 : 0;
 	}
 	return -1;
 }
@@ -389,9 +355,12 @@ vmCvar_t	cg_panoNumShots;
 
 vmCvar_t	fx_freeze;
 vmCvar_t	fx_debug;
+vmCvar_t	cg_speeds;
+vmCvar_t	cg_clipCull;
 
 vmCvar_t	cg_missionInfoFlashTime;
 vmCvar_t	cg_hudFiles;
+vmCvar_t	cg_validJKO;
 
 vmCvar_t	cg_neverHearThatDumbBeepingSoundAgain;
 
@@ -406,6 +375,7 @@ vmCvar_t	cg_smoothPlayerPlat;
 vmCvar_t	cg_smoothPlayerPlatAccel;
 vmCvar_t	cg_g2Marks;
 vmCvar_t	fx_expensivePhysics;
+vmCvar_t	fx_skipDraw;
 vmCvar_t	cg_debugHealthBars;
 
 vmCvar_t	cg_smoothCamera;
@@ -439,6 +409,7 @@ vmCvar_t		cg_hudRatio;
 
 vmCvar_t		ui_loadout_base_weapon;
 vmCvar_t		ui_loadout_weapon;
+vmCvar_t		ui_loadout_slot;
 vmCvar_t		ui_npc_weapon;
 vmCvar_t		ui_npc_weapon_label;
 
@@ -454,6 +425,13 @@ vmCvar_t		ui_weaponFive;
 vmCvar_t		ui_weaponFive_label;
 vmCvar_t		ui_weaponSix;
 vmCvar_t		ui_weaponSix_label;
+
+vmCvar_t		ui_c_filter_name;
+vmCvar_t		ui_character_screen;
+vmCvar_t		ui_character_selected;
+vmCvar_t		ui_character_page;
+vmCvar_t		ui_faction_page;
+vmCvar_t		ui_character_index;
 
 
 
@@ -548,6 +526,7 @@ static cvarTable_t cvarTable[] = {
 
 	{ &fx_freeze, "fx_freeze", "0", 0 },
 	{ &fx_debug, "fx_debug", "0", 0 },
+	{ &cg_speeds, "cg_speeds", "0", 0 },
 	// the following variables are created in other parts of the system,
 	// but we also reference them here
 
@@ -557,6 +536,7 @@ static cvarTable_t cvarTable[] = {
 	{ &cg_skippingcin, "skippingCinematic", "0", CVAR_ROM},
 	{ &cg_missionInfoFlashTime, "cg_missionInfoFlashTime", "10000", 0  },
 	{ &cg_hudFiles, "cg_hudFiles", "ui/jahud.txt", CVAR_ARCHIVE},
+	{ &cg_validJKO, "g_validJKO", "0", 0},
 
 	{ &cg_VariantSoundCap, "cg_VariantSoundCap", "0", 0 },
 	{ &cg_turnAnims, "cg_turnAnims", "0", 0 },
@@ -568,6 +548,8 @@ static cvarTable_t cvarTable[] = {
 	{ &cg_smoothPlayerPlatAccel, "cg_smoothPlayerPlatAccel", "3.25", 0},
 	{ &cg_g2Marks, "cg_g2Marks", "1", CVAR_ARCHIVE },
 	{ &fx_expensivePhysics, "fx_expensivePhysics", "1", CVAR_ARCHIVE },
+	{ &fx_skipDraw, "fx_skipDraw", "0", CVAR_CHEAT },	// measurement: simulate effects but submit nothing to the renderer
+	{ &cg_clipCull, "cg_clipCull", "1", 0 },	// CG_Trace skips bbox entities outside the move bounds
 	{ &cg_debugHealthBars,	"cg_debugHealthBars",	"0", CVAR_ARCHIVE },
 
 	{ &cg_smoothCamera, "cg_smoothCamera", "1", CVAR_ARCHIVE },
@@ -604,6 +586,7 @@ static cvarTable_t cvarTable[] = {
 	//Loadout Menu cvar
 	{ &ui_loadout_base_weapon , "ui_loadout_base_weapon","weapon_none", CVAR_TEMP},
 	{ &ui_loadout_weapon , "ui_loadout_weapon","0", CVAR_TEMP},
+	{ &ui_loadout_slot , "ui_loadout_slot","0", CVAR_TEMP},	// 1-6 a player weapon, 7 the NPC weapon: the loadout menu picks the weapon of this slot
 	{ &ui_npc_weapon, "ui_npc_weapon",	"WP_BLASTER", CVAR_ARCHIVE },
 	{ &ui_npc_weapon_label, "ui_npc_weapon_label",	"Blaster", CVAR_ARCHIVE },
 	//For PC
@@ -619,6 +602,12 @@ static cvarTable_t cvarTable[] = {
 	{ &ui_weaponFive_label, "ui_weaponFive_label","None",CVAR_ARCHIVE},
 	{ &ui_weaponSix, "ui_weaponSix","WP_NONE",CVAR_ARCHIVE},
 	{ &ui_weaponSix_label, "ui_weaponSix_label","None",CVAR_ARCHIVE},
+	{ &ui_c_filter_name, "ui_c_filter_name","",CVAR_ARCHIVE},
+	{ &ui_character_screen, "ui_character_screen","",CVAR_ARCHIVE},
+	{ &ui_character_selected, "ui_character_selected","",CVAR_ARCHIVE},
+	{ &ui_character_page, "ui_character_page","",CVAR_ARCHIVE},
+	{ &ui_faction_page, "ui_faction_page","",CVAR_ARCHIVE},
+	{ &ui_character_index, "ui_character_index","",CVAR_ARCHIVE},
 };
 
 static const size_t cvarTableSize = ARRAY_LEN( cvarTable );
@@ -673,6 +662,10 @@ int CG_CrosshairPlayer( void )
 }
 
 int CG_GetCameraPos( vec3_t camerapos ) {
+	vec3_t	leAng;
+	if ( CG_LightEdit_CameraView( camerapos, leAng ) ) {
+		return 1;
+	}
 	if ( in_camera) {
 		VectorCopy(client_camera.origin, camerapos);
 		return 1;
@@ -1565,6 +1558,7 @@ static void CG_RegisterGraphics( void ) {
 	cgs.media.weaponIconBackground	= cgi_R_RegisterShaderNoMip( "gfx/hud/background");
 	cgs.media.forceIconBackground	= cgi_R_RegisterShaderNoMip( "gfx/hud/background_f");
 	cgs.media.inventoryIconBackground= cgi_R_RegisterShaderNoMip( "gfx/hud/background_i");
+	CG_RegisterJK2Hud();
 	cgs.media.dataPadFrame			= cgi_R_RegisterShaderNoMip( "gfx/menus/datapad");
 	cgs.media.dataPadLoadoutFrame			= cgi_R_RegisterShaderNoMip( "gfx/menus/equipment_bg");
 
@@ -1704,7 +1698,11 @@ static void CG_RegisterGraphics( void ) {
 		{
 			if (bg_itemlist[i].giTag < INV_MAX)
 			{
-				inv_icons[bg_itemlist[i].giTag] = cgi_R_RegisterShaderNoMip( bg_itemlist[i].icon );
+				const qhandle_t icon = cgi_R_RegisterShaderNoMip( bg_itemlist[i].icon );
+				if (icon)	// several items share a tag (the jetpacks): one without icon must not wipe the others
+				{
+					inv_icons[bg_itemlist[i].giTag] = icon;
+				}
 			}
 		}
 	}
@@ -2348,6 +2346,7 @@ void CG_Init( int serverCommandSequence ) {
 
 	cgs.media.qhFontSmall = cgi_R_RegisterFont("ocr_a");
 	cgs.media.qhFontMedium= cgi_R_RegisterFont("ergoec");
+	cgs.media.qhFontTitle = cgi_R_RegisterFont("anewhope");
 
 	cgs.media.whiteShader   = cgi_R_RegisterShader( "white" );
 	cgs.media.loadTick		= cgi_R_RegisterShaderNoMip( "gfx/hud/load_tick" );
@@ -2402,7 +2401,10 @@ void CG_Init( int serverCommandSequence ) {
 	CG_GameStateReceived();
 
 	CG_InitConsoleCommands();
-	
+
+	CG_LightEdit_Init();
+	CG_FreeCam_Init();
+
 	CG_TrueViewInit();
 
 	CG_Set2DRatio();
@@ -3249,7 +3251,9 @@ void CG_LoadHudMenu(void)
 
 //	cgi_UI_Menu_Reset();
 
-	hudSet = cg_hudFiles.string;
+	// The JK2 HUD is drawn by code (cg_hud_jk2.cpp), it has no menu file: load the default one, used when its assets are missing.
+	// cg_hudFiles is kept: its assets are only registered later (CG_RegisterJK2Hud), so it cannot be checked here.
+	hudSet = CG_JK2HudRequested() ? "ui/jahud.txt" : cg_hudFiles.string;
 	if (hudSet[0] == '\0')
 	{
 		hudSet = "ui/jahud.txt";
@@ -3274,12 +3278,45 @@ CG_InventorySelectable
 */
 static inline qboolean CG_InventorySelectable( int index)
 {
+	if (index >= INV_JETPACK_TYPE)
+	{	// state of the fuel items, not an item
+		return qfalse;
+	}
+
 	if (cg.snap->ps.inventory[index])	// Is there any in the inventory?
 	{
 		return qtrue;
 	}
 
 	return qfalse;
+}
+
+extern const gitem_t *G_FuelItem( const playerState_t *ps, int tag );
+extern int G_FuelItemFuel( const playerState_t *ps, int tag );
+extern qboolean G_IsFuelItemTag( int tag );
+
+// A fuel item shows its fuel as its number.
+static inline int CG_InventoryCount( int index )
+{
+	if (G_IsFuelItemTag(index))
+	{
+		return (G_FuelItemFuel( &cg.snap->ps, index ) > 99) ? 99 : G_FuelItemFuel( &cg.snap->ps, index );
+	}
+	return cg.snap->ps.inventory[index];
+}
+
+// A fuel item shows the icon of the item carried.
+static void CG_UpdateFuelItemIcons( void )
+{
+	for (int tag = 0; tag < INV_MAX; tag++)
+	{
+		const gitem_t *item = G_IsFuelItemTag(tag) ? G_FuelItem( &cg.snap->ps, tag ) : NULL;
+
+		if (item && item->icon && item->icon[0])
+		{
+			inv_icons[tag] = cgi_R_RegisterShaderNoMip( item->icon );
+		}
+	}
 }
 
 
@@ -3317,6 +3354,8 @@ void CG_DPPrevInventory_f( void )
 		return;
 	}
 
+	CG_UpdateFuelItemIcons();	// the scan skips an item without an icon
+
 	const int original = cg.DataPadInventorySelect;
 
 	for ( i = 0 ; i < INV_MAX ; i++ )
@@ -3349,6 +3388,8 @@ void CG_DPNextInventory_f( void )
 	{
 		return;
 	}
+
+	CG_UpdateFuelItemIcons();	// the scan skips an item without an icon
 
 	const int original = cg.DataPadInventorySelect;
 
@@ -3392,6 +3433,8 @@ void CG_NextInventory_f( void )
 		SetInventoryTime();
 		return;
 	}
+
+	CG_UpdateFuelItemIcons();	// the scan skips an item without an icon
 
 	const int original = cg.inventorySelect;
 
@@ -3446,6 +3489,8 @@ void CG_PrevInventory_f( void )
 		SetInventoryTime();
 		return;
 	}
+
+	CG_UpdateFuelItemIcons();	// the scan skips an item without an icon
 
 	const int original = cg.inventorySelect;
 
@@ -3510,6 +3555,8 @@ void CG_DrawInventorySelect( void )
 	float			addX;
 	vec4_t			textColor = { .312f, .75f, .621f, 1.0f };
 	char			text[1024]={0};
+
+	CG_UpdateFuelItemIcons();
 
 	// don't display if dead
 	if ( cg.predicted_player_state.stats[STAT_HEALTH] <= 0 || ( cg.snap->ps.viewEntity > 0 && cg.snap->ps.viewEntity < ENTITYNUM_WORLD ))
@@ -3611,7 +3658,7 @@ void CG_DrawInventorySelect( void )
 			CG_DrawPic(holdX, y + 10, smallIconSize_x, smallIconSize_y, inv_icons[i]);
 
 			cgi_R_SetColor(colorTable[CT_ICON_BLUE]);
-			CG_DrawNumField(holdX + addX, y + smallIconSize_y, 2, cg.snap->ps.inventory[i], 6 * cgs.widthRatioCoef, 12,
+			CG_DrawNumField(holdX + addX, y + smallIconSize_y, 2, CG_InventoryCount(i), 6 * cgs.widthRatioCoef, 12,
 				NUM_FONT_SMALL,qfalse);
 
 			holdX -= (smallIconSize_x + pad);
@@ -3626,13 +3673,13 @@ void CG_DrawInventorySelect( void )
 		CG_DrawPic(x - (bigIconSize_x / 2), (y - ((bigIconSize_y - smallIconSize_y) / 2)) + 10, bigIconSize_x, bigIconSize_y, inv_icons[cg.inventorySelect]);
 		addX = bigIconSize_x * .75;
 		cgi_R_SetColor(colorTable[CT_ICON_BLUE]);
-		CG_DrawNumField((x - (bigIconSize_x / 2)) + addX, y, 2, cg.snap->ps.inventory[cg.inventorySelect], 6 * cgs.widthRatioCoef, 12,
+		CG_DrawNumField((x - (bigIconSize_x / 2)) + addX, y, 2, CG_InventoryCount(cg.inventorySelect), 6 * cgs.widthRatioCoef, 12,
 			NUM_FONT_SMALL,qfalse);
 
 		if (inv_names[cg.inventorySelect])
 		{
 			// FIXME: This is ONLY a temp solution, the icon stuff, etc, should all just use items.dat for everything
-			gitem_t *item = FindInventoryItemTag( cg.inventorySelect );
+			const gitem_t *item = G_IsFuelItemTag( cg.inventorySelect ) ? G_FuelItem( &cg.snap->ps, cg.inventorySelect ) : FindInventoryItemTag( cg.inventorySelect );
 
 			if ( item && item->classname && item->classname[0] )
 			{
@@ -3650,6 +3697,10 @@ void CG_DrawInventorySelect( void )
 				else
 				{
 					Com_sprintf( itemName, sizeof(itemName), "SPMOD_INGAME_%s",	item->classname );
+					if ( !cgi_SP_GetStringTextString( itemName, data, sizeof( data )))
+					{//an item with its own string file
+						Com_sprintf( itemName, sizeof(itemName), "%s_NAME", item->classname );
+					}
 					if ( cgi_SP_GetStringTextString( itemName, data, sizeof( data )))
 					{
 						int w = cgi_R_Font_StrLenPixels(data, cgs.media.qhFontSmall, 1.0f, cgs.widthRatioCoef);
@@ -3693,7 +3744,7 @@ void CG_DrawInventorySelect( void )
 			CG_DrawPic(holdX, y + 10, smallIconSize_x, smallIconSize_y, inv_icons[i]);
 
 			cgi_R_SetColor(colorTable[CT_ICON_BLUE]);
-			CG_DrawNumField(holdX + addX, y + smallIconSize_y, 2, cg.snap->ps.inventory[i], 6 * cgs.widthRatioCoef, 12,
+			CG_DrawNumField(holdX + addX, y + smallIconSize_y, 2, CG_InventoryCount(i), 6 * cgs.widthRatioCoef, 12,
 				NUM_FONT_SMALL,qfalse);
 
 			holdX += (smallIconSize_x + pad);
@@ -3732,6 +3783,7 @@ void CG_DrawDataPadInventorySelect( void )
 	char			text[1024]={0};
 	vec4_t			textColor = { .312f, .75f, .621f, 1.0f };
 
+	CG_UpdateFuelItemIcons();
 
 	// count the number of items owned
 	count = 0;
@@ -3815,7 +3867,7 @@ void CG_DrawDataPadInventorySelect( void )
 			CG_DrawPic(holdX, graphicYPos + 10, smallIconSize_x, smallIconSize_y, inv_icons[i]);
 
 			cgi_R_SetColor(colorTable[CT_ICON_BLUE]);
-			CG_DrawNumField(holdX + addX, graphicYPos + smallIconSize_y, 2, cg.snap->ps.inventory[i], 6 * cgs.widthRatioCoef, 12,
+			CG_DrawNumField(holdX + addX, graphicYPos + smallIconSize_y, 2, CG_InventoryCount(i), 6 * cgs.widthRatioCoef, 12,
 				NUM_FONT_SMALL,qfalse);
 
 			holdX -= (smallIconSize_x + pad);
@@ -3830,7 +3882,7 @@ void CG_DrawDataPadInventorySelect( void )
 		CG_DrawPic(centerXPos - (bigIconSize_x / 2), (graphicYPos - ((bigIconSize_y - smallIconSize_y) / 2)) + 10, bigIconSize_x, bigIconSize_y, inv_icons[cg.DataPadInventorySelect]);
 		addX = (float)bigIconSize_x * .75;
 		cgi_R_SetColor(colorTable[CT_ICON_BLUE]);
-		CG_DrawNumField((centerXPos - (bigIconSize_x / 2)) + addX, graphicYPos, 2, cg.snap->ps.inventory[cg.DataPadInventorySelect], 6 * cgs.widthRatioCoef, 12,
+		CG_DrawNumField((centerXPos - (bigIconSize_x / 2)) + addX, graphicYPos, 2, CG_InventoryCount(cg.DataPadInventorySelect), 6 * cgs.widthRatioCoef, 12,
 			NUM_FONT_SMALL,qfalse);
 
 	}
@@ -3866,7 +3918,7 @@ void CG_DrawDataPadInventorySelect( void )
 			CG_DrawPic(holdX, graphicYPos + 10, smallIconSize_x, smallIconSize_y, inv_icons[i]);
 
 			cgi_R_SetColor(colorTable[CT_ICON_BLUE]);
-			CG_DrawNumField(holdX + addX, graphicYPos + smallIconSize_y, 2, cg.snap->ps.inventory[i], 6 * cgs.widthRatioCoef, 12,
+			CG_DrawNumField(holdX + addX, graphicYPos + smallIconSize_y, 2, CG_InventoryCount(i), 6 * cgs.widthRatioCoef, 12,
 				NUM_FONT_SMALL,qfalse);
 
 			holdX += (smallIconSize_x + pad);

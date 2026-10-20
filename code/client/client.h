@@ -67,7 +67,7 @@ new gamestate_t, potentially several times during an established connection
 // the parseEntities array must be large enough to hold PACKET_BACKUP frames of
 // entities, so that when a delta compressed message arives from the server
 // it can be un-deltad from the original
-#define MAX_PARSE_ENTITIES	512
+#define MAX_PARSE_ENTITIES	8192	// a power of two, as large as the server ring (svs.numSnapshotEntities)
 
 extern int g_console_field_width;
 
@@ -367,6 +367,7 @@ void Con_DrawNotify (void);
 void Con_ClearNotify (void);
 void Con_RunConsole (void);
 void Con_DrawConsole (void);
+void Con_ClockString( char *buf, int size );
 void Con_PageUp( void );
 void Con_PageDown( void );
 void Con_Top( void );
@@ -443,4 +444,5 @@ void CL_Spawner_f(void);
 void CL_System_f(void);
 void CL_EndScreenDissolve_f(void);
 int Key_GetCatcher( void );
+qboolean CL_CgameKeyEvent( int key, qboolean down );	// cl_lightedit_keys.cpp
 void Key_SetCatcher( int catcher );

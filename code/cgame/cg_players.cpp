@@ -1138,14 +1138,8 @@ static void CG_PlayerAnimEventDo( centity_t *cent, animevent_t *animEvent )
 		break;
 	case AEV_FIRE:
 		//add fire event
-		if ( animEvent->eventData[AED_FIRE_ALT] )
-		{
-			G_AddEvent( cent->gent, EV_ALT_FIRE, 0 );
-		}
-		else
-		{
-			G_AddEvent( cent->gent, EV_FIRE_WEAPON, 0 );
-		}
+		//the animation event gives the attack index (0 main, 1 alt)
+		G_AddEvent( cent->gent, EV_FIRE_WEAPON + (animEvent->eventData[AED_FIRE_ATTACK] & 3), 0 );
 		break;
 	case AEV_MOVE:
 		//make him jump
@@ -4023,7 +4017,6 @@ static void CG_LightningBolt( centity_t *cent, vec3_t origin )
 		return;
 
 	//Must be a durational weapon
-//	if ( cent->currentState.weapon == WP_DEMP2 && cent->currentState.eFlags & EF_ALT_FIRING )
 //	{ /*nothing*/ }
 //	else
 	{
@@ -4494,8 +4487,74 @@ static void CG_ForceElectrocution( centity_t *cent, const vec3_t origin, vec3_t 
 	}
 }
 
+/*
+===============
+CG_JetpackEffects
+
+Flames of the jetpack item. Like in multiplayer they are played every few frames
+from the two jets of the model, along the axis that suits each jet.
+===============
+*/
+static void CG_JetpackEffects( centity_t *cent, vec3_t tempAngles )
+{
+	static const char	*jetBolts[2] = { "torso_ljet", "torso_rjet" };
+	static int			lastFxTime = 0;
+	gentity_t			*gent = cent->gent;
+
+	if ( !gent->client->jetPackOn || gent->jetpackModel <= 0 || !gent->ghoul2.IsValid()
+		|| gent->ghoul2.size() <= gent->jetpackModel || gent->ghoul2[gent->jetpackModel].mModelindex == -1 )
+	{
+		return;
+	}
+	if ( cg.time - lastFxTime < 40 && cg.time >= lastFxTime )
+	{
+		return;
+	}
+	lastFxTime = cg.time;
+
+	const qboolean thrusting = (qboolean)( gent->client->usercmd.upmove > 0 );
+	const int fxID = theFxScheduler.RegisterEffect( "boba/jet" );
+
+	for ( int i = 0; i < 2; i++ )
+	{
+		const int bolt = gi.G2API_AddBolt( &gent->ghoul2[gent->jetpackModel], jetBolts[i] );
+		if ( bolt == -1 )
+		{
+			continue;
+		}
+
+		mdxaBone_t	mat;
+		vec3_t		flamePos, flameDir;
+
+		gi.G2API_GetBoltMatrix( gent->ghoul2, gent->jetpackModel, bolt, &mat, tempAngles, cent->lerpOrigin, cg.time, cgs.model_draw, cent->currentState.modelScale );
+		gi.G2API_GiveMeVectorFromMatrix( mat, ORIGIN, flamePos );
+		// The bolts are on the center of the jetpack. The jet is down the Y axis of the first bolt and the X axis
+		// of the second, and the effect blows out opposite to the direction it is given.
+		vec3_t			downDir, sideDir;
+		const Eorientations	downAxis = ( i == 0 ) ? POSITIVE_Y : POSITIVE_X;
+		const Eorientations	sideAxis = ( i == 0 ) ? POSITIVE_X : POSITIVE_Y;
+
+		gi.G2API_GiveMeVectorFromMatrix( mat, downAxis, downDir );
+		gi.G2API_GiveMeVectorFromMatrix( mat, sideAxis, sideDir );
+		VectorMA( flamePos, 13.5f, downDir, flamePos );
+		VectorMA( flamePos, 9.5f, sideDir, flamePos );
+		VectorNegate( downDir, flameDir );
+
+		theFxScheduler.PlayEffect( fxID, flamePos, flameDir );
+		if ( thrusting )
+		{
+			theFxScheduler.PlayEffect( fxID, flamePos, flameDir );
+		}
+	}
+}
+
 static void CG_BoltedEffects( centity_t *cent, const vec3_t origin, vec3_t tempAngles )
 {
+	if ( cent->gent && cent->gent->client && cent->gent->s.number == 0 )
+	{
+		CG_JetpackEffects( cent, tempAngles );
+	}
+
 	if ( cent->gent && cent->gent->client && cent->gent->client->NPC_class == CLASS_VEHICLE )
 	{
 		Vehicle_t *pVeh = cent->gent->m_pVehicle;
@@ -5669,30 +5728,17 @@ static void CG_HandleWeaponSounds( centity_t *cent )
 	//Handle weapon Looping Sounds
 	const char* muzzleEffect = CG_GetMuzzleEffect(cent, wpnData);
 	qboolean playEffect = muzzleEffect ? qtrue : qfalse;
-	//We are Main Firing
-	if ( (cent->currentState.eFlags & EF_FIRING) && !(cent->currentState.eFlags & EF_ALT_FIRING) && playEffect)
+	//We are Firing: the sounds come from the attack in use
+	if ( (cent->currentState.eFlags & EF_FIRING) && playEffect)
 	{
-		if (cent->pe.lightningFiring == qfalse && weapon->weaponAttacksInfo[0].startSound)
+		const weaponAttackInfo_t *attackInfo = &weapon->weaponAttacksInfo[CG_CurrentAttackIndex(cent)];
+		if (cent->pe.lightningFiring == qfalse && attackInfo->startSound)
 		{
-			cgi_S_StartSound(cent->lerpOrigin, cent->currentState.number, CHAN_WEAPON, weapon->weaponAttacksInfo[0].startSound);
+			cgi_S_StartSound(cent->lerpOrigin, cent->currentState.number, CHAN_WEAPON, attackInfo->startSound);
 		}
-		if ( weapon->weaponAttacksInfo[0].firingSound)
+		if ( attackInfo->firingSound)
 		{
-			cgi_S_AddLoopingSound( cent->currentState.number, cent->lerpOrigin, vec3_origin, weapon->weaponAttacksInfo[0].firingSound,CHAN_WEAPON );
-			cent->pe.lightningFiring = qtrue;
-		}
-
-	}
-	//We are alt Firing (or pressing both buttons)
-	else if ( cent->currentState.eFlags & EF_ALT_FIRING && playEffect)
-	{
-		if (cent->pe.lightningFiring == qfalse && weapon->weaponAttacksInfo[1].startSound)
-		{
-			cgi_S_StartSound(cent->lerpOrigin, cent->currentState.number, CHAN_WEAPON, weapon->weaponAttacksInfo[1].startSound);
-		}
-		if ( weapon->weaponAttacksInfo[1].firingSound)
-		{
-			cgi_S_AddLoopingSound( cent->currentState.number, cent->lerpOrigin, vec3_origin, weapon->weaponAttacksInfo[1].firingSound, CHAN_WEAPON);
+			cgi_S_AddLoopingSound( cent->currentState.number, cent->lerpOrigin, vec3_origin, attackInfo->firingSound, CHAN_WEAPON );
 			cent->pe.lightningFiring = qtrue;
 		}
 
@@ -6174,6 +6220,7 @@ void CG_DoSFXSaber( vec3_t blade_muz, vec3_t blade_tip, vec3_t trail_tip, vec3_t
 			VectorCopy( blade_muz, saber.origin );
 			VectorCopy( blade_dir, saber.axis[0] );
 			saber.reType = RT_SABER_GLOW;
+			saber.customSkin = color;	// the renderer's path tracer reads the blade colour from here
 			saber.customShader = glow;
 			saber.shaderRGBA[0] = 0xff * effectalpha;
 			saber.shaderRGBA[1] = 0xff * effectalpha;
@@ -6214,6 +6261,7 @@ void CG_DoSFXSaber( vec3_t blade_muz, vec3_t blade_tip, vec3_t trail_tip, vec3_t
 			VectorCopy( trail_muz, saber.origin );
 			VectorCopy( trail_dir, saber.axis[0] );
 			saber.reType = RT_SABER_GLOW;
+			saber.customSkin = color;	// the renderer's path tracer reads the blade colour from here
 			saber.customShader = glow;
 			saber.shaderRGBA[0] = 0xff * effectalpha;
 			saber.shaderRGBA[1] = 0xff * effectalpha;
@@ -6258,6 +6306,7 @@ void CG_DoSFXSaber( vec3_t blade_muz, vec3_t blade_tip, vec3_t trail_tip, vec3_t
 			VectorMA( blade_muz, ((effectradius*AngleScale)/2), base_dir, saber.origin );
 			VectorCopy( base_dir, saber.axis[0] );
 			saber.reType = RT_SABER_GLOW;
+			saber.customSkin = color;	// the renderer's path tracer reads the blade colour from here
 			saber.customShader = glow;
 			saber.shaderRGBA[0] = 0xff * effectalpha;
 			saber.shaderRGBA[1] = 0xff * effectalpha;
@@ -6335,6 +6384,7 @@ void CG_DoSFXSaber( vec3_t blade_muz, vec3_t blade_tip, vec3_t trail_tip, vec3_t
 			VectorMA( blade_tip, ((effectradius*AngleScale)/2), end_dir, saber.origin );
 			VectorCopy( end_dir, saber.axis[0] );
 			saber.reType = RT_SABER_GLOW;
+			saber.customSkin = color;	// the renderer's path tracer reads the blade colour from here
 			saber.customShader = glow;
 			saber.shaderRGBA[0] = 0xff * effectalpha;
 			saber.shaderRGBA[1] = 0xff * effectalpha;
@@ -6483,6 +6533,7 @@ static void CG_DoSaber( vec3_t origin, vec3_t dir, float length, float lengthMax
 	VectorCopy( origin, saber.origin );
 	VectorCopy( dir, saber.axis[0] );
 	saber.reType = RT_SABER_GLOW;
+	saber.customSkin = color;	// the renderer's path tracer reads the blade colour from here
 	saber.customShader = glow;
 	saber.shaderRGBA[0] = saber.shaderRGBA[1] = saber.shaderRGBA[2] = saber.shaderRGBA[3] = 0xff;
 	saber.renderfx = rfx;
@@ -6638,6 +6689,8 @@ void CG_CheckSaberInWater( centity_t *cent, centity_t *scent, int saberNum, int 
 	//not in water
 	client->ps.saberEventFlags &= ~SEF_INWATER;
 }
+
+#define MAX_SABER_TRAIL_STEP	1024.0f	// max move of a saber trail point in one frame
 
 static void CG_AddSaberBladeGo( centity_t *cent, centity_t *scent, refEntity_t *saber, int renderfx, int modelIndex, vec3_t origin, vec3_t angles, int saberNum, int bladeNum )
 {
@@ -7467,6 +7520,17 @@ else
 		dirlen0 = VectorLength(dir0);
 		dirlen1 = VectorLength(dir1);
 		dirlen2 = VectorLength(dir2);
+
+		// A jump of more than MAX_SABER_TRAIL_STEP in one frame (teleport, bad old point)
+		// made a glow millions of units long: start the trail again here.
+		// The comparisons are false for NaN.
+		if ( !( dirlen0 < MAX_SABER_TRAIL_STEP ) || !( dirlen1 < MAX_SABER_TRAIL_STEP ) || !( dirlen2 < MAX_SABER_TRAIL_STEP ) )
+		{
+			VectorCopy( saberTrail->tip, saberTrail->dualtip );
+			VectorCopy( saberTrail->base, saberTrail->dualbase );
+			saberTrail->lastTime = cg.time;
+			return;
+		}
 
 		if ( saberMoveData[client->ps.saberMove].trailLength == 0 )
 		{
@@ -8931,7 +8995,7 @@ SkipTrueView:
 					{
 						if (!es->number)
 						{//player, just use left one, I guess
-							if (cent->gent->alt_fire)
+							if (cent->gent->attack_index)
 							{
 								bolt = cent->gent->handRBolt;
 							}
@@ -8953,7 +9017,7 @@ SkipTrueView:
 					}
 					else	// ATST SIDE weapons
 					{
-						if (cent->gent->alt_fire)
+						if (cent->gent->attack_index)
 						{
 							bolt = cent->gent->genericBolt2;
 						}
@@ -8978,7 +9042,7 @@ SkipTrueView:
 					}
 					else//repeater
 					{
-						if (cent->gent->alt_fire && cent->gent->client->ps.weapon != WP_SBD && cent->gent->client->ps.weapon != WP_DROIDEKA)
+						if (cent->gent->attack_index && cent->gent->client->ps.weapon != WP_SBD && cent->gent->client->ps.weapon != WP_DROIDEKA)
 						{//fire from the lower barrel (not that anyone will ever notice this, but...)
 							bolt = cent->gent->genericBolt3;
 						}
@@ -9037,7 +9101,7 @@ SkipTrueView:
 					qboolean getBoth = qfalse;
 					int	oldOne = 0;
 					if ( (cent->muzzleFlashTime > 0 && wData && !(cent->currentState.eFlags & EF_LOCKED_TO_WEAPON )) //TOGGLING Case
-						|| (cent->gent->client->ps.weaponstate == WEAPON_CHARGING || cent->gent->client->ps.weaponstate == WEAPON_CHARGING_ALT) //Charge Case
+						|| (cent->gent->client->ps.weaponstate == WEAPON_CHARGING) //Charge Case
 						|| CG_IsChargedAttack(cent)  //Firing both weapon at the same time
 						)
 					{
@@ -9721,7 +9785,7 @@ Ghoul2 Insert End
 				}
 
 
-				if (( cent->currentState.eFlags & EF_FIRING || cent->currentState.eFlags & EF_ALT_FIRING ) && effect )
+				if (( cent->currentState.eFlags & EF_FIRING ) && effect )
 				{
 					vec3_t up={0,0,1}, ax[3];
 
@@ -9773,7 +9837,7 @@ Ghoul2 Insert End
 		playerState_t *ps = &cg.predicted_player_state;
 
 		//Normally, the weapons should not charging if they are not supposed to...
-		if ( ps->weaponstate == WEAPON_CHARGING_ALT || ps->weaponstate == WEAPON_CHARGING )
+		if ( ps->weaponstate == WEAPON_CHARGING )
 		{
 			int		shader = 0;
 			float	val = 0.0f, scale = 1.0f;
@@ -9812,8 +9876,7 @@ Ghoul2 Insert End
 			}
 
 			//Overwrite the muzzle effect if needed
-			qboolean altFire = (ps->weaponstate == WEAPON_CHARGING_ALT) ? qtrue : qfalse;
-			int attackIndex = CG_GetAttackIndex(cent->gent, altFire);
+			int attackIndex = ps->attack_index;
 			if (weaponData[weapon].attackData[attackIndex].chargeMuzzleShader[0]) 
 			{
 				shader = cg_weapons[weapon].weaponAttacksInfo[attackIndex].chargeMuzzleShader;

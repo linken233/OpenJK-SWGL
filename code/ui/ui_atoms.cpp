@@ -31,6 +31,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 #include "ui_local.h"
 #include "gameinfo.h"
+#include "ui_lightedit.h"
 
 uiimport_t	ui;
 uiStatic_t	uis;
@@ -216,6 +217,12 @@ void UI_Load(void);	//in UI_main.cpp
 qboolean UI_ConsoleCommand( void )
 {
 	char	*cmd;
+
+	// The game refuses saves during the light edit mode, so this check comes first.
+	if (UI_LightEdit_ConsoleCommand())
+	{
+		return qtrue;
+	}
 
 	if (!ui.SG_GameAllowedToSaveHere(qtrue))	//only check if incamera
 	{

@@ -333,9 +333,10 @@ int	G2API_GetTime(int argTime) // this may or may not return arg depending on gh
 }
 
 
-// must be a power of two
-#define MAX_G2_MODELS (512)
-#define G2_MODEL_BITS (9)
+// must be a power of two. The SP renderers hand this array to each other on a renderer
+// switch, so rd-vanilla, rd-vulkan and rd-rend2 (REND2_SP) must use the same value.
+#define MAX_G2_MODELS (2048)
+#define G2_MODEL_BITS (11)
 #define G2_INDEX_MASK (MAX_G2_MODELS-1)
 
 void RemoveBoneCache(CBoneCache *boneCache);
@@ -685,6 +686,10 @@ public:
 static Ghoul2InfoArray *singleton = NULL;
 IGhoul2InfoArray &TheGhoul2InfoArray()
 {
+	// g_FastRendererSwitch: the second renderer draws the instances of the first one.
+	if ( ri.TheGhoul2InfoArray ) {
+		return ri.TheGhoul2InfoArray();
+	}
 	if(!singleton) {
 		singleton = new Ghoul2InfoArray;
 	}
@@ -713,6 +718,10 @@ void TestAllGhoul2Anims()
 
 void RestoreGhoul2InfoArray()
 {
+	// The first renderer owns the instances and keeps them across a restart.
+	if ( ri.TheGhoul2InfoArray ) {
+		return;
+	}
 	if (singleton == NULL)
 	{
 		// Create the ghoul2 info array
@@ -738,6 +747,9 @@ void RestoreGhoul2InfoArray()
 
 void SaveGhoul2InfoArray()
 {
+	if ( ri.TheGhoul2InfoArray ) {
+		return;
+	}
 	size_t size = singleton->GetSerializedSize();
 	void *data = R_Malloc (size, TAG_GHOUL2, qfalse);
 #ifdef _DEBUG
@@ -1015,6 +1027,60 @@ qboolean G2API_SetAnimIndex(CGhoul2Info *ghlInfo, const int index)
 		return qtrue;
 	}
 	return qfalse;
+}
+
+// Stops the bone animations and blends that use frames after the end of the current GLA.
+static void G2_StopInvalidBoneAnims(CGhoul2Info *ghlInfo)
+{
+	const int numFrames = ghlInfo->aHeader->numFrames;
+	for (size_t i = 0; i < ghlInfo->mBlist.size(); i++)
+	{
+		boneInfo_t &bone = ghlInfo->mBlist[i];
+		if ((bone.flags & BONE_ANIM_TOTAL) && (bone.startFrame >= numFrames || bone.endFrame > numFrames))
+		{
+			bone.flags &= ~BONE_ANIM_TOTAL;
+		}
+		if ((bone.flags & BONE_ANIM_BLEND) && (bone.blendFrame >= numFrames || bone.blendLerpFrame >= numFrames))
+		{
+			bone.flags &= ~BONE_ANIM_BLEND;
+		}
+	}
+}
+
+// Sets a GLA for this instance, in place of the GLA of its model. NULL or "" removes it.
+// Bone animations with frames in the new GLA stay: the caller starts the animations again for the new frames.
+qboolean G2API_SetAnimOverride(CGhoul2Info *ghlInfo, const char *glaName)
+{
+	if (!ghlInfo || !G2_SetupModelPointers(ghlInfo))
+	{
+		return qfalse;
+	}
+
+	if (glaName && glaName[0])
+	{
+		const qhandle_t overrideIndex = RE_RegisterModel(glaName);
+		const model_t *overrideModel = R_GetModelByHandle(overrideIndex);
+		const model_t *modelGLA = R_GetModelByHandle(ghlInfo->currentModel->mdxm->animIndex);
+		if (!overrideIndex || !overrideModel->mdxa || !modelGLA->mdxa || overrideModel->mdxa->numBones != modelGLA->mdxa->numBones)
+		{
+			ri.Printf(PRINT_WARNING, "G2API_SetAnimOverride: %s is missing or does not have the skeleton of %s\n", glaName, ghlInfo->mFileName);
+			return qfalse;
+		}
+	}
+
+	if (!Q_stricmp(ghlInfo->mAnimOverride, glaName ? glaName : ""))
+	{
+		return qtrue;
+	}
+
+	Q_strncpyz(ghlInfo->mAnimOverride, glaName ? glaName : "", sizeof(ghlInfo->mAnimOverride));
+	ghlInfo->currentAnimModelSize = 0;	// the GLA changes: G2_SetupModelPointers must not see it as a reload
+	if (!G2_SetupModelPointers(ghlInfo))
+	{
+		return qfalse;
+	}
+	G2_StopInvalidBoneAnims(ghlInfo);
+	return qtrue;
 }
 
 qboolean G2API_SetBoneAnimIndex(CGhoul2Info *ghlInfo, const int index, const int startFrame, const int endFrame, const int flags, const float animSpeed, const int AcurrentTime, const float setFrame, const int blendTime)
@@ -2223,6 +2289,21 @@ void G2API_AddSkinGore(CGhoul2Info_v &ghoul2,SSkinGoreData &gore)
 }
 #endif
 
+// Returns the GLA handle of an instance: its override GLA if it has one, else the GLA of its model.
+// currentModel must be set.
+static qhandle_t G2_GetAnimIndex(CGhoul2Info *ghlInfo)
+{
+	if (ghlInfo->mAnimOverride[0])
+	{
+		const qhandle_t overrideIndex = RE_RegisterModel(ghlInfo->mAnimOverride);
+		if (overrideIndex && R_GetModelByHandle(overrideIndex)->mdxa)
+		{
+			return overrideIndex;
+		}
+	}
+	return ghlInfo->currentModel->mdxm->animIndex;
+}
+
 bool G2_TestModelPointers(CGhoul2Info *ghlInfo) // returns true if the model is properly set up
 {
 	G2ERROR(ghlInfo,"NULL ghlInfo");
@@ -2247,7 +2328,7 @@ bool G2_TestModelPointers(CGhoul2Info *ghlInfo) // returns true if the model is 
 					}
 				}
 				ghlInfo->currentModelSize=ghlInfo->currentModel->mdxm->ofsEnd;
-				ghlInfo->animModel =  R_GetModelByHandle(ghlInfo->currentModel->mdxm->animIndex + ghlInfo->animModelIndexOffset);
+				ghlInfo->animModel =  R_GetModelByHandle(G2_GetAnimIndex(ghlInfo) + ghlInfo->animModelIndexOffset);
 				if (ghlInfo->animModel)
 				{
 					ghlInfo->aHeader =ghlInfo->animModel->mdxa;
@@ -2311,7 +2392,7 @@ qboolean G2_SetupModelPointers(CGhoul2Info *ghlInfo) // returns true if the mode
 				ghlInfo->currentModelSize=ghlInfo->currentModel->mdxm->ofsEnd;
 				G2ERROR(ghlInfo->currentModelSize,va("Zero sized Model? (glm) %s",ghlInfo->mFileName));
 
-				ghlInfo->animModel =  R_GetAnimModelByHandle(ghlInfo, ghlInfo->currentModel->mdxm->animIndex + ghlInfo->animModelIndexOffset);
+				ghlInfo->animModel =  R_GetAnimModelByHandle(ghlInfo, G2_GetAnimIndex(ghlInfo) + ghlInfo->animModelIndexOffset);
 				G2ERROR(ghlInfo->animModel,va("NULL Model (gla) %s",ghlInfo->mFileName));
 				if (ghlInfo->animModel)
 				{

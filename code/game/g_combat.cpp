@@ -5775,6 +5775,16 @@ void G_Damage(gentity_t* targ, gentity_t* inflictor, gentity_t* attacker, const 
 		}
 	}
 	if (targ->client
+		&& targ->client->NPC_class == CLASS_GALAKMECH
+		&& (mod == MOD_DISRUPTOR || mod == MOD_SNIPER))
+	{// Cap disruptor damage: 3 for the main shot, 10 for the charged shot (main shot uses DEATH_KNOCKBACK)
+		const int galakCap = (dflags & DAMAGE_DEATH_KNOCKBACK) ? 3 : 10;
+		if (damage > galakCap)
+		{
+			damage = galakCap;
+		}
+	}
+	if (targ->client
 		&& targ->client->NPC_class == CLASS_RANCOR
 		&& (!attacker || !attacker->client || attacker->client->NPC_class != CLASS_RANCOR))
 	{

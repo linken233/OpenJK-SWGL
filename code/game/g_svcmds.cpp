@@ -27,6 +27,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "g_local.h"
 #include "wp_saber.h"
 #include "g_functions.h"
+#include "g_characterRandom.h"
 
 extern void G_NextTestAxes( void );
 extern void G_ChangePlayerModel( gentity_t *ent, const char *newModel );
@@ -35,8 +36,6 @@ extern void Q3_SetViewEntity(int entID, const char *name);
 extern qboolean G_ClearViewEntity( gentity_t *ent );
 extern void G_Knockdown( gentity_t *self, gentity_t *attacker, const vec3_t pushDir, float strength, qboolean breakSaberLock );
 
-extern void SP_NPC_Jedi(gentity_t *self);
-extern void SP_NPC_SWGL_Jedi(gentity_t *self);
 
 extern void WP_SetSaber( gentity_t *ent, int saberNum, const char *saberName );
 extern void WP_RemoveSaber( gentity_t *ent, int saberNum );
@@ -764,6 +763,8 @@ static void Svcmd_Spawn_f(void)
 
 	NPCspawner->wait = 500;
 
+	CHA_RandomizeSpawner(NPCspawner);
+
 	if (!NPCspawner->NPC_targetname)
 	{
 		NPCspawner->NPC_targetname = G_NewString(va("%s%i", NPCspawner->NPC_type, Q_irand(0, 100)));
@@ -772,73 +773,8 @@ static void Svcmd_Spawn_f(void)
 
 	NPC_PrecacheByClassName(NPCspawner->NPC_type);
 
-	// If the NPC is random, we need to clear the variables, that way they won't be all confused and stuff.
-	if (!Q_stricmp("jedi_random", NPCspawner->NPC_type)
-		|| !Q_stricmp("kotor_jedi", NPCspawner->NPC_type)
-		|| !Q_stricmp("prequel_jedi", NPCspawner->NPC_type)
-		|| !Q_stricmp("swtor_jedi", NPCspawner->NPC_type)
-		|| !Q_stricmp("swtor_sith", NPCspawner->NPC_type)
-		|| !Q_stricmp("jedi_youngling", NPCspawner->NPC_type))
-	{
-		NPCspawner->NPC_skin = NULL;
-
-		NPCspawner->NPC_SaberOne = NULL;
-
-		NPCspawner->NPC_model = NULL;
-
-		NPCspawner->NPC_SaberTwo = NULL;
-
-		NPCspawner->NPC_SaberOneColor = NULL;
-
-		NPCspawner->NPC_SaberTwoColor = NULL;
-	}
-
-	if (!Q_stricmp("jedi_random", NPCspawner->NPC_type))
-	{//special case, for testing
-		NPCspawner->NPC_type = NULL;
-		NPCspawner->spawnflags |= 4;
-		NPCspawner->NPC_skin = NULL;
-		SP_NPC_Jedi(NPCspawner);
-	}
-	else if (!Q_stricmp("kotor_jedi", NPCspawner->NPC_type))
-	{//special case, for testing
-		NPCspawner->NPC_type = NULL;
-		NPCspawner->spawnflags |= 0;
-		NPCspawner->NPC_skin = NULL;
-		SP_NPC_SWGL_Jedi(NPCspawner);
-	}
-	else if (!Q_stricmp("prequel_jedi", NPCspawner->NPC_type))
-	{//special case, for testing
-		NPCspawner->NPC_type = NULL;
-		NPCspawner->spawnflags |= 1;
-		NPCspawner->NPC_skin = NULL;
-		SP_NPC_SWGL_Jedi(NPCspawner);
-	}
-	else if (!Q_stricmp("swtor_jedi", NPCspawner->NPC_type))
-	{//special case, for testing
-		NPCspawner->NPC_type = NULL;
-		NPCspawner->spawnflags |= 2;
-		NPCspawner->NPC_skin = NULL;
-		SP_NPC_SWGL_Jedi(NPCspawner);
-	}
-	else if (!Q_stricmp("swtor_sith", NPCspawner->NPC_type))
-	{//special case, for testing
-		NPCspawner->NPC_type = NULL;
-		NPCspawner->spawnflags |= 4;
-		NPCspawner->NPC_skin = NULL;
-		SP_NPC_SWGL_Jedi(NPCspawner);
-	}
-	else if (!Q_stricmp("jedi_youngling", NPCspawner->NPC_type))
-	{//special case, for testing
-		NPCspawner->NPC_type = NULL;
-		NPCspawner->spawnflags |= 8;
-		NPCspawner->NPC_skin = NULL;
-		SP_NPC_SWGL_Jedi(NPCspawner);
-	}
-	else
-	{
-		NPC_Spawn(NPCspawner, NPCspawner, NPCspawner);
-	}
+	// The random NPCs of the menu come from the .cha file (CHA_RandomizeSpawner).
+	NPC_Spawn(NPCspawner, NPCspawner, NPCspawner);
 
 }
 
@@ -1035,6 +971,7 @@ static svcmd_t svcmds[] = {
 	{ "difficulty",					Svcmd_Difficulty_f,							CMD_NONE },
 	{ "scale",						Svcmd_Scale_f,							CMD_NONE },
 	{ "spawnNPC",					Svcmd_Spawn_f,							CMD_NONE},
+	{ "characterRandom",			CHA_RandomizePlayer,					CMD_NONE},
 
 	//{ "say",						Svcmd_Say_f,						qtrue },
 	//{ "toggleallowvote",			Svcmd_ToggleAllowVote_f,			qfalse },

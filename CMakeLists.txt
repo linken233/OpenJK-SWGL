@@ -45,15 +45,23 @@ option(BuildMPDed "Whether to create projects for the MP dedicated server (SWGLD
 option(BuildMPGame "Whether to create projects for the MP server-side gamecode (swglmpgamex86.dll)" OFF)
 option(BuildMPCGame "Whether to create projects for the MP clientside gamecode (swglcgamex86.dll)" OFF)
 option(BuildMPRend2 "Whether to create projects for the EXPERIMENTAL MP rend2 renderer (rd-rend2_x86.dll)" OFF)
+option(BuildMPVulkan "Whether to create projects for the EXPERIMENTAL Vulkan renderer (rd-vulkan_x86.dll)" ON)
 option(BuildMPUI "Whether to create projects for the MP UI code (swgluix86.dll)" OFF)
 option(BuildSPEngine "Whether to create projects for the SP engine (SWGL_SP.exe)" ON)
 option(BuildSPGame "Whether to create projects for the SP gamecode (swglgamex86.dll)" ON)
 option(BuildSPRdVanilla "Whether to create projects for the SP default renderer (rdsp_swgl_x86.dll)" ON)
 option(BuildSPRend2 "Whether to create projects for the EXPERIMENTAL SP rend2 renderer (rdsp-rend2_x86.dll)" ON)
+option(BuildSPVulkan "Whether to create projects for the EXPERIMENTAL SP Vulkan renderer (rdsp-vulkan_x86.dll)" ON)
 
 option(BuildTests "Whether to build automatic unit tests (requires Boost)" OFF)
 option(UseAddressSanitizer "Whether to enable runtime address sanitizer" OFF)
 option(UseUndefinedSanitizer "Whether to enable runtime Undefined Behavior sanitizer" OFF)
+option(SWGL_ENABLE_ASSERTS "Enable assert() in every configuration. OFF defines NDEBUG for every target." ON)
+
+# NDEBUG removes assert() in every configuration, including Debug.
+if(NOT SWGL_ENABLE_ASSERTS)
+	add_compile_definitions(NDEBUG)
+endif()
 
 include(CMakeDependentOption)
 cmake_dependent_option(BuildSymbolServer "Build WIP Windows Symbol Server (experimental and unused)" OFF "NOT WIN32 OR NOT MSVC" OFF)
@@ -165,9 +173,11 @@ set(SPEngine "SWGL_SP.${Architecture}")
 set(SPGame "swglgame${Architecture}")
 set(SPRDVanillaRenderer "rdsp_swgl_${Architecture}")
 set(SPRend2 "rdsp-rend2_${Architecture}")
+set(SPVulkan "rdsp-vulkan_${Architecture}")
 set(MPEngine "SWGL_MP.${Architecture}")
 set(MPVanillaRenderer "rdmp_swgl_${Architecture}")
 set(MPRend2 "rd-rend2_${Architecture}")
+set(MPVulkan "rd-vulkan_${Architecture}")
 set(MPDed "SWGLDed.${Architecture}")
 set(MPGame "swglmpgame${Architecture}")
 set(MPCGame "swglcgame${Architecture}")
@@ -317,7 +327,12 @@ else()
 endif()
 
 set(SharedDefines ${SharedDefines} "$<$<CONFIG:Debug>:_DEBUG>")
-set(SharedDefines ${SharedDefines} "$<$<NOT:$<CONFIG:Debug>>:FINAL_BUILD>")
+
+# RelWithDebInfo is deliberately left out of FINAL_BUILD. Debug is the only configuration
+# that keeps the timers and diagnostics, and it is also the only one without optimisation,
+# so measuring anything meant building unoptimised code. This gives one configuration that
+# is optimised and still instrumented.
+set(SharedDefines ${SharedDefines} "$<$<OR:$<CONFIG:Release>,$<CONFIG:MinSizeRel>>:FINAL_BUILD>")
 
 if(BuildPortableVersion)
 	set(BUILD_PORTABLE ON)

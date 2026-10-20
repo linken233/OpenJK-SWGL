@@ -102,9 +102,10 @@ void CG_BuildSolidList( void )
 ====================
 CG_ClipMoveToEntities
 
+Returns the number of entities actually traced against.
 ====================
 */
-void CG_ClipMoveToEntities ( const vec3_t start, const vec3_t mins, const vec3_t maxs, const vec3_t end,
+int CG_ClipMoveToEntities ( const vec3_t start, const vec3_t mins, const vec3_t maxs, const vec3_t end,
 							int skipNumber, int mask, trace_t *tr ) {
 	int			i, x, zd, zu;
 	trace_t		trace;
@@ -113,6 +114,17 @@ void CG_ClipMoveToEntities ( const vec3_t start, const vec3_t mins, const vec3_t
 	vec3_t		bmins, bmaxs;
 	vec3_t		origin, angles;
 	centity_t	*cent;
+	vec3_t		sweepMins, sweepMaxs;
+	int			traced = 0;
+
+	// Bounds of the whole move, 1 unit larger. A bbox entity outside them cannot be hit.
+	const bool cull = ( cg_clipCull.integer != 0 );
+	for ( i = 0 ; i < 3 ; i++ ) {
+		const float lo = mins ? mins[i] : 0.0f;
+		const float hi = maxs ? maxs[i] : 0.0f;
+		sweepMins[i] = Q_min( start[i], end[i] ) + lo - 1.0f;
+		sweepMaxs[i] = Q_max( start[i], end[i] ) + hi + 1.0f;
+	}
 
 	for ( i = 0 ; i < cg_numSolidEntities ; i++ ) {
 		cent = cg_solidEntities[ i ];
@@ -150,6 +162,13 @@ void CG_ClipMoveToEntities ( const vec3_t start, const vec3_t mins, const vec3_t
 			bmins[2] = -zd;
 			bmaxs[2] = zu;
 
+			if ( cull
+				&& ( cent->lerpOrigin[0] + bmins[0] > sweepMaxs[0] || cent->lerpOrigin[0] + bmaxs[0] < sweepMins[0]
+				  || cent->lerpOrigin[1] + bmins[1] > sweepMaxs[1] || cent->lerpOrigin[1] + bmaxs[1] < sweepMins[1]
+				  || cent->lerpOrigin[2] + bmins[2] > sweepMaxs[2] || cent->lerpOrigin[2] + bmaxs[2] < sweepMins[2] ) ) {
+				continue;
+			}
+
 			cmodel = cgi_CM_TempBoxModel( bmins, bmaxs );//, cent->gent->contents );
 			VectorCopy( vec3_origin, angles );
 			VectorCopy( cent->lerpOrigin, origin );
@@ -158,6 +177,7 @@ void CG_ClipMoveToEntities ( const vec3_t start, const vec3_t mins, const vec3_t
 
 		cgi_CM_TransformedBoxTrace ( &trace, start, end,
 			mins, maxs, cmodel,  mask, origin, angles);
+		traced++;
 
 		if (trace.allsolid || trace.fraction < tr->fraction) {
 			trace.entityNum = ent->number;
@@ -166,9 +186,10 @@ void CG_ClipMoveToEntities ( const vec3_t start, const vec3_t mins, const vec3_t
 			tr->startsolid = qtrue;
 		}
 		if ( tr->allsolid ) {
-			return;
+			return traced;
 		}
 	}
+	return traced;
 }
 
 /*

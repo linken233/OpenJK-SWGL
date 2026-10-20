@@ -28,7 +28,9 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "g_vehicles.h"
 #include "g_functions.h"
 #include "NPC_SWGL.h"
+#include "g_characterRandom.h"
 #include "../cgame/cg_local.h"
+#include "../rd-common/mdx_merge.h"
 #if !defined(RUFL_HSTRING_INC)
 	#include "../Rufl/hstring.h"
 #endif
@@ -68,7 +70,7 @@ stringID_table_t animEventTypeTable[] =
 	ENUM2STRING(AEV_SOUND),			//# animID AEV_SOUND framenum soundpath randomlow randomhi chancetoplay
 	ENUM2STRING(AEV_FOOTSTEP),		//# animID AEV_FOOTSTEP framenum footstepType
 	ENUM2STRING(AEV_EFFECT),		//# animID AEV_EFFECT framenum effectpath boltName
-	ENUM2STRING(AEV_FIRE),			//# animID AEV_FIRE framenum altfire chancetofire
+	ENUM2STRING(AEV_FIRE),			//# animID AEV_FIRE framenum attackindex chancetofire
 	ENUM2STRING(AEV_MOVE),			//# animID AEV_MOVE framenum forwardpush rightpush uppush
 	ENUM2STRING(AEV_SOUNDCHAN),		//# animID AEV_SOUNDCHAN framenum CHANNEL soundpath randomlow randomhi chancetoplay
 	ENUM2STRING(AEV_SABER_SWING),	//# animID AEV_SABER_SWING framenum CHANNEL randomlow randomhi chancetoplay
@@ -846,14 +848,14 @@ static void ParseAnimationEvtBlock(int glaIndex, unsigned short modelIndex, cons
 			}
 			animEvents[curAnimEvent].eventData[AED_EFFECT_PROBABILITY] = atoi( token );
 			break;
-		case AEV_FIRE:			//# animID AEV_FIRE framenum altfire chancetofire
-			//get altfire
+		case AEV_FIRE:			//# animID AEV_FIRE framenum attackindex chancetofire
+			//get the attack index
 			token = COM_Parse( text_p );
 			if ( !token )
 			{//WARNING!  BAD TABLE!
 				break;
 			}
-			animEvents[curAnimEvent].eventData[AED_FIRE_ALT] = atoi( token );
+			animEvents[curAnimEvent].eventData[AED_FIRE_ATTACK] = atoi( token );
 			//get probability
 			token = COM_Parse( text_p );
 			if ( !token )
@@ -918,7 +920,8 @@ This file's presence is not required
 ======================
 */
 static
-void G_ParseAnimationEvtFile(int glaIndex, const char* eventsDirectory, int fileIndex, int iRealGLAIndex = -1, bool modelSpecific = false)
+// eventsDirectory is a folder in models/players, or a full path if fullDirectory is set.
+void G_ParseAnimationEvtFile(int glaIndex, const char* eventsDirectory, int fileIndex, int iRealGLAIndex = -1, bool modelSpecific = false, bool fullDirectory = false)
 {
 	int				len;
 	const char*		token;
@@ -935,7 +938,7 @@ void G_ParseAnimationEvtFile(int glaIndex, const char* eventsDirectory, int file
 
 	// Open The File, Make Sure It Is Safe
 	//-------------------------------------
-	Com_sprintf(eventsPath, MAX_QPATH, "models/players/%s/animevents.cfg", eventsDirectory);
+	Com_sprintf(eventsPath, MAX_QPATH, fullDirectory ? "%s/animevents.cfg" : "models/players/%s/animevents.cfg", eventsDirectory);
 	len = cgi_FS_FOpenFile(eventsPath, &f, FS_READ);
 	if ( len <= 0 )
 	{//no file
@@ -1004,7 +1007,9 @@ models/players/visor/animation.cfg, etc
 
 ======================
 */
-qboolean G_ParseAnimationFile(int glaIndex, const char *skeletonName, int fileIndex)
+// Reads <animDir>/<baseName>.cfg, else <animDir>/animation.cfg.
+// frameOffset is added to each first frame: the frames of a merged GLA part start there.
+static qboolean G_ParseAnimationFileInDir(int glaIndex, const char *animDir, const char *baseName, int fileIndex, int frameOffset)
 {
 	char			text[80000];
 	int				len			= 0;
@@ -1018,11 +1023,11 @@ qboolean G_ParseAnimationFile(int glaIndex, const char *skeletonName, int fileIn
 
 	// Read In The File To The Text Buffer, Make Sure Everything Is Safe To Continue
 	//-------------------------------------------------------------------------------
-	Com_sprintf(skeletonPath, MAX_QPATH, "models/players/%s/%s.cfg", skeletonName, skeletonName);
+	Com_sprintf(skeletonPath, MAX_QPATH, "%s/%s.cfg", animDir, baseName);
 	len = gi.RE_GetAnimationCFG(skeletonPath, text, sizeof(text));
 	if ( len <= 0 )
 	{
-		Com_sprintf(skeletonPath, MAX_QPATH, "models/players/%s/animation.cfg", skeletonName);
+		Com_sprintf(skeletonPath, MAX_QPATH, "%s/animation.cfg", animDir);
 		len = gi.RE_GetAnimationCFG(skeletonPath, text, sizeof(text));
 		if ( len <= 0 )
 		{
@@ -1031,7 +1036,7 @@ qboolean G_ParseAnimationFile(int glaIndex, const char *skeletonName, int fileIn
 	}
 	if ( len >= (int)(sizeof( text ) - 1) )
 	{
-		G_Error( "G_ParseAnimationFile: File %s too long\n (%d > %d)", skeletonName, len, sizeof( text ) - 1);
+		G_Error( "G_ParseAnimationFile: File %s too long\n (%d > %d)", skeletonPath, len, sizeof( text ) - 1);
 		return qfalse;
 	}
 
@@ -1081,8 +1086,8 @@ qboolean G_ParseAnimationFile(int glaIndex, const char *skeletonName, int fileIn
 		{
 			break;
 		}
-		assert(atoi(token) >= 0 && atoi(token) < 65536);
-		animations[animNum].firstFrame = atoi( token );
+		assert(atoi(token) >= 0 && atoi(token) + frameOffset < 65536);
+		animations[animNum].firstFrame = atoi( token ) + frameOffset;
 
 		// Num Frames
 		//------------
@@ -1153,6 +1158,166 @@ qboolean G_ParseAnimationFile(int glaIndex, const char *skeletonName, int fileIn
 #endif
 
 	return qtrue;
+}
+
+qboolean G_ParseAnimationFile(int glaIndex, const char *skeletonName, int fileIndex)
+{
+	char animDir[MAX_QPATH];
+	Com_sprintf(animDir, sizeof(animDir), "models/players/%s", skeletonName);
+	return G_ParseAnimationFileInDir(glaIndex, animDir, skeletonName, fileIndex, 0);
+}
+
+/*
+======================
+G_ReadGLAHeader
+
+Reads the header and skeleton of a GLA file, with the checks of the renderer (see mdx_merge.h).
+Returns NULL if the file is missing or not valid. Release the result with gi.Free.
+======================
+*/
+static mdxaHeader_t *G_ReadGLAHeader(const char *path)
+{
+	fileHandle_t	f;
+	mdxaHeader_t	header;
+
+	const int len = gi.FS_FOpenFile(path, &f, FS_READ);
+	if (len <= 0 || !f)
+	{
+		return NULL;
+	}
+
+	// The skeleton is between the header and the frames.
+	const int skelEnd = (len >= (int)sizeof(header) && gi.FS_Read(&header, sizeof(header), f) == sizeof(header))
+		? LittleLong(header.ofsFrames) : 0;
+	if (skelEnd <= (int)sizeof(header) || skelEnd > len || LittleLong(header.ofsEnd) > len)
+	{
+		gi.FS_FCloseFile(f);
+		return NULL;
+	}
+
+	byte *buf = (byte *)gi.Malloc(skelEnd, TAG_TEMP_WORKSPACE, qfalse);
+	memcpy(buf, &header, sizeof(header));
+	const int skelBytes = skelEnd - (int)sizeof(header);
+	const qboolean readOk = (qboolean)(gi.FS_Read(buf + sizeof(header), skelBytes, f) == skelBytes);
+	gi.FS_FCloseFile(f);
+
+	if (!readOk || !GLA_CheckHeader(buf, skelEnd))
+	{
+		gi.Free(buf);
+		return NULL;
+	}
+	return (mdxaHeader_t *)buf;
+}
+
+/*
+======================
+G_AnimOverrideName
+
+Returns the override folder if skeletonName is "_humanoid_o_<key>", the virtual skeleton of an animation override:
+"_<key>" if models/players/_<key>/_<key>.gla exists, else "<key>" (the same choice as the renderer).
+Returns NULL for all other skeletons.
+======================
+*/
+static const char *G_AnimOverrideName(const char *skeletonName)
+{
+	static char overrideName[MAX_QPATH];
+	char overrideKey[MAX_QPATH];
+	char glaPath[MAX_QPATH];
+
+	Com_sprintf(glaPath, sizeof(glaPath), "models/players/%s/%s.gla", skeletonName, skeletonName);
+	if (!GLA_GetOverrideName(glaPath, overrideKey, sizeof(overrideKey)))
+	{
+		return NULL;
+	}
+
+	Com_sprintf(overrideName, sizeof(overrideName), "_%s", overrideKey);
+	Com_sprintf(glaPath, sizeof(glaPath), "models/players/%s/%s.gla", overrideName, overrideName);
+	if (gi.FS_ReadFile(glaPath, NULL) <= 0)
+	{
+		Q_strncpyz(overrideName, overrideKey, sizeof(overrideName));
+	}
+	return overrideName;
+}
+
+/*
+======================
+G_SkeletonGLAPath
+
+Finds the GLA file of a skeleton folder: <folder>/<folder>.gla, else <folder>/_humanoid.gla
+(the custom skeletons, for example _humanoid_Clones). Returns qfalse if neither exists.
+======================
+*/
+static qboolean G_SkeletonGLAPath(const char *skeletonName, char *glaPath, int glaPathSize)
+{
+	Com_sprintf(glaPath, glaPathSize, "models/players/%s/%s.gla", skeletonName, skeletonName);
+	if (gi.FS_ReadFile(glaPath, NULL) > 0)
+	{
+		return qtrue;
+	}
+	Com_sprintf(glaPath, glaPathSize, "models/players/%s/_humanoid.gla", skeletonName);
+	return (qboolean)(gi.FS_ReadFile(glaPath, NULL) > 0);
+}
+
+/*
+======================
+G_ParseMergedAnimations
+
+Parses the animations of the GLA parts that the renderer appends to the GLA of a skeleton (see mdx_merge.h):
+_weapons.gla if glaPath is a _humanoid*.gla file, then the GLA of the animation override if overrideName is not NULL.
+An animation that is already in the file set gets the new frames.
+======================
+*/
+static void G_ParseMergedAnimations(const char *glaPath, const char *overrideName, int fileIndex)
+{
+	if (!overrideName && !GLA_TakesWeapons(glaPath))
+	{
+		return;
+	}
+
+	mdxaHeader_t *humanoid = G_ReadGLAHeader(glaPath);
+	if (!humanoid)
+	{
+		return;
+	}
+	int numFrames = LittleLong(humanoid->numFrames);
+
+	mdxaHeader_t *weapons = GLA_TakesWeapons(glaPath) ? G_ReadGLAHeader(GLA_WEAPONS_PATH) : NULL;
+	if (weapons)
+	{
+		if (GLA_CanMerge(humanoid, numFrames, weapons))
+		{
+			G_ParseAnimationFileInDir(0, GLA_WEAPONS_DIR, "_weapons", fileIndex, numFrames);
+			G_ParseAnimationEvtFile(0, GLA_WEAPONS_DIR, fileIndex, -1, false, true);
+			numFrames += LittleLong(weapons->numFrames);
+		}
+		gi.Free(weapons);
+	}
+
+	if (overrideName)
+	{
+		char overrideDir[MAX_QPATH];
+		char overridePath[MAX_QPATH];
+		Com_sprintf(overrideDir, sizeof(overrideDir), "models/players/%s", overrideName);
+		Com_sprintf(overridePath, sizeof(overridePath), "%s/%s.gla", overrideDir, overrideName);
+
+		mdxaHeader_t *extra = G_ReadGLAHeader(overridePath);
+		if (extra && GLA_CanMerge(humanoid, numFrames, extra))
+		{
+			G_ParseAnimationFileInDir(0, overrideDir, overrideName, fileIndex, numFrames);
+			G_ParseAnimationEvtFile(0, overrideName, fileIndex);
+		}
+		else
+		{
+			Com_Printf(S_COLOR_RED"Animation override %s: %s is missing or does not have the skeleton of %s\n",
+				overrideName, overridePath, glaPath);
+		}
+		if (extra)
+		{
+			gi.Free(extra);
+		}
+	}
+
+	gi.Free(humanoid);
 }
 
 
@@ -1240,9 +1405,22 @@ int		G_ParseAnimFileSet(const char *skeletonName, const char *modelName=0)
 			}
 		}
 
+		// An animation override skeleton "_humanoid_o_<key>" starts from the _humanoid animations.
+		char overrideName[MAX_QPATH] = { 0 };
+		const char *foundOverride = G_AnimOverrideName(skeletonName);
+		if (foundOverride)
+		{
+			Q_strncpyz(overrideName, foundOverride, sizeof(overrideName));
+		}
+		const char *baseSkeleton = overrideName[0] ? "_humanoid" : skeletonName;
+
+		// The renderer appends _weapons.gla (to _humanoid*.gla) and the override GLA to this file.
+		char glaPath[MAX_QPATH] = { 0 };
+		G_SkeletonGLAPath(baseSkeleton, glaPath, sizeof(glaPath));
+
 		// Get The Cinematic GLA Name
 		//----------------------------
-		if (G_StandardHumanoid(skeletonName))
+		if (G_StandardHumanoid(baseSkeleton))
 		{
 			const char* mapName = strrchr( level.mapname, '/' );
 			if (mapName)
@@ -1255,12 +1433,14 @@ int		G_ParseAnimFileSet(const char *skeletonName, const char *modelName=0)
 			}
 			char  skeletonMapName[MAX_QPATH];
 			Com_sprintf(skeletonMapName, MAX_QPATH, "_humanoid_%s", mapName);
-			const int normalGLAIndex = gi.G2API_PrecacheGhoul2Model(va("models/players/%s/_humanoid.gla", skeletonName));//double check this always comes first!
+			const int normalGLAIndex = gi.G2API_PrecacheGhoul2Model(va("models/players/%s/_humanoid.gla", baseSkeleton));//double check this always comes first!
 
 			// Make Sure To Precache The GLAs (both regular and cinematic), And Remember Their Indicies
 			//------------------------------------------------------------------------------------------
-			G_ParseAnimationFile(0,    skeletonName, fileIndex);
-			G_ParseAnimationEvtFile(0, skeletonName, fileIndex, normalGLAIndex, false/*flag for model specific*/);
+			G_ParseAnimationFile(0,    baseSkeleton, fileIndex);
+			G_ParseAnimationEvtFile(0, baseSkeleton, fileIndex, normalGLAIndex, false/*flag for model specific*/);
+
+			G_ParseMergedAnimations(glaPath, overrideName[0] ? overrideName : NULL, fileIndex);
 
 			const int cineGLAIndex = gi.G2API_PrecacheGhoul2Model( va("models/players/%s/%s.gla", skeletonMapName, skeletonMapName));
 			if (cineGLAIndex)
@@ -1282,6 +1462,7 @@ int		G_ParseAnimFileSet(const char *skeletonName, const char *modelName=0)
 			//------------------------------------------------------------------------------------------
 			G_ParseAnimationFile(0,    skeletonName, fileIndex);
 			G_ParseAnimationEvtFile(0, skeletonName, fileIndex);
+			G_ParseMergedAnimations(glaPath, NULL, fileIndex);
 		}
 	}
 
@@ -1373,6 +1554,105 @@ void G_LoadAnimFileSet( gentity_t *ent, const char *pModelName )
 #ifndef FINAL_BUILD
 		Com_Error(ERR_FATAL, "Failed to load animation file set models/players/%s/animation.cfg\n", modelName);
 #endif
+	}
+}
+
+// Writes the path of the virtual GLA of an animation override, or "" for no override.
+// "default" gives _humanoid.gla: the model does not use the override of its animoverride.cfg.
+static void G_AnimOverrideGLAPath(const char *overrideName, char *glaPath, int glaPathSize)
+{
+	glaPath[0] = 0;
+	if (overrideName && !Q_stricmp(overrideName, "default"))
+	{
+		Q_strncpyz(glaPath, GLA_HUMANOID_PATH, glaPathSize);
+	}
+	else if (overrideName && overrideName[0])
+	{
+		GLA_OverridePath(overrideName, glaPath, glaPathSize);
+	}
+}
+
+/*
+======================
+G_SetAnimOverride
+
+Forces the animation override <overrideName> on an entity, in place of the override of its model.
+"default" forces _humanoid.gla. NULL or "" removes it. Returns qfalse if the override GLA is missing or does not have the skeleton of the model.
+======================
+*/
+qboolean G_SetAnimOverride(gentity_t *ent, const char *overrideName)
+{
+	if (!ent || !ent->client || ent->playerModel < 0 || ent->playerModel >= ent->ghoul2.size())
+	{
+		return qfalse;
+	}
+
+	char glaPath[MAX_QPATH];
+	G_AnimOverrideGLAPath(overrideName, glaPath, sizeof(glaPath));
+
+	CGhoul2Info &ghoul2 = ent->ghoul2[ent->playerModel];
+	if (!gi.G2API_SetAnimOverride(&ghoul2, glaPath))
+	{
+		return qfalse;
+	}
+
+	// The animation file set follows the GLA of the instance: "_humanoid_o_<key>", or the set of the model.
+	char modelName[MAX_QPATH];
+	Q_strncpyz(modelName, ghoul2.mFileName, sizeof(modelName));
+	char *slash = strrchr(modelName, '/');
+	if (slash)
+	{
+		*slash = 0;
+	}
+	G_LoadAnimFileSet(ent, COM_SkipPath(modelName));
+
+	// Start the current animations again, with the frames of the new file set.
+	NPC_SetAnim(ent, SETANIM_LEGS, ent->client->ps.legsAnim, SETANIM_FLAG_RESTART);
+	NPC_SetAnim(ent, SETANIM_TORSO, ent->client->ps.torsoAnim, SETANIM_FLAG_RESTART);
+	return qtrue;
+}
+
+/*
+======================
+G_RestoreAnimOverrides
+
+Sets the override GLA again after a savegame load. The saved Ghoul2 data does not keep it,
+but the animation file set of the entity ("_humanoid_o_<key>") is saved.
+======================
+*/
+void G_RestoreAnimOverrides(void)
+{
+	for (int i = 0; i < globals.num_entities; i++)
+	{
+		gentity_t *ent = &g_entities[i];
+		if (!ent->inuse || !ent->client || ent->playerModel < 0 || ent->playerModel >= ent->ghoul2.size())
+		{
+			continue;
+		}
+
+		const int fileIndex = ent->client->clientInfo.animFileIndex;
+		if (fileIndex < 0 || fileIndex >= level.numKnownAnimFileSets)
+		{
+			continue;
+		}
+
+		const char *fileSet = level.knownAnimFileSets[fileIndex].filename;
+		const char *overrideName = G_AnimOverrideName(fileSet);
+		if (!overrideName && !Q_stricmp(fileSet, "_humanoid"))
+		{
+			// "_humanoid" on a model with an override GLA: "animoverride default" was set.
+			const char *glaName = gi.G2API_GetGLAName(&ent->ghoul2[ent->playerModel]);
+			if (glaName && Q_stricmp(glaName, GLA_HUMANOID_DIR "/_humanoid"))
+			{
+				overrideName = "default";
+			}
+		}
+		if (overrideName)
+		{
+			char glaPath[MAX_QPATH];
+			G_AnimOverrideGLAPath(overrideName, glaPath, sizeof(glaPath));
+			gi.G2API_SetAnimOverride(&ent->ghoul2[ent->playerModel], glaPath);
+		}
 	}
 }
 
@@ -2084,6 +2364,7 @@ qboolean NPC_ParseParms( const char *NPCName, gentity_t *NPC )
 	char	sound[MAX_QPATH];
 	char	playerModel[MAX_QPATH];
 	char	customSkin[MAX_CSPATH];
+	char	animOverride[MAX_QPATH] = { 0 };
 	clientInfo_t	*ci = &NPC->client->clientInfo;
 	renderInfo_t	*ri = &NPC->client->renderInfo;
 	gNPCstats_t		*stats = NULL;
@@ -2711,6 +2992,17 @@ qboolean NPC_ParseParms( const char *NPCName, gentity_t *NPC )
 					gi.cvar_set("g_char_model", playerModel);
 				}
 				md3Model = qfalse;
+				continue;
+			}
+
+			// animOverride: animation override of this NPC, in place of the override of its model
+			if ( !Q_stricmp( token, "animOverride" ) )
+			{
+				if ( COM_ParseString( &p, &value ) )
+				{
+					continue;
+				}
+				Q_strncpyz( animOverride, value, sizeof(animOverride) );
 				continue;
 			}
 
@@ -4746,6 +5038,11 @@ Ghoul2 Insert Start
 			}
 
 			G_SetG2PlayerModel( NPC, playerModel, customSkin, surfOff, surfOn );
+
+			if ( animOverride[0] && !G_SetAnimOverride( NPC, animOverride ) )
+			{
+				gi.Printf( S_COLOR_RED"NPC %s: animOverride %s is not used\n", NPCName, animOverride );
+			}
 		}
 	}
 /*
@@ -5081,14 +5378,10 @@ void setYounglingSkin(gentity_t* NPC, char *custom_skin, int custom_skin_size)
 	Q_strncpyz(custom_skin, skin.c_str(), custom_skin_size);
 }
 
-void NPC_AssignRandom(gentity_t* ent, char* playerModel)
+// Write "head|torso|lower" with a random head_, torso_ and lower_ skin of the model.
+// Return qfalse if the model does not have the three kinds of skin files.
+qboolean NPC_RandomSkinParts(const char* model, char* skin, int skinSize)
 {
-	if (!ent)
-		return;
-
-	if (!ent->NPC_skin)
-		return;
-
 	std::string headList[64];
 	std::string torsoList[64];
 	std::string lowerList[64];
@@ -5099,37 +5392,128 @@ void NPC_AssignRandom(gentity_t* ent, char* playerModel)
 	int		numfiles;
 	int j;
 	int headCount = 0, torsoCount = 0, lowerCount = 0;
-	numfiles = gi.FS_GetFileList(va("models/players/%s", playerModel), ".skin", filelist, sizeof(filelist));
+	numfiles = gi.FS_GetFileList(va("models/players/%s", model), ".skin", filelist, sizeof(filelist));
 	fileptr = filelist;
 
 	for (j = 0; j < numfiles; j++, fileptr += filelen + 1)
 	{
 		filelen = strlen(fileptr);
 		COM_StripExtension(fileptr, skinname, sizeof(skinname));
-		if (Q_stricmpn(skinname, "head_", 5) == 0)
+		if (Q_stricmpn(skinname, "head_", 5) == 0 && headCount < 64)
 		{
 			headList[headCount++] = skinname;
 		}
-		else if (Q_stricmpn(skinname, "torso_", 6) == 0)
+		else if (Q_stricmpn(skinname, "torso_", 6) == 0 && torsoCount < 64)
 		{
 			torsoList[torsoCount++] = skinname;
 		}
-		else if (Q_stricmpn(skinname, "lower_", 6) == 0)
+		else if (Q_stricmpn(skinname, "lower_", 6) == 0 && lowerCount < 64)
 		{
 			lowerList[lowerCount++] = skinname;
 		}
 	}
 
-	if (!headList[0].empty() && !torsoList[0].empty() && !lowerList[0].empty())
+	if (!headCount || !torsoCount || !lowerCount)
 	{
-		std::string newSkin;
-		newSkin.append(headList[Q_irand(0, headCount - 1)]);
-		newSkin.append("|");
-		newSkin.append(torsoList[Q_irand(0, torsoCount - 1)]);
-		newSkin.append("|");
-		newSkin.append(lowerList[Q_irand(0, lowerCount - 1)]);
-		ent->NPC_skin = G_NewString(newSkin.c_str());
+		return qfalse;
 	}
+	Com_sprintf(skin, skinSize, "%s|%s|%s", headList[Q_irand(0, headCount - 1)].c_str(),
+		torsoList[Q_irand(0, torsoCount - 1)].c_str(), lowerList[Q_irand(0, lowerCount - 1)].c_str());
+	return qtrue;
+}
+
+void NPC_AssignRandom(gentity_t* ent, char* playerModel)
+{
+	if (!ent)
+		return;
+
+	if (!ent->NPC_skin)
+		return;
+
+	char skin[MAX_QPATH * 3];
+	if (NPC_RandomSkinParts(playerModel, skin, sizeof(skin)))
+	{
+		ent->NPC_skin = G_NewString(skin);
+	}
+}
+
+qboolean NPC_GetModelInfo(const char* npcName, npcModelInfo_t* info)
+{
+	const char* token;
+	const char* value;
+	const char* p = NPCParms;
+
+	memset(info, 0, sizeof(*info));
+	COM_BeginParseSession();
+	while (p)
+	{
+		token = COM_ParseExt(&p, qtrue);
+		if (!token[0])
+		{
+			COM_EndParseSession();
+			return qfalse;
+		}
+		if (!Q_stricmp(token, npcName))
+		{
+			break;
+		}
+		SkipBracedSection(&p);
+	}
+	if (!p || G_ParseLiteral(&p, "{"))
+	{
+		COM_EndParseSession();
+		return qfalse;
+	}
+
+	int depth = 1;
+	while (p && depth)
+	{
+		token = COM_ParseExt(&p, qtrue);
+		if (!token[0])
+		{
+			break;
+		}
+		if (!Q_stricmp(token, "{"))
+		{
+			depth++;
+			continue;
+		}
+		if (!Q_stricmp(token, "}"))
+		{
+			depth--;
+			continue;
+		}
+		char* dest = NULL;
+		int destSize = 0;
+		if (depth == 1 && !Q_stricmp(token, "playerModel"))
+		{
+			dest = info->model;
+			destSize = sizeof(info->model);
+		}
+		else if (depth == 1 && !Q_stricmp(token, "customSkin"))
+		{
+			dest = info->skin;
+			destSize = sizeof(info->skin);
+		}
+		else if (depth == 1 && !Q_stricmp(token, "saber"))
+		{
+			dest = info->saber;
+			destSize = sizeof(info->saber);
+		}
+		else if (depth == 1 && !Q_stricmp(token, "saberColor"))
+		{
+			dest = info->saberColor;
+			destSize = sizeof(info->saberColor);
+		}
+		if (dest && !COM_ParseString(&p, &value))
+		{
+			Q_strncpyz(dest, value, destSize);
+			continue;
+		}
+		SkipRestOfLine(&p);
+	}
+	COM_EndParseSession();
+	return (qboolean)(info->model[0] != '\0');
 }
 
 int Get_SaberStyleValue(int style)

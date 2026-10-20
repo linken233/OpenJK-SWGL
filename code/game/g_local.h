@@ -395,6 +395,22 @@ void Touch_Item (gentity_t *ent, gentity_t *other, trace_t *trace);
 
 void ClearRegisteredItems( void );
 void RegisterItem( gitem_t *item );
+
+// fuel items: jetpack and wrist flamethrower (g_items.cpp)
+qboolean G_IsFuelItemTag( int tag );
+const gitem_t *G_FuelItem( const playerState_t *ps, int tag );
+void G_GiveFuelItem( gentity_t *ent, const gitem_t *item, int fuel );
+void G_DropFuelItem( gentity_t *ent, int tag );
+void G_JetpackToggle( gentity_t *ent );
+void G_JetpackOff( gentity_t *ent );
+void G_JetpackRemoveModel( gentity_t *ent );
+void G_JetpackThink( gentity_t *ent );
+qboolean G_JetpackBoosting( const usercmd_t *cmd );
+void G_WristFlamerToggle( gentity_t *ent );
+void G_WristFlamerOff( gentity_t *ent );
+void G_WristFlamerRemoveModel( gentity_t *ent );
+void G_WristFlamerThink( gentity_t *ent );
+void G_FuelItemsLoopSound( gentity_t *ent );
 void SaveRegisteredItems( void );
 
 //
@@ -466,6 +482,9 @@ void ExplodeDeath( gentity_t *self );
 void GoExplodeDeath( gentity_t *self, gentity_t *other, gentity_t *activator);
 void G_ApplyKnockback( gentity_t *targ, const vec3_t newDir, float knockback );
 void G_Throw( gentity_t *targ, const vec3_t newDir, float push );
+qboolean IsScopedZoom( void );			// The player zoom is a scope (sniper or rifle scope)
+qboolean is_player_scoped( gentity_t *ent );
+int WP_ResolveAttackIndex( gentity_t *gent, qboolean secondaryButton );	// the one place that maps the buttons to an attack index
 
 // damage flags
 #define DAMAGE_RADIUS			0x00000001	// damage was indirect

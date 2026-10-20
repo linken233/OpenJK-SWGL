@@ -21,6 +21,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 ===========================================================================
 */
 
+#define Q_MATH_C	// build the vector helpers out of line here
 #include "q_math.h"
 #include <assert.h>
 #include <float.h>

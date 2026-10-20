@@ -1,0 +1,171 @@
+/*
+Copyright (C) 2013 - 2015, OpenJK contributors
+
+This file is part of the OpenJK source code.
+
+OpenJK is free software; you can redistribute it and/or modify it
+under the terms of the GNU General Public License version 2 as
+published by the Free Software Foundation.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program; if not, see <http://www.gnu.org/licenses/>.
+*/
+
+// ========================================================================== //
+// The screen distortion of the force push and the cloak, as the rasterizer
+// draws it: the finished image is sampled at another place and blended over
+// itself with the GL blend of the shader. The primary rays record the
+// distortion surfaces of each pixel in IMG_PT_DISTORT (trace_distortion_layers);
+// the tone mapper has finished the image, which a copy (TEX_TAA_DISTORT_SRC)
+// gives to the samples.
+// ========================================================================== //
+
+#version 460
+#extension GL_GOOGLE_include_directive    : enable
+#extension GL_EXT_nonuniform_qualifier    : enable
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+#include "../utils.glsl"
+
+#define GLOBAL_UBO_DESC_SET_IDX 3
+#include "../global_ubo.h"
+
+#define GLOBAL_TEXTURES_DESC_SET_IDX 1
+#include "../global_textures.h"
+
+#define VERTEX_BUFFER_DESC_SET_IDX 0
+#define VERTEX_READONLY 1
+#include "../vertex_buffer.h"
+
+#include "../checkerboard.glsl"
+#include "../projection.glsl"
+
+// The image in the units that the rasterizer blends: the SDR image is in sRGB already, the HDR image
+// is linear and scaled by the peak brightness.
+vec3 to_screen_units(vec3 v)
+{
+    if (global_ubo.tonemap_hdr == 0)
+        return v;
+
+    return linear_to_srgb(max(v, vec3(0.0)) / (global_ubo.tm_hdr_peak_nits / 80));
+}
+
+vec3 from_screen_units(vec3 v)
+{
+    if (global_ubo.tonemap_hdr == 0)
+        return clamp(v, vec3(0.0), vec3(1.0));
+
+    return srgb_to_linear(max(v, vec3(0.0))) * (global_ubo.tm_hdr_peak_nits / 80);
+}
+
+// The finished image at a screen texture coordinate.
+vec3 screen_sample(vec2 uv)
+{
+    const vec2 output_size = vec2(global_ubo.taa_output_width, global_ubo.taa_output_height);
+    const vec2 image_size = vec2(textureSize(TEX_TAA_DISTORT_SRC, 0));
+
+    // The edge of the output is the edge of the screen; the image can be larger.
+    uv = clamp(uv, 0.5 / output_size, 1.0 - 0.5 / output_size);
+
+    return to_screen_units(textureLod(TEX_TAA_DISTORT_SRC, uv * output_size / image_size, 0).rgb);
+}
+
+// One draw of a distortion surface: the screen at uv, times the color, over dst.
+vec3 distortion_pass(vec3 dst, vec2 uv, vec4 color, uint blend)
+{
+    vec3 L = vec3(0.0), T = vec3(1.0);
+
+    blend_stage_layer(blend, vec4(clamp(screen_sample(uv) * color.rgb, vec3(0.0), vec3(1.0)), color.a), L, T);
+
+    return L + T * dst;
+}
+
+// A full-screen pass of the cloak (RB_DistortionFill): the screen behind, zoomed toward the centre.
+vec3 cloak_pass(vec3 dst, vec2 pixel_uv, vec4 pass)
+{
+    const uint blend = uint(pass.w);
+
+    if (blend == 0u)
+        return dst;
+
+    return distortion_pass(dst, (pixel_uv * 2.0 - 1.0) * pass.xy * 0.5 + 0.5, vec4(1.0, 1.0, 1.0, pass.z), blend);
+}
+
+// The surfaces of a record over dst, the farthest first.
+vec3 apply_record(uvec4 record, vec2 pixel_uv, vec3 dst)
+{
+    for (int layer = MAX_DISTORTION_LAYERS - 1; layer >= 0; layer--)
+    {
+        const uint instance_plus_one = (record.z >> (16u * uint(layer))) & 0xffffu;
+
+        if (instance_plus_one == 0u)
+            continue;
+
+        const uint instance = instance_plus_one - 1u;
+
+        if ((get_model_instance_shader_uint(instance, 1) & INSTANCE_DISTORT_CLOAK) != 0u)
+        {
+            dst = cloak_pass(dst, pixel_uv, global_ubo.distortion_cloak_pass0);
+            dst = cloak_pass(dst, pixel_uv, global_ubo.distortion_cloak_pass1);
+        }
+        else
+        {
+            dst = distortion_pass(dst, unpackUnorm2x16(record[layer]) * 2.0 - 0.5,
+                unpackUnorm4x8(get_model_instance_shader_uint(instance, RTX_DISTORT_FIRST + 8u)),
+                get_model_instance_shader_uint(instance, RTX_DISTORT_FIRST + 9u));
+        }
+    }
+
+    return dst;
+}
+
+// The record of a pixel of the render. The tracer stores it in the checkerboard layout.
+uvec4 load_record(ivec2 render_pos)
+{
+    ivec2 pos = flat_to_checker(render_pos, global_ubo.width);
+
+    if (global_ubo.pt_swap_checkerboard != 0)
+        pos.x += (pos.x < global_ubo.width / 2) ? global_ubo.width / 2 : -(global_ubo.width / 2);
+
+    return texelFetch(TEX_PT_DISTORT, pos, 0);
+}
+
+void main()
+{
+    const ivec2 ipos = ivec2(gl_GlobalInvocationID);
+
+    if (ipos.x >= global_ubo.taa_output_width || ipos.y >= global_ubo.taa_output_height)
+        return;
+
+    // The four pixels of the render around this one, as the TAA upscale reads them.
+    const ivec2 render_max = ivec2(global_ubo.width - 1, global_ubo.height - 1);
+    const vec2 render_pos = clamp(hires_to_lores(ipos), vec2(0.0), vec2(render_max));
+    const ivec2 p0 = ivec2(floor(render_pos));
+    const ivec2 p1 = min(p0 + ivec2(1), render_max);
+    const vec2 w = render_pos - vec2(p0);
+
+    const uvec4 records[4] = uvec4[4](load_record(p0), load_record(ivec2(p1.x, p0.y)), load_record(ivec2(p0.x, p1.y)), load_record(p1));
+    const float weights[4] = float[4]((1.0 - w.x) * (1.0 - w.y), w.x * (1.0 - w.y), (1.0 - w.x) * w.y, w.x * w.y);
+
+    if ((records[0].z | records[1].z | records[2].z | records[3].z) == 0u)
+        return;
+
+    // The edge of a surface fades with the weight of its pixels.
+    const vec2 pixel_uv = (vec2(ipos) + 0.5) / vec2(global_ubo.taa_output_width, global_ubo.taa_output_height);
+    const vec3 original = to_screen_units(texelFetch(TEX_TAA_DISTORT_SRC, ipos, 0).rgb);
+    vec3 result = original;
+
+    for (int i = 0; i < 4; i++)
+    {
+        if (records[i].z != 0u)
+            result += weights[i] * (apply_record(records[i], pixel_uv, original) - original);
+    }
+
+    imageStore(IMG_TAA_OUTPUT, ipos, vec4(from_screen_units(result), 0.0));
+}

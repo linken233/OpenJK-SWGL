@@ -196,9 +196,13 @@ bool SavedGame::read_chunk(
 	const std::string chunk_id_string = get_chunk_id_string(
 		chunk_id);
 
-	::Com_DPrintf(
-		"Attempting read of chunk %s\n",
-		chunk_id_string.c_str());
+	// One line per chunk floods the log at developer 1; show it at developer 2 only.
+	if (::com_developer && ::com_developer->integer > 1)
+	{
+		::Com_DPrintf(
+			"Attempting read of chunk %s\n",
+			chunk_id_string.c_str());
+	}
 
 	uint32_t loaded_chunk_id = 0;
 	uint32_t loaded_data_size = 0;
@@ -398,9 +402,12 @@ bool SavedGame::write_chunk(
 	const std::string chunk_id_string = get_chunk_id_string(
 		chunk_id);
 
-	::Com_DPrintf(
-		"Attempting write of chunk %s\n",
-		chunk_id_string.c_str());
+	if (::com_developer && ::com_developer->integer > 1)
+	{
+		::Com_DPrintf(
+			"Attempting write of chunk %s\n",
+			chunk_id_string.c_str());
+	}
 
 	if (::sv_testsave->integer != 0)
 	{

@@ -71,7 +71,7 @@ gentity_t* WP_DropGrenade(gentity_t* ent, int attackIndex);
 // Laser Traps
 void touchLaserTrap(gentity_t* ent, gentity_t* other, trace_t* trace);
 void CreateLaserTrap(gentity_t* laserTrap, vec3_t start, gentity_t* owner);
-void WP_PlaceLaserTrap(gentity_t* ent, qboolean alt_fire);
+void WP_PlaceLaserTrap(gentity_t* ent, qboolean proximity);
 void prox_mine_think(gentity_t* ent);
 void prox_mine_stick(gentity_t* self, gentity_t* other, trace_t* trace);
 
@@ -87,6 +87,5 @@ void WP_EmplacedFire( gentity_t *ent );
 void WP_Melee( gentity_t *ent );
 
 //Weapon still to do
-void WP_FireFlechette(gentity_t* ent, qboolean alt_fire);
-void WP_FireRocket( gentity_t *ent, qboolean alt_fire );
+void WP_FireFlechette(gentity_t* ent, qboolean explosive);
 

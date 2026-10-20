@@ -85,10 +85,25 @@ static void Item_TextScroll_BuildLines ( itemDef_t* item );
 //static qboolean debugMode = qfalse;
 static qboolean g_waitingForKey = qfalse;
 static qboolean g_editingField = qfalse;
+qboolean Item_HandleAccept(itemDef_t * item);
 
 static itemDef_t *g_bindItem = NULL;
 static itemDef_t *g_editItem = NULL;
 static itemDef_t *itemCapture = NULL;   // item that has the mouse captured ( if any )
+static itemDef_t *g_dropdownItem = NULL;	// the dropdown list box that is open ( if any )
+static int g_dropdownHover = -1;			// the feeder index under the mouse in the open dropdown, else -1
+
+static int		Item_Feeder_Count(itemDef_t *item);
+static const char *Item_Feeder_Text(itemDef_t *item, int index, int column, qhandle_t *handle);
+static void		Item_Feeder_Select(itemDef_t *item, int index);
+static void		Item_Dropdown_SyncSelection(itemDef_t *item);
+static void		Item_ListBox_DropdownClose(void);
+static void		Item_ListBox_DropdownPaint(itemDef_t *item);
+static void		Item_ListBox_DropdownMouseMove(menuDef_t *menu, float x, float y);
+static qboolean	Item_ListBox_DropdownHeaderKey(itemDef_t *item, int key);
+void			Item_ListBox_Paint(itemDef_t *item);
+void			Item_Action(itemDef_t *item);
+static void		Item_ListBox_DropdownOpenKey(int key, qboolean down);
 
 #define DOUBLE_CLICK_DELAY 300
 static int lastListBoxClickTime = 0;
@@ -162,6 +177,14 @@ const char *styles [] = {
 "WINDOW_STYLE_SHADER",
 "WINDOW_STYLE_TEAMCOLOR",
 "WINDOW_STYLE_CINEMATIC",
+NULL
+};
+
+// keep in sync with the BACKGROUND_* defines in menudef.h
+const char *backgroundStyles [] = {
+"BACKGROUND_NONE",
+"BACKGROUND_NINE_PATCH_STRETCH",
+"BACKGROUND_NINE_PATCH_REPEAT",
 NULL
 };
 
@@ -1141,6 +1164,38 @@ static void Item_ApplyHacks( itemDef_t *item ) {
 
 /*
 ================
+Item_ConvertMultiDropdown
+	A multi with the "dropdown" keyword becomes a list box that reads its entries from the multi.
+	Returns qtrue if the item was converted.
+================
+*/
+static qboolean Item_ConvertMultiDropdown( itemDef_t *item )
+{
+	if (item->type != ITEM_TYPE_MULTI || !item->typeData)
+	{
+		return qfalse;
+	}
+
+	multiDef_t *multiPtr = (multiDef_t*)item->typeData;
+	listBoxDef_t *listPtr = multiPtr->listDef;
+	if (!listPtr || listPtr->dropdownRows <= 0)
+	{
+		return qfalse;
+	}
+	if ((item->window.flags & WINDOW_HORIZONTAL) || listPtr->elementHeight <= 0)
+	{
+		Com_Printf(S_COLOR_YELLOW "WARNING: dropdown on multi '%s' needs an elementheight\n", item->window.name ? item->window.name : "");
+		return qfalse;
+	}
+
+	listPtr->multi = multiPtr;
+	item->typeData = listPtr;
+	item->type = ITEM_TYPE_LISTBOX;
+	return qtrue;
+}
+
+/*
+================
 MenuParse_itemDef
 ================
 */
@@ -1159,6 +1214,10 @@ qboolean MenuParse_itemDef( itemDef_t *item )
 		newItem->parent = menu->items[menu->itemCount]->parent = menu;
 		menu->itemCount++;
 		Item_ApplyHacks( newItem );
+		if (Item_ConvertMultiDropdown( newItem ))
+		{
+			Item_InitControls( newItem );
+		}
 	}
 	else
 	{
@@ -1633,6 +1692,11 @@ Menu_RunCloseScript
 */
 static void Menu_RunCloseScript(menuDef_t *menu)
 {
+	if (g_dropdownItem && g_dropdownItem->parent == menu)
+	{
+		Item_ListBox_DropdownClose();
+	}
+
 	if (menu && menu->window.flags & WINDOW_VISIBLE && menu->onClose)
 	{
 		itemDef_t item;
@@ -3239,6 +3303,8 @@ ItemParse_asset_model
 	asset_model <string>
 ===============
 */
+extern void UI_SaberAttachToChar( itemDef_t *item );
+
 qboolean ItemParse_asset_model_go( itemDef_t *item, const char *name )
 {
 	modelDef_t *modelPtr;
@@ -3247,6 +3313,8 @@ qboolean ItemParse_asset_model_go( itemDef_t *item, const char *name )
 
 	if (!Q_stricmp(&name[strlen(name) - 4], ".glm"))
 	{ //it's a ghoul2 model then
+		// Sabers in slots 1+ are bolted to model 0; a new model 0 invalidates their bolt index.
+		const qboolean hadSabers = (qboolean)((item->flags & ITF_ISCHARACTER) && item->ghoul2.size() > 1);
 		if ( item->ghoul2.size() && item->ghoul2[0].mModelindex >= 0)
 		{
 			DC->g2_RemoveGhoul2Model( item->ghoul2, 0 );
@@ -3264,6 +3332,10 @@ qboolean ItemParse_asset_model_go( itemDef_t *item, const char *name )
 			if ( modelPtr->g2skin )
 			{
 				DC->g2_SetSkin( &item->ghoul2[0], 0, modelPtr->g2skin );//this is going to set the surfs on/off matching the skin file
+			}
+			if ( hadSabers )
+			{
+				UI_SaberAttachToChar( item );
 			}
 		}
 	}
@@ -3641,20 +3713,98 @@ qboolean ItemParse_notselectable( itemDef_t *item )
 
 /*
 ===============
+Item_DropdownDef
+	the list box data that the dropdown keywords write: the typeData of a list box,
+	or the data that a multi keeps until Item_ConvertMultiDropdown; NULL for other items
+===============
+*/
+static listBoxDef_t *Item_DropdownDef( itemDef_t *item )
+{
+	Item_ValidateTypeData(item);
+	if (item->type == ITEM_TYPE_LISTBOX)
+	{
+		return (listBoxDef_t*)item->typeData;
+	}
+	if (item->type == ITEM_TYPE_MULTI && item->typeData)
+	{
+		multiDef_t *multiPtr = (multiDef_t*)item->typeData;
+		if (!multiPtr->listDef)
+		{
+			multiPtr->listDef = (listBoxDef_t*)UI_Alloc(sizeof(listBoxDef_t));
+			memset(multiPtr->listDef, 0, sizeof(listBoxDef_t));
+		}
+		return multiPtr->listDef;
+	}
+	return NULL;
+}
+
+/*
+===============
+ItemParse_scrollbarsize
+	scrollbarsize <width>: width of the scrollbar of a list box
+===============
+*/
+qboolean ItemParse_scrollbarsize( itemDef_t *item )
+{
+	listBoxDef_t *listPtr = Item_DropdownDef(item);
+
+	if (!listPtr || PC_ParseFloat(&listPtr->scrollbarSize))
+	{
+		return qfalse;
+	}
+	return qtrue;
+}
+
+/*
+===============
 ItemParse_scrollhidden
 	scrollhidden
 ===============
 */
 qboolean ItemParse_scrollhidden( itemDef_t *item )
 {
-	listBoxDef_t *listPtr;
-	Item_ValidateTypeData(item);
-	listPtr = (listBoxDef_t*)item->typeData;
+	listBoxDef_t *listPtr = Item_DropdownDef(item);
 
-	if (item->type == ITEM_TYPE_LISTBOX && listPtr)
+	if (listPtr)
 	{
 		listPtr->scrollhidden = qtrue;
 	}
+	return qtrue;
+}
+
+/*
+===============
+ItemParse_dropdown
+	dropdown <rows>: the list box, or the multi, is a dropdown; the open list shows <rows> rows
+===============
+*/
+qboolean ItemParse_dropdown( itemDef_t *item )
+{
+	listBoxDef_t *listPtr = Item_DropdownDef(item);
+
+	if (!listPtr || PC_ParseInt(&listPtr->dropdownRows))
+	{
+		return qfalse;
+	}
+	return qtrue;
+}
+
+/*
+===============
+ItemParse_dropdownarrow
+	dropdownarrow <shader>: the arrow at the right of the dropdown header
+===============
+*/
+qboolean ItemParse_dropdownarrow( itemDef_t *item )
+{
+	listBoxDef_t *listPtr = Item_DropdownDef(item);
+	const char *temp;
+
+	if (!listPtr || PC_ParseString(&temp))
+	{
+		return qfalse;
+	}
+	listPtr->dropdownArrow = DC->registerShaderNoMip(temp);
 	return qtrue;
 }
 
@@ -3769,7 +3919,7 @@ qboolean ItemParse_elementheight( itemDef_t *item )
 	listBoxDef_t *listPtr;
 
 	Item_ValidateTypeData(item);
-	listPtr = (listBoxDef_t*)item->typeData;
+	listPtr = (item->type == ITEM_TYPE_MULTI) ? Item_DropdownDef(item) : (listBoxDef_t*)item->typeData;
 	if (PC_ParseFloat(&listPtr->elementHeight))
 	{
 		return qfalse;
@@ -4205,6 +4355,103 @@ qboolean ItemParse_background( itemDef_t *item)
 		return qfalse;
 	}
 	item->window.background = ui.R_RegisterShaderNoMip(temp);
+	Q_strncpyz(item->window.backgroundName, temp, sizeof(item->window.backgroundName));
+	return qtrue;
+}
+
+/*
+===============
+ItemParse_backgroundStyle
+	backgroundStyle <BACKGROUND_NONE | BACKGROUND_NINE_PATCH_STRETCH | BACKGROUND_NINE_PATCH_REPEAT>
+===============
+*/
+qboolean ItemParse_backgroundStyle( itemDef_t *item)
+{
+	int			i;
+	const char	*tempStr;
+
+	if (PC_ParseString(&tempStr))
+	{
+		return qfalse;
+	}
+
+	// "NONE" on its own is accepted as a shorthand for BACKGROUND_NONE
+	if (!Q_stricmp(tempStr,"NONE"))
+	{
+		item->window.backgroundStyle = BACKGROUND_NONE;
+		return qtrue;
+	}
+
+	i=0;
+	while (backgroundStyles[i])
+	{
+		if (Q_stricmp(tempStr,backgroundStyles[i])==0)
+		{
+			item->window.backgroundStyle = i;
+			break;
+		}
+		i++;
+	}
+
+	if (backgroundStyles[i] == NULL)
+	{
+		PC_ParseWarning(va("Unknown background style value '%s'",tempStr));
+	}
+
+	return qtrue;
+}
+
+/*
+===============
+ItemParse_backgroundOffset
+	backgroundOffset <top> <right> <bottom> <left>, in pixels of the background shader
+===============
+*/
+qboolean ItemParse_backgroundOffset( itemDef_t *item)
+{
+	int		i;
+
+	for (i = 0; i < 4; i++)
+	{
+		if (PC_ParseFloat(&item->window.backgroundOffset[i]))
+		{
+			return qfalse;
+		}
+
+		if (item->window.backgroundOffset[i] < 0.0f)
+		{
+			PC_ParseWarning(va("Negative background offset %f",item->window.backgroundOffset[i]));
+			item->window.backgroundOffset[i] = 0.0f;
+		}
+	}
+
+	return qtrue;
+}
+
+/*
+===============
+ItemParse_backgroundSize
+	backgroundSize <width> <height>, optional override when the image file cannot be read
+===============
+*/
+qboolean ItemParse_backgroundSize( itemDef_t *item)
+{
+	if (PC_ParseFloat(&item->window.backgroundSize[0]))
+	{
+		return qfalse;
+	}
+
+	if (PC_ParseFloat(&item->window.backgroundSize[1]))
+	{
+		return qfalse;
+	}
+
+	if (item->window.backgroundSize[0] <= 0.0f || item->window.backgroundSize[1] <= 0.0f)
+	{
+		PC_ParseWarning("Background size must be positive");
+		item->window.backgroundSize[0] = item->window.backgroundSize[1] = 0.0f;
+	}
+
 	return qtrue;
 }
 
@@ -4894,6 +5141,7 @@ void Item_ValidateTypeData(itemDef_t *item)
 	else if (item->type == ITEM_TYPE_MULTI)
 	{
 		item->typeData = UI_Alloc(sizeof(multiDef_t));
+		memset(item->typeData, 0, sizeof(multiDef_t));
 	}
 	else if (item->type == ITEM_TYPE_MODEL)
 	{
@@ -5011,6 +5259,9 @@ keywordHash_t itemParseKeywords[] = {
 	{"autowrapped",		ItemParse_autowrapped,		},
 	{"backcolor",		ItemParse_backcolor,		},
 	{"background",		ItemParse_background,		},
+	{"backgroundStyle",	ItemParse_backgroundStyle,	},
+	{"backgroundOffset",ItemParse_backgroundOffset,	},
+	{"backgroundSize",	ItemParse_backgroundSize,	},
 	{"border",			ItemParse_border,			},
 	{"bordercolor",		ItemParse_bordercolor,		},
 	{"bordersize",		ItemParse_bordersize,		},
@@ -5027,6 +5278,8 @@ keywordHash_t itemParseKeywords[] = {
 	{"desctext",		ItemParse_descText			},
 	{"disableCvar",		ItemParse_disableCvar,		},
 	{"doubleclick",		ItemParse_doubleClick,		},
+	{"dropdown",		ItemParse_dropdown,			},
+	{"dropdownarrow",	ItemParse_dropdownarrow,	},
 	{"elementheight",	ItemParse_elementheight,	},
 	{"elementtype",		ItemParse_elementtype,		},
 	{"elementwidth",	ItemParse_elementwidth,		},
@@ -5061,6 +5314,7 @@ keywordHash_t itemParseKeywords[] = {
 	{"notselectable",	ItemParse_notselectable,	},
 //JLF
 	{"scrollhidden",	ItemParse_scrollhidden, 	},
+	{"scrollbarsize",	ItemParse_scrollbarsize,	},
 //JLF END
 	{"onFocus",			ItemParse_onFocus,			},
 	{"outlinecolor",	ItemParse_outlinecolor,		},
@@ -5335,6 +5589,21 @@ void Item_InitControls(itemDef_t *item)
 			listPtr->startPos = 0;
 			listPtr->endPos = 0;
 			listPtr->cursorPos = 0;
+
+			// Only a vertical text list can be a dropdown.
+			if (listPtr->dropdownRows > 0 && ((item->window.flags & WINDOW_HORIZONTAL) || listPtr->elementStyle == LISTBOX_IMAGE || item->special == FEEDER_MODEL_SKINS || listPtr->elementHeight <= 0))
+			{
+				Com_Printf(S_COLOR_YELLOW "WARNING: dropdown on item '%s' needs a vertical text list box with an elementheight\n", item->window.name ? item->window.name : "");
+				listPtr->dropdownRows = 0;
+			}
+
+			// _UI_DrawRect scales the border size to the screen and overlaps the corners.
+			// The dropdown paints its border in virtual units, and the header and the list share one line.
+			if (listPtr->dropdownRows > 0 && item->window.border == WINDOW_BORDER_FULL)
+			{
+				listPtr->dropdownBorder = item->window.borderSize;
+				item->window.border = 0;
+			}
 		}
 	}
 }
@@ -5376,6 +5645,56 @@ qboolean String_Parse(const char **p, const char **out)
 		return (qboolean)(*out != NULL);
 	}
 	return qfalse;
+}
+
+/*
+===============
+UI_RunMenuCommand
+	runs .menu action commands from cgame; a token absent from commandList falls
+	through to the uiScript handler
+===============
+*/
+void UI_RunMenuCommand(const char *command)
+{
+	// carries the menu via parent; static because itemDef_t holds a CGhoul2Info_v
+	static itemDef_t	context;
+
+	if (!command || !command[0])
+	{
+		return;
+	}
+
+	// "loadframe show|hide": the red frame of loadscreen.menu shares its name with the
+	// invisible background item, so it is found by its border instead of by name
+	if (!Q_stricmpn(command, "loadframe ", 10))
+	{
+		menuDef_t *loadMenu = Menus_FindByName("loadscreen");
+		const qboolean show = (qboolean)(Q_stricmp(command + 10, "show") == 0);
+
+		if (loadMenu)
+		{
+			for (int i = 0; i < loadMenu->itemCount; i++)
+			{
+				itemDef_t *frame = loadMenu->items[i];
+
+				if (frame->window.border && frame->window.name && Q_stricmp(frame->window.name, "background") == 0)
+				{
+					if (show)
+					{
+						frame->window.flags |= WINDOW_VISIBLE;
+					}
+					else
+					{
+						frame->window.flags &= ~WINDOW_VISIBLE;
+					}
+				}
+			}
+		}
+		return;
+	}
+
+	context.parent = Menu_GetFocused();
+	Item_RunScript(&context, command);
 }
 
 /*
@@ -5547,6 +5866,9 @@ Menus_Activate
 */
 void  Menus_Activate(menuDef_t *menu)
 {
+	// The new menu takes the keys, so a dropdown of the old menu cannot stay open.
+	Item_ListBox_DropdownClose();
+
 	menu->window.flags |= (WINDOW_HASFOCUS | WINDOW_VISIBLE);
 
 	if (menu->onOpen)
@@ -5573,6 +5895,9 @@ void  Menus_Activate(menuDef_t *menu)
 static const char *g_bindCommands[] = {
 	"+altattack",
 	"+attack",
+#ifndef JK2_MODE
+	"+block",
+#endif
 	"+zoom",
 	"+kick",
 	"+back",
@@ -5596,11 +5921,18 @@ static const char *g_bindCommands[] = {
 	"+strafe",
 	"+use",
 	"+useforce",
+	"bow",
 	"centerview",
 	"cg_thirdperson !",
 	"datapad",
+	"dropcurrentweapon",
 	"dualwield",
 	"exitview",
+	"flourish",
+	"gloat",
+	"meditate",
+	"screenshot",
+	"toggleconsole",
 #ifndef JK2_MODE
 	"force_absorb",
 #endif
@@ -6056,6 +6388,8 @@ void Menu_Reset(void)
 	//FIXME iterate menus to destoy G2 assets.
 	int i;
 
+	Item_ListBox_DropdownClose();
+
 	for (i = 0; i < menuCount; i++)
 	{
 		Menu_FreeGhoulItems( &Menus[i] );
@@ -6475,6 +6809,18 @@ void Menu_Paint(menuDef_t *menu, qboolean forcePaint)
 		menu->appearanceCnt++;
 	}
 
+	// The open dropdown list is on top of all the items.
+	if (g_dropdownItem && g_dropdownItem->parent == menu)
+	{
+		if (g_dropdownItem->window.flags & WINDOW_VISIBLE)
+		{
+			Item_ListBox_DropdownPaint(g_dropdownItem);
+		}
+		else
+		{
+			Item_ListBox_DropdownClose();
+		}
+	}
 
 	if (uis.debugMode)
 	{
@@ -6987,6 +7333,281 @@ void Item_TextScroll_Paint(itemDef_t *item)
 }
 
 /*
+===============
+Item_ListBox_ScrollbarSize
+	width of the scrollbar of a list box: the "scrollbarsize" keyword, else SCROLLBAR_SIZE
+	(a dropdown: 0.6 of a row)
+===============
+*/
+float Item_ListBox_ScrollbarSize(itemDef_t *item)
+{
+	const listBoxDef_t *listPtr = (const listBoxDef_t *)item->typeData;
+	if (listPtr && listPtr->scrollbarSize > 0)
+	{
+		return listPtr->scrollbarSize;
+	}
+	if (listPtr && listPtr->dropdownRows > 0)
+	{
+		return listPtr->elementHeight * 0.6f;
+	}
+	return SCROLLBAR_SIZE;
+}
+
+// The outer rect of the open list, border included. Valid while listBoxDef_t::dropdownList is set.
+static rectDef_t g_dropdownOuter;
+
+/*
+===============
+Item_ListBox_DropdownListRect
+	the outer rect of the open list: under the header, or above it if the screen is too short.
+	The list and the header share one border line.
+===============
+*/
+static void Item_ListBox_DropdownListRect(itemDef_t *item, const rectDef_t *header, rectDef_t *r)
+{
+	const listBoxDef_t *listPtr = (const listBoxDef_t *)item->typeData;
+	const float border = listPtr->dropdownBorder;
+	const int count = Item_Feeder_Count(item);
+	const int rows = Com_Clampi(1, listPtr->dropdownRows, count);
+
+	r->x = header->x;
+	r->w = header->w;
+	r->h = rows * listPtr->elementHeight + 2 * border;
+	r->y = header->y + header->h - border;
+	if (r->y + r->h > SCREEN_HEIGHT && header->y + border - r->h >= 0)
+	{
+		r->y = header->y + border - r->h;
+	}
+}
+
+/*
+===============
+Item_ListBox_DropdownInnerRect
+	the rect that the list box code gets for the open list.
+	The list box code keeps 1 unit to the right, top and bottom edges; this rect puts the scrollbar on the border.
+	The text of row k is at y + 1 + k * elementHeight, directly under the border.
+===============
+*/
+static void Item_ListBox_DropdownInnerRect(const listBoxDef_t *listPtr, const rectDef_t *outer, rectDef_t *r)
+{
+	const float border = listPtr->dropdownBorder;
+
+	r->x = outer->x + border;
+	r->y = outer->y + border - 1;
+	r->w = outer->w - 2 * border + 1;
+	r->h = outer->h - 2 * border + 2;
+}
+
+// While this object exists, the rect of the open dropdown is the inner rect of its list.
+// The list box code then paints and hit-tests the list. Nested objects do nothing.
+class DropdownListScope
+{
+public:
+	explicit DropdownListScope(itemDef_t *item) : m_item(item), m_active(qfalse)
+	{
+		listBoxDef_t *listPtr = (listBoxDef_t *)item->typeData;
+		if (item != g_dropdownItem || listPtr->dropdownList)
+		{
+			return;
+		}
+		m_active = qtrue;
+		m_header = item->window.rect;
+		m_scrollhidden = listPtr->scrollhidden;
+		Item_ListBox_DropdownListRect(item, &m_header, &g_dropdownOuter);
+		Item_ListBox_DropdownInnerRect(listPtr, &g_dropdownOuter, &item->window.rect);
+		// A list that shows all its entries has no scrollbar.
+		listPtr->scrollhidden = (qboolean)(m_scrollhidden || Item_Feeder_Count(item) <= listPtr->dropdownRows);
+		listPtr->dropdownList = qtrue;
+	}
+
+	~DropdownListScope()
+	{
+		if (m_active)
+		{
+			listBoxDef_t *listPtr = (listBoxDef_t *)m_item->typeData;
+			m_item->window.rect = m_header;
+			listPtr->scrollhidden = m_scrollhidden;
+			listPtr->dropdownList = qfalse;
+		}
+	}
+
+	// The header rect; valid in the outermost object only.
+	const rectDef_t &Header() const { return m_header; }
+
+private:
+	itemDef_t	*m_item;
+	qboolean	m_active;
+	qboolean	m_scrollhidden;
+	rectDef_t	m_header;
+};
+
+/*
+===============
+Item_ListBox_DropdownBorder
+	a border in virtual units, with no overlap at the corners (semi-transparent colors stay even)
+===============
+*/
+static void Item_ListBox_DropdownBorder(const rectDef_t *r, float size, const vec4_t color, qboolean top, qboolean bottom)
+{
+	if (size <= 0)
+	{
+		return;
+	}
+	if (top)
+	{
+		DC->fillRect(r->x, r->y, r->w, size, color);
+	}
+	if (bottom)
+	{
+		DC->fillRect(r->x, r->y + r->h - size, r->w, size, color);
+	}
+	DC->fillRect(r->x, r->y + size, size, r->h - 2 * size, color);
+	DC->fillRect(r->x + r->w - size, r->y + size, size, r->h - 2 * size, color);
+}
+
+/*
+===============
+Item_ListBox_DropdownHeaderPaint
+	the closed dropdown: the selected entry, the arrow and the border
+===============
+*/
+static void Item_ListBox_DropdownHeaderPaint(itemDef_t *item)
+{
+	const listBoxDef_t *listPtr = (const listBoxDef_t *)item->typeData;
+	const rectDef_t *r = &item->window.rect;
+	const float border = listPtr->dropdownBorder;
+	const int count = Item_Feeder_Count(item);
+
+	Item_Dropdown_SyncSelection(item);
+	if (item->cursorPos >= count)
+	{//probably changed feeders, so reset
+		item->cursorPos = 0;
+	}
+
+	Item_ListBox_DropdownBorder(r, border, item->window.borderColor, qtrue, qtrue);
+
+	// The arrow is in the column of the scrollbar of the open list.
+	const float arrowSize = Q_min(Item_ListBox_ScrollbarSize(item), r->h - 2 * border);
+	if (listPtr->dropdownArrow)
+	{
+		DC->drawHandlePic(r->x + r->w - border - arrowSize, r->y + (r->h - arrowSize) / 2, arrowSize, arrowSize, listPtr->dropdownArrow);
+	}
+	else
+	{//no shader: a flat triangle in the color of the item
+		const int rows = 6;
+		const float rowH = arrowSize * 0.5f / rows;
+		const float cx = r->x + r->w - border - arrowSize / 2;
+		const float top = r->y + (r->h - rows * rowH) / 2;
+		for (int i = 0; i < rows; i++)
+		{
+			const float w = arrowSize * 0.6f * (rows - i) / rows;
+			DC->fillRect(cx - w / 2, top + i * rowH, w, rowH, item->window.foreColor);
+		}
+	}
+
+	if (count <= 0)
+	{
+		return;
+	}
+
+	qhandle_t optionalImage;
+	const char *text = Item_Feeder_Text(item, item->cursorPos, 0, &optionalImage);
+	if (!text || !text[0])
+	{
+		return;
+	}
+	if (text[0] == '@')
+	{
+		text = SE_GetString(&text[1]);
+	}
+
+	menuDef_t *parent = (menuDef_t *)item->parent;
+	const qboolean highlight = (qboolean)((item->window.flags & WINDOW_HASFOCUS) || item == g_dropdownItem);
+	const float y = r->y + (r->h - DC->textHeight(text, item->textscale, item->font)) / 2;
+	DC->drawText(r->x + border + 3, y, item->textscale, highlight ? parent->focusColor : item->window.foreColor, text, (int)(r->w - 2 * border - arrowSize - 6), item->textStyle, item->font);
+}
+
+/*
+===============
+Item_ListBox_DropdownPaint
+	the open list of a dropdown, painted after all the items of the menu
+===============
+*/
+static void Item_ListBox_DropdownPaint(itemDef_t *item)
+{
+	DropdownListScope scope(item);
+	listBoxDef_t *listPtr = (listBoxDef_t *)item->typeData;
+	const rectDef_t *r = &item->window.rect;
+	const rectDef_t outer = g_dropdownOuter;
+
+	// The vertical paint resets endPos only with a scrollbar.
+	listPtr->endPos = listPtr->startPos;
+
+	// The list covers other items, so it has an opaque background. The fill stays in the border: it does not cover the line of the header.
+	const float border = listPtr->dropdownBorder;
+	vec4_t back = { 0.05f, 0.05f, 0.05f, 0.95f };
+	if (item->window.backColor[3] > 0)
+	{
+		VectorCopy4(item->window.backColor, back);
+	}
+	DC->fillRect(outer.x + border, outer.y + border, outer.w - 2 * border, outer.h - 2 * border, back);
+
+	// The selected and hovered rows fill the full row, from the border to the scrollbar.
+	const int visibleRows = (int)(r->h / listPtr->elementHeight);
+	const float bandX = outer.x + border;
+	const float bandW = outer.w - 2 * border - (listPtr->scrollhidden ? 0 : Item_ListBox_ScrollbarSize(item));
+	const int selected = item->cursorPos;
+	for (int pass = 0; pass < 2; pass++)
+	{
+		const int index = pass ? g_dropdownHover : selected;
+		if (index < listPtr->startPos || index >= listPtr->startPos + visibleRows || (pass && index == selected))
+		{
+			continue;
+		}
+		vec4_t band;
+		VectorCopy4(item->window.outlineColor, band);
+		band[3] *= pass ? 0.5f : 1.0f;
+		DC->fillRect(bandX, r->y + 1 + (index - listPtr->startPos) * listPtr->elementHeight, bandW, listPtr->elementHeight, band);
+	}
+
+	// The list box code paints its own selection band 2 units under the row; no selection for it.
+	item->cursorPos = -1;
+	Item_ListBox_Paint(item);
+	item->cursorPos = selected;
+
+	// The header paints the line that the list shares with it.
+	const qboolean below = (qboolean)(outer.y >= scope.Header().y);
+	Item_ListBox_DropdownBorder(&outer, listPtr->dropdownBorder, item->window.borderColor, (qboolean)!below, below);
+}
+
+// A skin without an icon file: write its name in the cell, shrunk to fit.
+static void Item_ListBox_PaintSkinName(itemDef_t *item, listBoxDef_t *listPtr, int index, float x, float y)
+{
+	qhandle_t handle;
+	const char *name = DC->feederItemText(item->special, index, 0, &handle);
+	if (!name || !name[0])
+	{
+		return;
+	}
+	if (!Q_stricmpn(name, "model_", 6))
+	{
+		name += 6;
+	}
+
+	const float cellW = listPtr->elementWidth - 4;
+	float scale = 0.5f;
+	const int width = DC->textWidth(name, scale, DC->Assets.qhMediumFont);
+	if (width > cellW && width > 0)
+	{
+		scale *= cellW / width;
+	}
+	const float textW = DC->textWidth(name, scale, DC->Assets.qhMediumFont);
+	const float textH = DC->textHeight(name, scale, DC->Assets.qhMediumFont);
+	DC->drawText(x + (listPtr->elementWidth - textW) * 0.5f, y + (listPtr->elementHeight - textH) * 0.5f,
+		scale, item->window.foreColor, name, 0, item->textStyle, DC->Assets.qhMediumFont);
+}
+
+/*
 =================
 Item_ListBox_Paint
 =================
@@ -7000,11 +7621,18 @@ void Item_ListBox_Paint(itemDef_t *item)
 	qhandle_t optionalImage;
 	listBoxDef_t *listPtr = (listBoxDef_t*)item->typeData;
 
+	// The open list of a dropdown is painted by Item_ListBox_DropdownPaint, after all the items.
+	if (listPtr->dropdownRows > 0 && !listPtr->dropdownList)
+	{
+		Item_ListBox_DropdownHeaderPaint(item);
+		return;
+	}
+
 	// the listbox is horizontal or vertical and has a fixed size scroll bar going either direction
 	// elements are enumerated from the DC and either text or image handles are acquired from the DC as well
 	// textscale is used to size the text, textalignx and textaligny are used to size image elements
 	// there is no clipping available so only the last completely visible item is painted
-	count = DC->feederCount(item->special);
+	count = Item_Feeder_Count(item);
 
 	if (listPtr->startPos > (count?count-1:count))
 	{//probably changed feeders, so reset
@@ -7026,20 +7654,20 @@ void Item_ListBox_Paint(itemDef_t *item)
 			if (Item_ListBox_MaxScroll(item) > 0)
 			{
 				x = item->window.rect.x + 1;
-				y = item->window.rect.y + item->window.rect.h - SCROLLBAR_SIZE - 1;
-				DC->drawHandlePic(x, y, SCROLLBAR_SIZE, SCROLLBAR_SIZE, DC->Assets.scrollBarArrowLeft);
-				x += SCROLLBAR_SIZE - 1;
-				size = item->window.rect.w - (SCROLLBAR_SIZE * 2);
-				DC->drawHandlePic(x, y, size+1, SCROLLBAR_SIZE, DC->Assets.scrollBar);
+				y = item->window.rect.y + item->window.rect.h - Item_ListBox_ScrollbarSize(item) - 1;
+				DC->drawHandlePic(x, y, Item_ListBox_ScrollbarSize(item), Item_ListBox_ScrollbarSize(item), DC->Assets.scrollBarArrowLeft);
+				x += Item_ListBox_ScrollbarSize(item) - 1;
+				size = item->window.rect.w - (Item_ListBox_ScrollbarSize(item) * 2);
+				DC->drawHandlePic(x, y, size+1, Item_ListBox_ScrollbarSize(item), DC->Assets.scrollBar);
 				x += size - 1;
-				DC->drawHandlePic(x, y, SCROLLBAR_SIZE, SCROLLBAR_SIZE, DC->Assets.scrollBarArrowRight);
+				DC->drawHandlePic(x, y, Item_ListBox_ScrollbarSize(item), Item_ListBox_ScrollbarSize(item), DC->Assets.scrollBarArrowRight);
 				// thumb
 				thumb = Item_ListBox_ThumbDrawPosition(item);//Item_ListBox_ThumbPosition(item);
-				if (thumb > x - SCROLLBAR_SIZE - 1)
+				if (thumb > x - Item_ListBox_ScrollbarSize(item) - 1)
 				{
-					thumb = x - SCROLLBAR_SIZE - 1;
+					thumb = x - Item_ListBox_ScrollbarSize(item) - 1;
 				}
-				DC->drawHandlePic(thumb, y, SCROLLBAR_SIZE, SCROLLBAR_SIZE, DC->Assets.scrollBarThumb);
+				DC->drawHandlePic(thumb, y, Item_ListBox_ScrollbarSize(item), Item_ListBox_ScrollbarSize(item), DC->Assets.scrollBarThumb);
 			}
 			else if (listPtr->startPos > 0)
 			{
@@ -7074,6 +7702,15 @@ void Item_ListBox_Paint(itemDef_t *item)
 						ui.R_SetColor(color);
 					}
 					DC->drawHandlePic(x+1, y+1, listPtr->elementWidth - 2, listPtr->elementHeight - 2, image);
+					if (item->window.flags & WINDOW_PLAYERCOLOR)
+					{	// or the tint leaks into everything painted after the list
+						ui.R_SetColor(NULL);
+					}
+				}
+				else if ((int)item->special == FEEDER_PLAYER_SKIN_HEAD || (int)item->special == FEEDER_PLAYER_SKIN_TORSO
+					|| (int)item->special == FEEDER_PLAYER_SKIN_LEGS)
+				{
+					Item_ListBox_PaintSkinName(item, listPtr, i, x, y);
 				}
 
 				if (i == item->cursorPos)
@@ -7109,7 +7746,7 @@ void Item_ListBox_Paint(itemDef_t *item)
 		// elements are enumerated from the DC and either text or image handles are acquired from the DC as well
 		// textscale is used to size the text, textalignx and textaligny are used to size image elements
 		// there is no clipping available so only the last completely visible item is painted
-		count = DC->feederCount(item->special);
+		count = Item_Feeder_Count(item);
 
 		if (listPtr->startPos > (count ? count - 1 : count))
 		{//probably changed feeders, so reset
@@ -7125,26 +7762,26 @@ void Item_ListBox_Paint(itemDef_t *item)
 		{
 
 			// draw scrollbar to right side of the window
-			x = item->window.rect.x + item->window.rect.w - SCROLLBAR_SIZE - 1;
+			x = item->window.rect.x + item->window.rect.w - Item_ListBox_ScrollbarSize(item) - 1;
 
 			if ((int)item->special == FEEDER_Q3HEADS || (int)item->special == FEEDER_MODEL_SKINS)
 				x -= 2;
 
 			y = item->window.rect.y + 1;
-			DC->drawHandlePic(x, y, SCROLLBAR_SIZE, SCROLLBAR_SIZE, DC->Assets.scrollBarArrowUp);
-			y += SCROLLBAR_SIZE - 1;
+			DC->drawHandlePic(x, y, Item_ListBox_ScrollbarSize(item), Item_ListBox_ScrollbarSize(item), DC->Assets.scrollBarArrowUp);
+			y += Item_ListBox_ScrollbarSize(item) - 1;
 
 			listPtr->endPos = listPtr->startPos;
-			sizeHeight = item->window.rect.h - (SCROLLBAR_SIZE * 2);
-			DC->drawHandlePic(x, y, SCROLLBAR_SIZE, sizeHeight + 1, DC->Assets.scrollBar);
+			sizeHeight = item->window.rect.h - (Item_ListBox_ScrollbarSize(item) * 2);
+			DC->drawHandlePic(x, y, Item_ListBox_ScrollbarSize(item), sizeHeight + 1, DC->Assets.scrollBar);
 			y += sizeHeight - 1;
-			DC->drawHandlePic(x, y, SCROLLBAR_SIZE, SCROLLBAR_SIZE, DC->Assets.scrollBarArrowDown);
+			DC->drawHandlePic(x, y, Item_ListBox_ScrollbarSize(item), Item_ListBox_ScrollbarSize(item), DC->Assets.scrollBarArrowDown);
 			// thumb
 			thumb = Item_ListBox_ThumbDrawPosition(item);//Item_ListBox_ThumbPosition(item);
-			if (thumb > y - SCROLLBAR_SIZE - 1) {
-				thumb = y - SCROLLBAR_SIZE - 1;
+			if (thumb > y - Item_ListBox_ScrollbarSize(item) - 1) {
+				thumb = y - Item_ListBox_ScrollbarSize(item) - 1;
 			}
-			DC->drawHandlePic(x, thumb, SCROLLBAR_SIZE, SCROLLBAR_SIZE, DC->Assets.scrollBarThumb);
+			DC->drawHandlePic(x, thumb, Item_ListBox_ScrollbarSize(item), Item_ListBox_ScrollbarSize(item), DC->Assets.scrollBarThumb);
 		}
 		//JLF end
 
@@ -7189,6 +7826,14 @@ void Item_ListBox_Paint(itemDef_t *item)
 									ui.R_SetColor(color);
 								}
 								DC->drawHandlePic(x + 1, y + 1, listPtr->elementWidth - 2, listPtr->elementHeight - 2, image);
+								if (item->window.flags & WINDOW_PLAYERCOLOR)
+								{	// or the tint leaks into everything painted after the list
+									ui.R_SetColor(NULL);
+								}
+							}
+							else if ((int)item->special == FEEDER_MODEL_SKINS)
+							{
+								Item_ListBox_PaintSkinName(item, listPtr, i, x, y);
 							}
 							else
 							{
@@ -7259,6 +7904,10 @@ void Item_ListBox_Paint(itemDef_t *item)
 										ui.R_SetColor(color);
 									}
 									DC->drawHandlePic(x + 1, y + 1, listPtr->elementWidth - 2, listPtr->elementHeight - 2, image);
+									if (item->window.flags & WINDOW_PLAYERCOLOR)
+									{	// or the tint leaks into everything painted after the list
+										ui.R_SetColor(NULL);
+									}
 								}
 
 								if (i == item->cursorPos)
@@ -7305,6 +7954,10 @@ void Item_ListBox_Paint(itemDef_t *item)
 							{
 								DC->drawHandlePic(x + 1, y + 1, listPtr->elementWidth - 2, listPtr->elementHeight - 2, image);
 							}
+							else if ((int)item->special == FEEDER_MODEL_SKINS)
+							{
+								Item_ListBox_PaintSkinName(item, listPtr, i, x, y);
+							}
 
 							if (i == item->cursorPos)
 							{
@@ -7346,7 +7999,7 @@ void Item_ListBox_Paint(itemDef_t *item)
 						{
 							char	temp[MAX_STRING_CHARS];
 							int imageStartX = listPtr->columnInfo[j].pos;
-							text = DC->feederItemText(item->special, i, j, &optionalImage);
+							text = Item_Feeder_Text(item, i, j, &optionalImage);
 							if (text[0] == '@')
 							{
 								text = SE_GetString(&text[1]);
@@ -7381,7 +8034,7 @@ void Item_ListBox_Paint(itemDef_t *item)
 					}
 					else
 					{
-						text = DC->feederItemText(item->special, i, 0, &optionalImage);
+						text = Item_Feeder_Text(item, i, 0, &optionalImage);
 						if (optionalImage >= 0)
 						{
 							//DC->drawHandlePic(x + 4 + listPtr->elementHeight, y, listPtr->columnInfo[j].width, listPtr->columnInfo[j].width, optionalImage);
@@ -7394,7 +8047,7 @@ void Item_ListBox_Paint(itemDef_t *item)
 
 					if (i == item->cursorPos)
 					{
-						DC->fillRect(x + 2, y + listPtr->elementHeight + 2, item->window.rect.w - SCROLLBAR_SIZE - 4, listPtr->elementHeight, item->window.outlineColor);
+						DC->fillRect(x + 2, y + listPtr->elementHeight + 2, item->window.rect.w - Item_ListBox_ScrollbarSize(item) - 4, listPtr->elementHeight, item->window.outlineColor);
 					}
 
 					sizeHeight -= listPtr->elementHeight;
@@ -7416,23 +8069,23 @@ void Item_ListBox_Paint(itemDef_t *item)
 		if (!listPtr->scrollhidden)
 		{
 			// draw scrollbar to right side of the window
-			x = item->window.rect.x + item->window.rect.w - SCROLLBAR_SIZE - 1;
+			x = item->window.rect.x + item->window.rect.w - Item_ListBox_ScrollbarSize(item) - 1;
 			y = item->window.rect.y + 1;
-			DC->drawHandlePic(x, y, SCROLLBAR_SIZE, SCROLLBAR_SIZE, DC->Assets.scrollBarArrowUp);
-			y += SCROLLBAR_SIZE - 1;
+			DC->drawHandlePic(x, y, Item_ListBox_ScrollbarSize(item), Item_ListBox_ScrollbarSize(item), DC->Assets.scrollBarArrowUp);
+			y += Item_ListBox_ScrollbarSize(item) - 1;
 
 			listPtr->endPos = listPtr->startPos;
-			size = item->window.rect.h - (SCROLLBAR_SIZE * 2);
-			DC->drawHandlePic(x, y, SCROLLBAR_SIZE, size+1, DC->Assets.scrollBar);
+			size = item->window.rect.h - (Item_ListBox_ScrollbarSize(item) * 2);
+			DC->drawHandlePic(x, y, Item_ListBox_ScrollbarSize(item), size+1, DC->Assets.scrollBar);
 			y += size - 1;
-			DC->drawHandlePic(x, y, SCROLLBAR_SIZE, SCROLLBAR_SIZE, DC->Assets.scrollBarArrowDown);
+			DC->drawHandlePic(x, y, Item_ListBox_ScrollbarSize(item), Item_ListBox_ScrollbarSize(item), DC->Assets.scrollBarArrowDown);
 			// thumb
 			thumb = Item_ListBox_ThumbDrawPosition(item);//Item_ListBox_ThumbPosition(item);
-			if (thumb > y - SCROLLBAR_SIZE - 1)
+			if (thumb > y - Item_ListBox_ScrollbarSize(item) - 1)
 			{
-				thumb = y - SCROLLBAR_SIZE - 1;
+				thumb = y - Item_ListBox_ScrollbarSize(item) - 1;
 			}
-			DC->drawHandlePic(x, thumb, SCROLLBAR_SIZE, SCROLLBAR_SIZE, DC->Assets.scrollBarThumb);
+			DC->drawHandlePic(x, thumb, Item_ListBox_ScrollbarSize(item), Item_ListBox_ScrollbarSize(item), DC->Assets.scrollBarThumb);
 		}
 //JLF end
 		// adjust size for item painting
@@ -7486,7 +8139,7 @@ void Item_ListBox_Paint(itemDef_t *item)
 					int j;
 					for (j = 0; j < listPtr->numColumns; j++)
 					{
-						text = DC->feederItemText(item->special, i, j, &optionalImage);
+						text = Item_Feeder_Text(item, i, j, &optionalImage);
 						if (text[0]=='@')
 						{
 							text = SE_GetString( &text[1] );
@@ -7522,7 +8175,7 @@ void Item_ListBox_Paint(itemDef_t *item)
 				else
 				{
 
-					text = DC->feederItemText(item->special, i, 0, &optionalImage);
+					text = Item_Feeder_Text(item, i, 0, &optionalImage);
 					if (optionalImage >= 0)
 					{
 						//DC->drawHandlePic(x + 4 + listPtr->elementHeight, y, listPtr->columnInfo[j].width, listPtr->columnInfo[j].width, optionalImage);
@@ -7542,7 +8195,7 @@ void Item_ListBox_Paint(itemDef_t *item)
 				// The chosen text
 				if (i == item->cursorPos)
 				{
-					DC->fillRect(x + 2, y + listPtr->elementHeight + 2, item->window.rect.w - SCROLLBAR_SIZE - 4, listPtr->elementHeight+2, item->window.outlineColor);
+					DC->fillRect(x + 2, y + listPtr->elementHeight + 2, item->window.rect.w - Item_ListBox_ScrollbarSize(item) - 4, listPtr->elementHeight+2, item->window.outlineColor);
 				}
 
 				size -= listPtr->elementHeight;
@@ -8170,6 +8823,21 @@ void Item_OwnerDraw_Paint(itemDef_t *item)
 	}
 }
 
+// Value of a YESNO or MULTI item without text: textRect is not set (it needs a text), so draw in the rect of the item.
+static void Item_DrawValueInRect(itemDef_t *item, vec4_t color, const char *value)
+{
+	float x = item->window.rect.x + item->textalignx + item->xoffset;
+	if (item->textalignment == ITEM_ALIGN_RIGHT)
+	{
+		x -= DC->textWidth(value, item->textscale, item->font);
+	}
+	else if (item->textalignment == ITEM_ALIGN_CENTER)
+	{
+		x -= DC->textWidth(value, item->textscale, item->font) / 2;
+	}
+	DC->drawText(x, item->window.rect.y + item->textaligny, item->textscale, color, value, 0, item->textStyle, item->font);
+}
+
 void Item_YesNo_Paint(itemDef_t *item)
 {
 	vec4_t color;
@@ -8199,7 +8867,7 @@ void Item_YesNo_Paint(itemDef_t *item)
 	}
 	else
 	{
-		DC->drawText(item->textRect.x, item->textRect.y, item->textscale, color, yesnovalue , 0, item->textStyle, item->font);
+		Item_DrawValueInRect(item, color, yesnovalue);
 	}
 
 }
@@ -8223,13 +8891,31 @@ void Item_Multi_Paint(itemDef_t *item)
 	Item_TextColor(item, &color);
 	if (item->text)
 	{
-		Item_Text_Paint(item);
-		DC->drawText(item->textRect.x + item->textRect.w + 8, item->textRect.y, item->textscale, color, text, 0, item->textStyle, item->font);
+		float shift = 0;
+
+		if (item->textalignment == ITEM_ALIGN_CENTER)
+		{
+			// Center "label value" as a whole: draw the label shifted left by half the value width.
+			const char *label = item->text;
+			int width, height;
+
+			if (*label == '@')
+			{
+				label = SE_GetString( &label[1] );
+			}
+			Item_SetTextExtents(item, &width, &height, label);
+			shift = (8 + DC->textWidth(text, item->textscale, item->font)) / 2;
+			DC->drawText(item->textRect.x - shift, item->textRect.y, item->textscale, color, label, 0, item->textStyle, item->font);
+		}
+		else
+		{
+			Item_Text_Paint(item);
+		}
+		DC->drawText(item->textRect.x + item->textRect.w + 8 - shift, item->textRect.y, item->textscale, color, text, 0, item->textStyle, item->font);
 	}
 	else
 	{
-//JLF added xoffset
-		DC->drawText(item->textRect.x +item->xoffset, item->textRect.y, item->textscale, color, text, 0, item->textStyle, item->font);
+		Item_DrawValueInRect(item, color, text);
 	}
 }
 
@@ -8361,11 +9047,11 @@ int Item_ListBox_ThumbDrawPosition(itemDef_t *item)
 	{
 		if (item->window.flags & WINDOW_HORIZONTAL)
 		{
-			min = item->window.rect.x + SCROLLBAR_SIZE + 1;
-			max = item->window.rect.x + item->window.rect.w - 2*SCROLLBAR_SIZE - 1;
-			if (DC->cursorx >= min + SCROLLBAR_SIZE/2 && DC->cursorx <= max + SCROLLBAR_SIZE/2)
+			min = item->window.rect.x + Item_ListBox_ScrollbarSize(item) + 1;
+			max = item->window.rect.x + item->window.rect.w - 2*Item_ListBox_ScrollbarSize(item) - 1;
+			if (DC->cursorx >= min + Item_ListBox_ScrollbarSize(item)/2 && DC->cursorx <= max + Item_ListBox_ScrollbarSize(item)/2)
 			{
-				return DC->cursorx - SCROLLBAR_SIZE/2;
+				return DC->cursorx - Item_ListBox_ScrollbarSize(item)/2;
 			}
 			else
 			{
@@ -8374,11 +9060,11 @@ int Item_ListBox_ThumbDrawPosition(itemDef_t *item)
 		}
 		else
 		{
-			min = item->window.rect.y + SCROLLBAR_SIZE + 1;
-			max = item->window.rect.y + item->window.rect.h - 2*SCROLLBAR_SIZE - 1;
-			if (DC->cursory >= min + SCROLLBAR_SIZE/2 && DC->cursory <= max + SCROLLBAR_SIZE/2)
+			min = item->window.rect.y + Item_ListBox_ScrollbarSize(item) + 1;
+			max = item->window.rect.y + item->window.rect.h - 2*Item_ListBox_ScrollbarSize(item) - 1;
+			if (DC->cursory >= min + Item_ListBox_ScrollbarSize(item)/2 && DC->cursory <= max + Item_ListBox_ScrollbarSize(item)/2)
 			{
-				return DC->cursory - SCROLLBAR_SIZE/2;
+				return DC->cursory - Item_ListBox_ScrollbarSize(item)/2;
 			}
 			else
 			{
@@ -8471,6 +9157,19 @@ void Item_Slider_Paint(itemDef_t *item)
 	else
 	{
 		x = item->window.rect.x;
+	}
+	if (item->window.backColor[3] > 0)
+	{//a backcolor draws the slider flat, in the colors of the item, instead of with the textures
+		const float thumbX = Item_Slider_ThumbPosition(item);
+		vec4_t fillColor;
+
+		memcpy(fillColor, newColor, sizeof(vec4_t));
+		fillColor[3] *= 0.35f;
+		DC->fillRect(x, y + 2, SLIDER_WIDTH, SLIDER_HEIGHT, item->window.backColor);
+		DC->fillRect(x, y + 2, thumbX - x, SLIDER_HEIGHT, fillColor);
+		DC->drawRect(x, y + 2, SLIDER_WIDTH, SLIDER_HEIGHT, item->window.borderSize, item->window.borderColor);
+		DC->fillRect(thumbX - 1.5f, y + 1, 3, SLIDER_HEIGHT + 2, newColor);
+		return;
 	}
 	DC->setColor(newColor);
 	DC->drawHandlePic( x, y+2, SLIDER_WIDTH, SLIDER_HEIGHT, DC->Assets.sliderBar );
@@ -9192,6 +9891,210 @@ void GradientBar_Paint(rectDef_t *rect, vec4_t color)
 
 /*
 =================
+Window_ResolveBackgroundSize
+=================
+*/
+static qboolean Window_ResolveBackgroundSize(Window *w)
+{
+	byte	*pic = NULL;
+	int		width = 0, height = 0;
+
+	if (w->backgroundSize[0] > 0.0f && w->backgroundSize[1] > 0.0f)
+	{
+		return qtrue;
+	}
+
+	if (w->backgroundSize[0] < 0.0f)
+	{	// looked it up already and came up empty
+		return qfalse;
+	}
+
+	if (re.R_LoadImage && w->backgroundName[0])
+	{
+		re.R_LoadImage(w->backgroundName, &pic, &width, &height);
+		if (pic)
+		{
+			Z_Free(pic);
+		}
+	}
+
+	if (width <= 0 || height <= 0)
+	{
+		Com_Printf(S_COLOR_YELLOW "WARNING: no image size for background '%s', set backgroundSize in the menu to use a nine patch\n",
+			w->backgroundName);
+		w->backgroundSize[0] = -1.0f;
+		return qfalse;
+	}
+
+	w->backgroundSize[0] = (float)width;
+	w->backgroundSize[1] = (float)height;
+	return qtrue;
+}
+
+#define NINEPATCH_MAX_TILES 64		// cap on tiles per axis
+
+/*
+=================
+Window_PaintPatchRegion
+	a tile size of zero stretches the piece over that axis, anything else repeats it
+=================
+*/
+static void Window_PaintPatchRegion(float x, float y, float w, float h,
+									float s1, float t1, float s2, float t2,
+									float tileW, float tileH, qhandle_t shader)
+{
+	float	ox, oy, tw, th, ts2, tt2;
+
+	if (w <= 0.0f || h <= 0.0f)
+	{
+		return;
+	}
+
+	if (tileW <= 0.0f)
+	{
+		tileW = w;
+	}
+	if (tileH <= 0.0f)
+	{
+		tileH = h;
+	}
+
+	if (tileW * NINEPATCH_MAX_TILES < w)
+	{
+		tileW = w / NINEPATCH_MAX_TILES;
+	}
+	if (tileH * NINEPATCH_MAX_TILES < h)
+	{
+		tileH = h / NINEPATCH_MAX_TILES;
+	}
+
+	for (oy = 0.0f; oy < h - 0.01f; oy += tileH)
+	{
+		th = (h - oy < tileH) ? h - oy : tileH;
+		tt2 = t1 + (t2 - t1) * (th / tileH);
+
+		for (ox = 0.0f; ox < w - 0.01f; ox += tileW)
+		{
+			tw = (w - ox < tileW) ? w - ox : tileW;
+			ts2 = s1 + (s2 - s1) * (tw / tileW);
+
+			ui.R_DrawStretchPic(x + ox, y + oy, tw, th, s1, t1, ts2, tt2, shader);
+		}
+	}
+}
+
+/*
+=================
+Window_PaintNinePatch
+=================
+*/
+static void Window_PaintNinePatch(Window *w, const rectDef_t *rect)
+{
+	float	top, right, bottom, left;	// border widths on screen
+	float	sw, sh;						// background shader size, in pixels
+	float	s[4], t[4];					// where the cuts fall in the shader
+	float	sStart[4], sEnd[4];			// the same cuts, pulled off the seam (see below)
+	float	tStart[4], tEnd[4];
+	float	x[4], y[4];					// where they fall on screen
+	float	scale, tileW, tileH, hu, hv;
+
+	sw = w->backgroundSize[0];
+	sh = w->backgroundSize[1];
+
+	top		= w->backgroundOffset[0];
+	right	= w->backgroundOffset[1];
+	bottom	= w->backgroundOffset[2];
+	left	= w->backgroundOffset[3];
+
+	// squash both borders when the item is too small for them
+	if (left + right > rect->w && left + right > 0.0f)
+	{
+		scale = rect->w / (left + right);
+		left *= scale;
+		right *= scale;
+	}
+	if (top + bottom > rect->h && top + bottom > 0.0f)
+	{
+		scale = rect->h / (top + bottom);
+		top *= scale;
+		bottom *= scale;
+	}
+
+	// the cuts stay put in the shader even when squashed on screen
+	s[0] = 0.0f;
+	s[1] = w->backgroundOffset[3] / sw;
+	s[2] = 1.0f - w->backgroundOffset[1] / sw;
+	s[3] = 1.0f;
+	t[0] = 0.0f;
+	t[1] = w->backgroundOffset[0] / sh;
+	t[2] = 1.0f - w->backgroundOffset[2] / sh;
+	t[3] = 1.0f;
+
+	// offsets wider than the shader itself would turn the middle inside out
+	if (s[1] > s[2])
+	{
+		s[1] = s[2] = (s[1] + s[2]) * 0.5f;
+	}
+	if (t[1] > t[2])
+	{
+		t[1] = t[2] = (t[1] + t[2]) * 0.5f;
+	}
+
+	// half a texel off each seam, or the bilinear filter bleeds the border into the middle
+	hu = 0.5f / sw;
+	hv = 0.5f / sh;
+
+	sStart[0] = sEnd[0] = 0.0f;
+	sStart[3] = sEnd[3] = 1.0f;
+	sStart[1] = (s[1] > 0.0f) ? s[1] + hu : 0.0f;
+	sEnd[1]   = (s[1] > 0.0f) ? s[1] - hu : 0.0f;
+	sStart[2] = (s[2] < 1.0f) ? s[2] + hu : 1.0f;
+	sEnd[2]   = (s[2] < 1.0f) ? s[2] - hu : 1.0f;
+
+	tStart[0] = tEnd[0] = 0.0f;
+	tStart[3] = tEnd[3] = 1.0f;
+	tStart[1] = (t[1] > 0.0f) ? t[1] + hv : 0.0f;
+	tEnd[1]   = (t[1] > 0.0f) ? t[1] - hv : 0.0f;
+	tStart[2] = (t[2] < 1.0f) ? t[2] + hv : 1.0f;
+	tEnd[2]   = (t[2] < 1.0f) ? t[2] - hv : 1.0f;
+
+	x[0] = rect->x;
+	x[1] = rect->x + left;
+	x[2] = rect->x + rect->w - right;
+	x[3] = rect->x + rect->w;
+	y[0] = rect->y;
+	y[1] = rect->y + top;
+	y[2] = rect->y + rect->h - bottom;
+	y[3] = rect->y + rect->h;
+
+	if (w->backgroundStyle == BACKGROUND_NINE_PATCH_REPEAT)
+	{	// one tile = the shader's middle at its authored size
+		tileW = sw - w->backgroundOffset[3] - w->backgroundOffset[1];
+		tileH = sh - w->backgroundOffset[0] - w->backgroundOffset[2];
+	}
+	else
+	{
+		tileW = tileH = 0.0f;
+	}
+
+	// corners
+	Window_PaintPatchRegion(x[0], y[0], x[1]-x[0], y[1]-y[0], sStart[0],tStart[0],sEnd[1],tEnd[1], 0.0f,  0.0f,  w->background);
+	Window_PaintPatchRegion(x[2], y[0], x[3]-x[2], y[1]-y[0], sStart[2],tStart[0],sEnd[3],tEnd[1], 0.0f,  0.0f,  w->background);
+	Window_PaintPatchRegion(x[0], y[2], x[1]-x[0], y[3]-y[2], sStart[0],tStart[2],sEnd[1],tEnd[3], 0.0f,  0.0f,  w->background);
+	Window_PaintPatchRegion(x[2], y[2], x[3]-x[2], y[3]-y[2], sStart[2],tStart[2],sEnd[3],tEnd[3], 0.0f,  0.0f,  w->background);
+
+	// edges
+	Window_PaintPatchRegion(x[1], y[0], x[2]-x[1], y[1]-y[0], sStart[1],tStart[0],sEnd[2],tEnd[1], tileW, 0.0f,  w->background);
+	Window_PaintPatchRegion(x[1], y[2], x[2]-x[1], y[3]-y[2], sStart[1],tStart[2],sEnd[2],tEnd[3], tileW, 0.0f,  w->background);
+	Window_PaintPatchRegion(x[0], y[1], x[1]-x[0], y[2]-y[1], sStart[0],tStart[1],sEnd[1],tEnd[2], 0.0f,  tileH, w->background);
+	Window_PaintPatchRegion(x[2], y[1], x[3]-x[2], y[2]-y[1], sStart[2],tStart[1],sEnd[3],tEnd[2], 0.0f,  tileH, w->background);
+
+	// middle
+	Window_PaintPatchRegion(x[1], y[1], x[2]-x[1], y[2]-y[1], sStart[1],tStart[1],sEnd[2],tEnd[2], tileW, tileH, w->background);
+}
+
+/*
+=================
 Window_Paint
 =================
 */
@@ -9255,7 +10158,14 @@ void Window_Paint(Window *w, float fadeAmount, float fadeClamp, float fadeCycle)
 		{
 			DC->setColor(w->foreColor);
 		}
-		DC->drawHandlePic(fillRect.x, fillRect.y, fillRect.w, fillRect.h, w->background);
+		if (w->backgroundStyle != BACKGROUND_NONE && Window_ResolveBackgroundSize(w))
+		{
+			Window_PaintNinePatch(w, &fillRect);
+		}
+		else
+		{
+			DC->drawHandlePic(fillRect.x, fillRect.y, fillRect.w, fillRect.h, w->background);
+		}
 		DC->setColor(NULL);
 	}
 
@@ -9631,7 +10541,7 @@ Item_ListBox_MaxScroll
 int Item_ListBox_MaxScroll(itemDef_t *item)
 {
 	listBoxDef_t *listPtr = (listBoxDef_t*)item->typeData;
-	int count = DC->feederCount(item->special);
+	int count = Item_Feeder_Count(item);
 	int max;
 
 	if (item->window.flags & WINDOW_HORIZONTAL)
@@ -9663,31 +10573,31 @@ int Item_ListBox_ThumbPosition(itemDef_t *item)
 	max = Item_ListBox_MaxScroll(item);
 	if (item->window.flags & WINDOW_HORIZONTAL) {
 
-		size = item->window.rect.w - (SCROLLBAR_SIZE * 2) - 2;
+		size = item->window.rect.w - (Item_ListBox_ScrollbarSize(item) * 2) - 2;
 		if (max > 0)
 		{
-			pos = (size-SCROLLBAR_SIZE) / (float) max;
+			pos = (size-Item_ListBox_ScrollbarSize(item)) / (float) max;
 		}
 		else
 		{
 			pos = 0;
 		}
 		pos *= listPtr->startPos;
-		return item->window.rect.x + 1 + SCROLLBAR_SIZE + pos;
+		return item->window.rect.x + 1 + Item_ListBox_ScrollbarSize(item) + pos;
 	}
 	else
 	{
-		size = item->window.rect.h - (SCROLLBAR_SIZE * 2) - 2;
+		size = item->window.rect.h - (Item_ListBox_ScrollbarSize(item) * 2) - 2;
 		if (max > 0)
 		{
-			pos = (size-SCROLLBAR_SIZE) / (float) max;
+			pos = (size-Item_ListBox_ScrollbarSize(item)) / (float) max;
 		}
 		else
 		{
 			pos = 0;
 		}
 		pos *= listPtr->startPos;
-		return item->window.rect.y + 1 + SCROLLBAR_SIZE + pos;
+		return item->window.rect.y + 1 + Item_ListBox_ScrollbarSize(item) + pos;
 	}
 }
 
@@ -9703,18 +10613,24 @@ int Item_ListBox_OverLB(itemDef_t *item, float x, float y)
 	listBoxDef_t* listPtr;
 	listPtr = (listBoxDef_t*)item->typeData;
 
+	// A closed dropdown, or an open one with no scrollbar, has no scroll parts.
+	if (listPtr->dropdownRows > 0 && (!listPtr->dropdownList || listPtr->scrollhidden))
+	{
+		return 0;
+	}
+
 	if (item->window.flags & WINDOW_HORIZONTAL)
 	{
 		// check if on left arrow
 		r.x = item->window.rect.x;
-		r.y = item->window.rect.y + item->window.rect.h - SCROLLBAR_SIZE;
-		r.h = r.w = SCROLLBAR_SIZE;
+		r.y = item->window.rect.y + item->window.rect.h - Item_ListBox_ScrollbarSize(item);
+		r.h = r.w = Item_ListBox_ScrollbarSize(item);
 		if (Rect_ContainsPoint(&r, x, y))
 		{
 			return WINDOW_LB_LEFTARROW;
 		}
 		// check if on right arrow
-		r.x = item->window.rect.x + item->window.rect.w - SCROLLBAR_SIZE;
+		r.x = item->window.rect.x + item->window.rect.w - Item_ListBox_ScrollbarSize(item);
 		if (Rect_ContainsPoint(&r, x, y))
 		{
 			return WINDOW_LB_RIGHTARROW;
@@ -9726,14 +10642,14 @@ int Item_ListBox_OverLB(itemDef_t *item, float x, float y)
 		{
 			return WINDOW_LB_THUMB;
 		}
-		r.x = item->window.rect.x + SCROLLBAR_SIZE;
+		r.x = item->window.rect.x + Item_ListBox_ScrollbarSize(item);
 		r.w = thumbstart - r.x;
 		if (Rect_ContainsPoint(&r, x, y))
 		{
 			return WINDOW_LB_PGUP;
 		}
-		r.x = thumbstart + SCROLLBAR_SIZE;
-		r.w = item->window.rect.x + item->window.rect.w - SCROLLBAR_SIZE;
+		r.x = thumbstart + Item_ListBox_ScrollbarSize(item);
+		r.w = item->window.rect.x + item->window.rect.w - Item_ListBox_ScrollbarSize(item);
 		if (Rect_ContainsPoint(&r, x, y))
 		{
 			return WINDOW_LB_PGDN;
@@ -9745,15 +10661,15 @@ int Item_ListBox_OverLB(itemDef_t *item, float x, float y)
 		// Multiple rows and columns (since it's more than twice as wide as an element)
 		if ((item->window.rect.w > (listPtr->elementWidth * 2)) && (listPtr->elementStyle == LISTBOX_IMAGE))
 		{
-			r.x = item->window.rect.x + item->window.rect.w - SCROLLBAR_SIZE;
+			r.x = item->window.rect.x + item->window.rect.w - Item_ListBox_ScrollbarSize(item);
 			r.y = item->window.rect.y;
-			r.h = r.w = SCROLLBAR_SIZE;
+			r.h = r.w = Item_ListBox_ScrollbarSize(item);
 			if (Rect_ContainsPoint(&r, x, y))
 			{
 				return WINDOW_LB_PGUP;
 			}
 
-			r.y = item->window.rect.y + item->window.rect.h - SCROLLBAR_SIZE;
+			r.y = item->window.rect.y + item->window.rect.h - Item_ListBox_ScrollbarSize(item);
 			if (Rect_ContainsPoint(&r, x, y))
 			{
 				return WINDOW_LB_PGDN;
@@ -9769,15 +10685,15 @@ int Item_ListBox_OverLB(itemDef_t *item, float x, float y)
 		}
 		else
 		{
-			r.x = item->window.rect.x + item->window.rect.w - SCROLLBAR_SIZE;
+			r.x = item->window.rect.x + item->window.rect.w - Item_ListBox_ScrollbarSize(item);
 			r.y = item->window.rect.y;
-			r.h = r.w = SCROLLBAR_SIZE;
+			r.h = r.w = Item_ListBox_ScrollbarSize(item);
 			if (Rect_ContainsPoint(&r, x, y))
 			{
 				return WINDOW_LB_LEFTARROW;
 			}
 
-			r.y = item->window.rect.y + item->window.rect.h - SCROLLBAR_SIZE;
+			r.y = item->window.rect.y + item->window.rect.h - Item_ListBox_ScrollbarSize(item);
 			if (Rect_ContainsPoint(&r, x, y))
 			{
 				return WINDOW_LB_RIGHTARROW;
@@ -9790,15 +10706,15 @@ int Item_ListBox_OverLB(itemDef_t *item, float x, float y)
 				return WINDOW_LB_THUMB;
 			}
 
-			r.y = item->window.rect.y + SCROLLBAR_SIZE;
+			r.y = item->window.rect.y + Item_ListBox_ScrollbarSize(item);
 			r.h = thumbstart - r.y;
 			if (Rect_ContainsPoint(&r, x, y))
 			{
 				return WINDOW_LB_PGUP;
 			}
 
-			r.y = thumbstart + SCROLLBAR_SIZE;
-			r.h = item->window.rect.y + item->window.rect.h - SCROLLBAR_SIZE;
+			r.y = thumbstart + Item_ListBox_ScrollbarSize(item);
+			r.h = item->window.rect.y + item->window.rect.h - Item_ListBox_ScrollbarSize(item);
 			if (Rect_ContainsPoint(&r, x, y))
 			{
 				return WINDOW_LB_PGDN;
@@ -9807,14 +10723,14 @@ int Item_ListBox_OverLB(itemDef_t *item, float x, float y)
 	}
 	else
 	{
-		r.x = item->window.rect.x + item->window.rect.w - SCROLLBAR_SIZE;
+		r.x = item->window.rect.x + item->window.rect.w - Item_ListBox_ScrollbarSize(item);
 		r.y = item->window.rect.y;
-		r.h = r.w = SCROLLBAR_SIZE;
+		r.h = r.w = Item_ListBox_ScrollbarSize(item);
 		if (Rect_ContainsPoint(&r, x, y))
 		{
 			return WINDOW_LB_LEFTARROW;
 		}
-		r.y = item->window.rect.y + item->window.rect.h - SCROLLBAR_SIZE;
+		r.y = item->window.rect.y + item->window.rect.h - Item_ListBox_ScrollbarSize(item);
 		if (Rect_ContainsPoint(&r, x, y))
 		{
 			return WINDOW_LB_RIGHTARROW;
@@ -9825,14 +10741,14 @@ int Item_ListBox_OverLB(itemDef_t *item, float x, float y)
 		{
 			return WINDOW_LB_THUMB;
 		}
-		r.y = item->window.rect.y + SCROLLBAR_SIZE;
+		r.y = item->window.rect.y + Item_ListBox_ScrollbarSize(item);
 		r.h = thumbstart - r.y;
 		if (Rect_ContainsPoint(&r, x, y))
 		{
 			return WINDOW_LB_PGUP;
 		}
-		r.y = thumbstart + SCROLLBAR_SIZE;
-		r.h = item->window.rect.y + item->window.rect.h - SCROLLBAR_SIZE;
+		r.y = thumbstart + Item_ListBox_ScrollbarSize(item);
+		r.h = item->window.rect.y + item->window.rect.h - Item_ListBox_ScrollbarSize(item);
 		if (Rect_ContainsPoint(&r, x, y))
 		{
 			return WINDOW_LB_PGDN;
@@ -9852,6 +10768,13 @@ void Item_ListBox_MouseEnter(itemDef_t *item, float x, float y)
 	listBoxDef_t *listPtr = (listBoxDef_t*)item->typeData;
 
 	item->window.flags &= ~(WINDOW_LB_LEFTARROW | WINDOW_LB_RIGHTARROW | WINDOW_LB_THUMB | WINDOW_LB_PGUP | WINDOW_LB_PGDN);
+
+	// The hover of the open list is Item_ListBox_DropdownMouseMove.
+	if (listPtr->dropdownRows > 0)
+	{
+		return;
+	}
+
 	item->window.flags |= Item_ListBox_OverLB(item, x, y);
 
 	if (item->window.flags & WINDOW_HORIZONTAL)
@@ -9863,7 +10786,7 @@ void Item_ListBox_MouseEnter(itemDef_t *item, float x, float y)
 			{
 				r.x = item->window.rect.x;
 				r.y = item->window.rect.y;
-				r.h = item->window.rect.h - SCROLLBAR_SIZE;
+				r.h = item->window.rect.h - Item_ListBox_ScrollbarSize(item);
 				r.w = item->window.rect.w - listPtr->drawPadding;
 				if (Rect_ContainsPoint(&r, x, y))
 				{
@@ -9884,7 +10807,7 @@ void Item_ListBox_MouseEnter(itemDef_t *item, float x, float y)
 	{
 		r.x = item->window.rect.x;
 		r.y = item->window.rect.y;
-		r.w = item->window.rect.w - SCROLLBAR_SIZE;
+		r.w = item->window.rect.w - Item_ListBox_ScrollbarSize(item);
 		r.h = item->window.rect.h - listPtr->drawPadding;
 		if (Rect_ContainsPoint(&r, x, y))
 		{
@@ -10170,6 +11093,13 @@ void Menu_HandleMouseMove(menuDef_t *menu, float x, float y)
 
 	if (g_waitingForKey || g_editingField)
 	{
+		return;
+	}
+
+	// An open dropdown takes the mouse from all the other items.
+	if (g_dropdownItem && g_dropdownItem->parent == menu)
+	{
+		Item_ListBox_DropdownMouseMove(menu, x, y);
 		return;
 	}
 
@@ -10570,6 +11500,24 @@ itemDef_t *Menu_SetPrevCursorItem(menuDef_t *menu)
 	return NULL;
 
 }
+// Start the edition of a text field. The cursor goes to the end of the text.
+static void Item_TextField_BeginEdit(itemDef_t *item)
+{
+	char buff[1024] = { 0 };
+	editFieldDef_t *editPtr = (editFieldDef_t*)item->typeData;
+	if (item->cvar)
+	{
+		DC->getCVarString(item->cvar, buff, sizeof(buff));
+	}
+	item->cursorPos = (int)strlen(buff);
+	if (editPtr)
+	{
+		editPtr->paintOffset = (editPtr->maxPaintChars && item->cursorPos > editPtr->maxPaintChars) ? item->cursorPos - editPtr->maxPaintChars : 0;
+	}
+	g_editingField = qtrue;
+	g_editItem = item;
+}
+
 /*
 =================
 Item_TextField_HandleKey
@@ -10730,7 +11678,7 @@ qboolean Item_TextField_HandleKey(itemDef_t *item, int key)
 			newItem = Menu_SetNextCursorItem((menuDef_t *) item->parent);
 			if (newItem && (newItem->type == ITEM_TYPE_EDITFIELD || newItem->type == ITEM_TYPE_NUMERICFIELD))
 			{
-				g_editItem = newItem;
+				Item_TextField_BeginEdit(newItem);
 			}
 		}
 
@@ -10739,7 +11687,7 @@ qboolean Item_TextField_HandleKey(itemDef_t *item, int key)
 			newItem = Menu_SetPrevCursorItem((menuDef_t *) item->parent);
 			if (newItem && (newItem->type == ITEM_TYPE_EDITFIELD || newItem->type == ITEM_TYPE_NUMERICFIELD))
 			{
-				g_editItem = newItem;
+				Item_TextField_BeginEdit(newItem);
 			}
 		}
 
@@ -11007,8 +11955,15 @@ Item_ListBox_HandleKey
 qboolean Item_ListBox_HandleKey(itemDef_t *item, int key, qboolean down, qboolean force)
 {
 	listBoxDef_t *listPtr = (listBoxDef_t*)item->typeData;
-	int count = DC->feederCount(item->special);
+	int count = Item_Feeder_Count(item);
 	int max, viewmax;
+
+	// The keys of a closed dropdown are Item_ListBox_DropdownHeaderKey.
+	if (listPtr->dropdownRows > 0 && !listPtr->dropdownList)
+	{
+		return qfalse;
+	}
+
 	if (force || (Rect_ContainsPoint(&item->window.rect, DC->cursorx, DC->cursory) && item->window.flags & WINDOW_HASFOCUS))
 	{
 		max = Item_ListBox_MaxScroll(item);
@@ -11034,7 +11989,7 @@ qboolean Item_ListBox_HandleKey(itemDef_t *item, int key, qboolean down, qboolea
 					}
 					item->cursorPos = listPtr->cursorPos;
 
-					DC->feederSelection(item->special, item->cursorPos, item);
+					Item_Feeder_Select(item, item->cursorPos);
 
 				}
 				else
@@ -11067,7 +12022,7 @@ qboolean Item_ListBox_HandleKey(itemDef_t *item, int key, qboolean down, qboolea
 					}
 					item->cursorPos = listPtr->cursorPos;
 
-					DC->feederSelection(item->special, item->cursorPos, item);
+					Item_Feeder_Select(item, item->cursorPos);
 				}
 				else
 				{
@@ -11104,7 +12059,7 @@ qboolean Item_ListBox_HandleKey(itemDef_t *item, int key, qboolean down, qboolea
 					}
 					item->cursorPos = listPtr->cursorPos;
 
-					DC->feederSelection(item->special, item->cursorPos, item);
+					Item_Feeder_Select(item, item->cursorPos);
 				}
 				else
 				{
@@ -11136,7 +12091,7 @@ qboolean Item_ListBox_HandleKey(itemDef_t *item, int key, qboolean down, qboolea
 					}
 					item->cursorPos = listPtr->cursorPos;
 
-					DC->feederSelection(item->special, item->cursorPos, item);
+					Item_Feeder_Select(item, item->cursorPos);
 
 				}
 				else
@@ -11228,7 +12183,7 @@ qboolean Item_ListBox_HandleKey(itemDef_t *item, int key, qboolean down, qboolea
 				}
 				lastListBoxClickTime = DC->realTime + DOUBLE_CLICK_DELAY;
 				item->cursorPos = listPtr->cursorPos;
-				DC->feederSelection(item->special, item->cursorPos, item);
+				Item_Feeder_Select(item, item->cursorPos);
 			}
 			return qtrue;
 		}
@@ -11263,7 +12218,7 @@ qboolean Item_ListBox_HandleKey(itemDef_t *item, int key, qboolean down, qboolea
 					listPtr->startPos = listPtr->cursorPos - viewmax + 1;
 				}
 				item->cursorPos = listPtr->cursorPos;
-				DC->feederSelection(item->special, item->cursorPos, item);
+				Item_Feeder_Select(item, item->cursorPos);
 			}
 			else
 			{
@@ -11294,7 +12249,7 @@ qboolean Item_ListBox_HandleKey(itemDef_t *item, int key, qboolean down, qboolea
 					listPtr->startPos = listPtr->cursorPos - viewmax + 1;
 				}
 				item->cursorPos = listPtr->cursorPos;
-				DC->feederSelection(item->special, item->cursorPos, item);
+				Item_Feeder_Select(item, item->cursorPos);
 			}
 			else
 			{
@@ -11318,12 +12273,13 @@ Scroll_ListBox_AutoFunc
 static void Scroll_ListBox_AutoFunc(void *p)
 {
 	scrollInfo_t *si = (scrollInfo_t*)p;
+	DropdownListScope scope(si->item);
 	if (DC->realTime > si->nextScrollTime)
 	{
 		// need to scroll which is done by simulating a click to the item
 		// this is done a bit sideways as the autoscroll "knows" that the item is a listbox
 		// so it calls it directly
-		Item_ListBox_HandleKey(si->item, si->scrollKey, qtrue, qfalse);
+		Item_ListBox_HandleKey(si->item, si->scrollKey, qtrue, (qboolean)(si->item == g_dropdownItem));
 		si->nextScrollTime = DC->realTime + si->adjustValue;
 	}
 
@@ -11348,6 +12304,7 @@ static void Scroll_ListBox_ThumbFunc(void *p)
 	rectDef_t r;
 	int pos, max;
 
+	DropdownListScope scope(si->item);
 	listBoxDef_t *listPtr = (listBoxDef_t*)si->item->typeData;
 	if (si->item->window.flags & WINDOW_HORIZONTAL)
 	{
@@ -11355,13 +12312,13 @@ static void Scroll_ListBox_ThumbFunc(void *p)
 		{
 			return;
 		}
-		r.x = si->item->window.rect.x + SCROLLBAR_SIZE + 1;
-		r.y = si->item->window.rect.y + si->item->window.rect.h - SCROLLBAR_SIZE - 1;
-		r.h = SCROLLBAR_SIZE;
-		r.w = si->item->window.rect.w - (SCROLLBAR_SIZE*2) - 2;
+		r.x = si->item->window.rect.x + Item_ListBox_ScrollbarSize(si->item) + 1;
+		r.y = si->item->window.rect.y + si->item->window.rect.h - Item_ListBox_ScrollbarSize(si->item) - 1;
+		r.h = Item_ListBox_ScrollbarSize(si->item);
+		r.w = si->item->window.rect.w - (Item_ListBox_ScrollbarSize(si->item)*2) - 2;
 		max = Item_ListBox_MaxScroll(si->item);
 		//
-		pos = (DC->cursorx - r.x - SCROLLBAR_SIZE/2) * max / (r.w - SCROLLBAR_SIZE);
+		pos = (DC->cursorx - r.x - Item_ListBox_ScrollbarSize(si->item)/2) * max / (r.w - Item_ListBox_ScrollbarSize(si->item));
 		if (pos < 0)
 		{
 			pos = 0;
@@ -11376,13 +12333,13 @@ static void Scroll_ListBox_ThumbFunc(void *p)
 	else if (DC->cursory != si->yStart)
 	{
 
-		r.x = si->item->window.rect.x + si->item->window.rect.w - SCROLLBAR_SIZE - 1;
-		r.y = si->item->window.rect.y + SCROLLBAR_SIZE + 1;
-		r.h = si->item->window.rect.h - (SCROLLBAR_SIZE*2) - 2;
-		r.w = SCROLLBAR_SIZE;
+		r.x = si->item->window.rect.x + si->item->window.rect.w - Item_ListBox_ScrollbarSize(si->item) - 1;
+		r.y = si->item->window.rect.y + Item_ListBox_ScrollbarSize(si->item) + 1;
+		r.h = si->item->window.rect.h - (Item_ListBox_ScrollbarSize(si->item)*2) - 2;
+		r.w = Item_ListBox_ScrollbarSize(si->item);
 		max = Item_ListBox_MaxScroll(si->item);
 		//
-		pos = (DC->cursory - r.y - SCROLLBAR_SIZE/2) * max / (r.h - SCROLLBAR_SIZE);
+		pos = (DC->cursory - r.y - Item_ListBox_ScrollbarSize(si->item)/2) * max / (r.h - Item_ListBox_ScrollbarSize(si->item));
 		if (pos < 0)
 		{
 			pos = 0;
@@ -11674,6 +12631,265 @@ void Item_StartCapture(itemDef_t *item, int key)
 	}
 }
 
+#define WINDOW_LB_ALL (WINDOW_LB_LEFTARROW | WINDOW_LB_RIGHTARROW | WINDOW_LB_THUMB | WINDOW_LB_PGUP | WINDOW_LB_PGDN)
+
+/*
+=================
+Item_ListBox_DropdownClose
+=================
+*/
+static void Item_ListBox_DropdownClose(void)
+{
+	if (!g_dropdownItem)
+	{
+		return;
+	}
+	if (itemCapture == g_dropdownItem)
+	{
+		Item_StopCapture(itemCapture);
+		itemCapture = NULL;
+		captureFunc = NULL;
+		captureData = NULL;
+	}
+	g_dropdownItem->window.flags &= ~WINDOW_LB_ALL;
+	g_dropdownItem = NULL;
+	g_dropdownHover = -1;
+}
+
+/*
+=================
+Item_ListBox_DropdownOpen
+	opens the list, scrolled to show the selected entry
+=================
+*/
+static void Item_ListBox_DropdownOpen(itemDef_t *item)
+{
+	listBoxDef_t *listPtr = (listBoxDef_t *)item->typeData;
+
+	Item_ListBox_DropdownClose();
+	g_dropdownItem = item;
+	Item_Dropdown_SyncSelection(item);
+	listPtr->cursorPos = item->cursorPos;
+
+	DropdownListScope scope(item);
+	const int rows = (int)(item->window.rect.h / listPtr->elementHeight);
+	if (item->cursorPos < listPtr->startPos || item->cursorPos >= listPtr->startPos + rows)
+	{
+		listPtr->startPos = item->cursorPos - rows / 2;
+	}
+	listPtr->startPos = Com_Clampi(0, Item_ListBox_MaxScroll(item), listPtr->startPos);
+	Item_ListBox_DropdownMouseMove((menuDef_t *)item->parent, DC->cursorx, DC->cursory);
+}
+
+/*
+=================
+Item_ListBox_DropdownSelect
+	selects an entry like a click in a list box
+=================
+*/
+static void Item_ListBox_DropdownSelect(itemDef_t *item, int index)
+{
+	listBoxDef_t *listPtr = (listBoxDef_t *)item->typeData;
+
+	listPtr->cursorPos = index;
+	item->cursorPos = index;
+	Item_Feeder_Select(item, index);
+	Item_Action(item);
+}
+
+/*
+=================
+Item_ListBox_DropdownMouseMove
+	the hover of the open list; the other items of the menu get no mouse
+=================
+*/
+static void Item_ListBox_DropdownMouseMove(menuDef_t *menu, float x, float y)
+{
+	itemDef_t *item = g_dropdownItem;
+	listBoxDef_t *listPtr = (listBoxDef_t *)item->typeData;
+
+	for (int i = 0; i < menu->itemCount; i++)
+	{
+		if (menu->items[i] != item && (menu->items[i]->window.flags & WINDOW_MOUSEOVER))
+		{
+			Item_MouseLeave(menu->items[i]);
+			Item_SetMouseOver(menu->items[i], qfalse);
+		}
+	}
+
+	DropdownListScope scope(item);
+	item->window.flags &= ~WINDOW_LB_ALL;
+	g_dropdownHover = -1;
+	if (!Rect_ContainsPoint(&item->window.rect, x, y))
+	{
+		return;
+	}
+
+	const int flags = Item_ListBox_OverLB(item, x, y);
+	if (flags)
+	{
+		item->window.flags |= flags;
+		return;
+	}
+
+	const int rows = (int)(item->window.rect.h / listPtr->elementHeight);
+	const int row = (int)((y - item->window.rect.y - 1) / listPtr->elementHeight);
+	const int index = listPtr->startPos + row;
+	if (row >= 0 && row < rows && index < Item_Feeder_Count(item))
+	{
+		g_dropdownHover = index;
+		listPtr->cursorPos = index;
+	}
+}
+
+/*
+=================
+Item_ListBox_DropdownHeaderKey
+	the keys of a closed dropdown that has the focus; returns qtrue if it used the key
+=================
+*/
+static qboolean Item_ListBox_DropdownHeaderKey(itemDef_t *item, int key)
+{
+	if (item->type != ITEM_TYPE_LISTBOX || !item->typeData)
+	{
+		return qfalse;
+	}
+	listBoxDef_t *listPtr = (listBoxDef_t *)item->typeData;
+	if (listPtr->dropdownRows <= 0 || listPtr->dropdownList)
+	{
+		return qfalse;
+	}
+
+	const qboolean over = Rect_ContainsPoint(&item->window.rect, DC->cursorx, DC->cursory);
+	const int count = Item_Feeder_Count(item);
+	int step = 0;
+
+	Item_Dropdown_SyncSelection(item);
+
+	switch (key)
+	{
+	case A_MOUSE1:
+	case A_MOUSE2:
+		if (!over)
+		{
+			return qfalse;
+		}
+		Item_ListBox_DropdownOpen(item);
+		return qtrue;
+
+	case A_ENTER:
+	case A_KP_ENTER:
+		Item_ListBox_DropdownOpen(item);
+		return qtrue;
+
+	// Up and down stay for the menu navigation.
+	case A_CURSOR_LEFT:
+	case A_KP_4:
+		step = -1;
+		break;
+	case A_CURSOR_RIGHT:
+	case A_KP_6:
+		step = 1;
+		break;
+	case A_MWHEELUP:
+		step = over ? -1 : 0;
+		break;
+	case A_MWHEELDOWN:
+		step = over ? 1 : 0;
+		break;
+	}
+
+	if (step == 0 || count <= 0)
+	{
+		return qfalse;
+	}
+	const int index = Com_Clampi(0, count - 1, item->cursorPos + step);
+	if (index != item->cursorPos)
+	{
+		Item_ListBox_DropdownSelect(item, index);
+	}
+	return qtrue;
+}
+
+/*
+=================
+Item_ListBox_DropdownOpenKey
+	all the keys while a dropdown is open; a click out of the list closes it
+=================
+*/
+static void Item_ListBox_DropdownOpenKey(int key, qboolean down)
+{
+	itemDef_t *item = g_dropdownItem;
+
+	// The same capture release as Item_HandleKey.
+	if (itemCapture)
+	{
+		Item_StopCapture(itemCapture);
+		itemCapture = NULL;
+		captureFunc = NULL;
+		captureData = NULL;
+	}
+	if (!down)
+	{
+		return;
+	}
+
+	switch (key)
+	{
+	case A_MOUSE1:
+	case A_MOUSE2:
+	case A_MOUSE3:
+	{
+		int selected = -1;
+		{
+			DropdownListScope scope(item);
+			if (Rect_ContainsPoint(&item->window.rect, DC->cursorx, DC->cursory))
+			{
+				const int flags = Item_ListBox_OverLB(item, DC->cursorx, DC->cursory);
+				if (flags)
+				{
+					item->window.flags = (item->window.flags & ~WINDOW_LB_ALL) | flags;
+					Item_StartCapture(item, key);
+					Item_ListBox_HandleKey(item, key, qtrue, qtrue);
+					return;
+				}
+				if (g_dropdownHover < 0)
+				{
+					return;
+				}
+				selected = g_dropdownHover;
+			}
+		}
+		Item_ListBox_DropdownClose();
+		if (selected >= 0)
+		{
+			Item_ListBox_DropdownSelect(item, selected);
+		}
+		Display_MouseMove(NULL, DC->cursorx, DC->cursory);
+		return;
+	}
+
+	case A_ESCAPE:
+	case A_PAD0_START:
+	case A_ENTER:
+	case A_KP_ENTER:
+		Item_ListBox_DropdownClose();
+		return;
+
+	default:
+	{
+		DropdownListScope scope(item);
+		// The arrow keys move from the selected entry, not from the hovered one.
+		((listBoxDef_t *)item->typeData)->cursorPos = item->cursorPos;
+		if (Item_ListBox_HandleKey(item, key, qtrue, qtrue))
+		{
+			Item_Action(item);
+		}
+		return;
+	}
+	}
+}
+
 /*
 =================
 Item_YesNo_HandleKey
@@ -11696,15 +12912,15 @@ qboolean Item_YesNo_HandleKey(itemDef_t *item, int key)
 
 /*
 =================
-Item_Multi_FindCvarByValue
+Item_Multi_FindIndex
+	the entry of the multi that matches the cvar; 0 if none does
 =================
 */
-int Item_Multi_FindCvarByValue(itemDef_t *item)
+static int Item_Multi_FindIndex(itemDef_t *item, multiDef_t *multiPtr)
 {
 	char buff[1024];
 	float value = 0;
 	int i;
-	multiDef_t *multiPtr = (multiDef_t*)item->typeData;
 	if (multiPtr)
 	{
 		if (multiPtr->strDef)
@@ -11738,6 +12954,16 @@ int Item_Multi_FindCvarByValue(itemDef_t *item)
 
 /*
 =================
+Item_Multi_FindCvarByValue
+=================
+*/
+int Item_Multi_FindCvarByValue(itemDef_t *item)
+{
+	return Item_Multi_FindIndex(item, (multiDef_t*)item->typeData);
+}
+
+/*
+=================
 Item_Multi_CountSettings
 =================
 */
@@ -11749,6 +12975,115 @@ int Item_Multi_CountSettings(itemDef_t *item)
 		return 0;
 	}
 	return multiPtr->count;
+}
+
+/*
+=================
+Item_Multi_Select
+	sets the cvar (or the value) of the multi to an entry, and tells the feeder of the item
+=================
+*/
+static void Item_Multi_Select(itemDef_t *item, multiDef_t *multiPtr, int index)
+{
+	if (item->cvar)
+	{
+		if (multiPtr->strDef)
+		{
+			DC->setCVar(item->cvar, multiPtr->cvarStr[index]);
+		}
+		else
+		{
+			float value = multiPtr->cvarValue[index];
+			if (((float)((int) value)) == value)
+			{
+				DC->setCVar(item->cvar, va("%i", (int) value ));
+			}
+			else
+			{
+				DC->setCVar(item->cvar, va("%f", value ));
+			}
+		}
+	}
+	else
+	{
+		item->value = index;
+	}
+	if (item->special)
+	{//its a feeder?
+		DC->feederSelection(item->special, index, item);
+	}
+}
+
+/*
+=================
+Item_Feeder_Count
+	the number of entries of a list box: from the multi of a multi dropdown, else from the feeder
+=================
+*/
+static int Item_Feeder_Count(itemDef_t *item)
+{
+	const listBoxDef_t *listPtr = (const listBoxDef_t *)item->typeData;
+	if (listPtr && listPtr->multi)
+	{
+		return listPtr->multi->count;
+	}
+	return DC->feederCount(item->special);
+}
+
+/*
+=================
+Item_Feeder_Text
+	the text of an entry of a list box, like DC->feederItemText
+=================
+*/
+static const char *Item_Feeder_Text(itemDef_t *item, int index, int column, qhandle_t *handle)
+{
+	const listBoxDef_t *listPtr = (const listBoxDef_t *)item->typeData;
+	if (listPtr && listPtr->multi)
+	{
+		*handle = -1;
+		if (column != 0 || index < 0 || index >= listPtr->multi->count)
+		{
+			return "";
+		}
+		return listPtr->multi->cvarList[index];
+	}
+	return DC->feederItemText(item->special, index, column, handle);
+}
+
+/*
+=================
+Item_Feeder_Select
+	selects an entry of a list box: sets the cvar of the multi of a multi dropdown, else tells the feeder
+=================
+*/
+static void Item_Feeder_Select(itemDef_t *item, int index)
+{
+	const listBoxDef_t *listPtr = (const listBoxDef_t *)item->typeData;
+	if (listPtr && listPtr->multi)
+	{
+		if (index >= 0 && index < listPtr->multi->count)
+		{
+			Item_Multi_Select(item, listPtr->multi, index);
+		}
+		return;
+	}
+	DC->feederSelection(item->special, index, item);
+}
+
+/*
+=================
+Item_Dropdown_SyncSelection
+	the selected entry of a multi dropdown is the one that matches its cvar
+=================
+*/
+static void Item_Dropdown_SyncSelection(itemDef_t *item)
+{
+	const listBoxDef_t *listPtr = (const listBoxDef_t *)item->typeData;
+	if (listPtr && listPtr->multi)
+	{
+		item->cursorPos = item->cvar ? Item_Multi_FindIndex(item, listPtr->multi) : item->value;
+	}
 }
 
 
@@ -11842,26 +13177,7 @@ qboolean Item_Multi_HandleKey(itemDef_t *item, int key)
 						}
 					}
 
-					if (multiPtr->strDef)
-					{
-						DC->setCVar(item->cvar, multiPtr->cvarStr[current]);
-					}
-					else
-					{
-						float value = multiPtr->cvarValue[current];
-						if (((float)((int) value)) == value)
-						{
-							DC->setCVar(item->cvar, va("%i", (int) value ));
-						}
-						else
-						{
-							DC->setCVar(item->cvar, va("%f", value ));
-						}
-					}
-					if (item->special)
-					{//its a feeder?
-						DC->feederSelection(item->special, current, item);
-					}
+					Item_Multi_Select(item, multiPtr, current);
 				}
 				else
 				{
@@ -12193,6 +13509,14 @@ void Item_Action(itemDef_t *item)
 	}
 }
 
+// keys that can start a combination while a binding is captured
+static qboolean Key_IsBindModifier(int key)
+{
+	return (key == A_SHIFT || key == A_CTRL || key == A_ALT
+		|| key == A_PAD0_LEFTSHOULDER || key == A_PAD0_RIGHTSHOULDER
+		|| key == A_PAD0_LEFTTRIGGER || key == A_PAD0_RIGHTTRIGGER) ? qtrue : qfalse;
+}
+
 /*
 =================
 Menu_HandleKey
@@ -12210,6 +13534,54 @@ void Menu_HandleKey(menuDef_t *menu, int key, qboolean down)
 	}
 
 	inHandler = qtrue;
+
+	// the gamepad A button clicks where the right stick put the cursor
+	if (key == A_PAD0_A && !g_waitingForKey && !g_editingField)
+	{
+		key = A_MOUSE1;
+	}
+
+	// A modifier pressed while a binding is captured waits for the next key,
+	// to bind a combination; released alone it is bound by itself.
+	static int bindModifier = -1;
+	if (!g_waitingForKey)
+	{
+		bindModifier = -1;
+	}
+	else if (!down)
+	{
+		if (bindModifier != -1 && key == bindModifier)
+		{
+			const int modifier = bindModifier;
+			bindModifier = -1;
+			Item_Bind_HandleKey(g_bindItem, modifier, qtrue);
+			inHandler = qfalse;
+			return;
+		}
+	}
+	else if (!(key & K_CHAR_FLAG) && key != A_ESCAPE && key != A_BACKSPACE)
+	{
+		if (bindModifier == -1 && Key_IsBindModifier(key))
+		{
+			bindModifier = key;
+			inHandler = qfalse;
+			return;
+		}
+
+		if (bindModifier != -1 && key != bindModifier)
+		{
+			const int combo = DC->keyCombo(bindModifier, key);
+			bindModifier = -1;
+			Item_Bind_HandleKey(g_bindItem, combo != -1 ? combo : key, down);
+			inHandler = qfalse;
+			return;
+		}
+	}
+	else if (!(key & K_CHAR_FLAG))
+	{
+		bindModifier = -1;
+	}
+
 	if (g_waitingForKey && down)
 	{
 		Item_Bind_HandleKey(g_bindItem, key, down);
@@ -12219,17 +13591,22 @@ void Menu_HandleKey(menuDef_t *menu, int key, qboolean down)
 
 	if (g_editingField && down)
 	{
+		// The "accept" script of an edit field runs when the edit ends (enter, escape or click).
 		if (!Item_TextField_HandleKey(g_editItem, key))
 		{
+			itemDef_t *editItem = g_editItem;
 			g_editingField = qfalse;
 			g_editItem = NULL;
+			Item_HandleAccept(editItem);
 			inHandler = qfalse;
 			return;
 		}
 		else if (key == A_MOUSE1 || key == A_MOUSE2 || key == A_MOUSE3)
 		{
+			itemDef_t *editItem = g_editItem;
 			g_editingField = qfalse;
 			g_editItem = NULL;
+			Item_HandleAccept(editItem);
 			Display_MouseMove(NULL, DC->cursorx, DC->cursory);
 		}
 		else if (key == A_TAB || key == A_CURSOR_UP || key == A_CURSOR_DOWN)
@@ -12240,6 +13617,14 @@ void Menu_HandleKey(menuDef_t *menu, int key, qboolean down)
 
 	if (menu == NULL)
 	{
+		inHandler = qfalse;
+		return;
+	}
+
+	// An open dropdown takes all the keys, also the clicks out of the menu.
+	if (g_dropdownItem && g_dropdownItem->parent == menu)
+	{
+		Item_ListBox_DropdownOpenKey(key, down);
 		inHandler = qfalse;
 		return;
 	}
@@ -12277,6 +13662,12 @@ void Menu_HandleKey(menuDef_t *menu, int key, qboolean down)
 
 	if (item != NULL)
 	{
+		if (down && Item_ListBox_DropdownHeaderKey(item, key))
+		{
+			inHandler = qfalse;
+			return;
+		}
+
 		if (Item_HandleKey(item, key, down))
 //JLFLISTBOX
 		{
@@ -12315,7 +13706,7 @@ void Menu_HandleKey(menuDef_t *menu, int key, qboolean down)
 	}
 
 	// Special SwglSystem key handling
-	if (!(key & K_CHAR_FLAG))
+	if (!(key & K_CHAR_FLAG) && !g_editingField)
 	{	//only check keys not chars
 		char	b[256];
 		DC->getBindingBuf(key, b, 256);
@@ -12421,9 +13812,7 @@ void Menu_HandleKey(menuDef_t *menu, int key, qboolean down)
 				{
 					if (Rect_ContainsPoint(&item->window.rect, DC->cursorx, DC->cursory))
 					{
-						item->cursorPos = 0;
-						g_editingField = qtrue;
-						g_editItem = item;
+						Item_TextField_BeginEdit(item);
 						//DC->setOverstrikeMode(qtrue);
 					}
 				}
@@ -12521,9 +13910,7 @@ void Menu_HandleKey(menuDef_t *menu, int key, qboolean down)
 			{
 				if (item->type == ITEM_TYPE_EDITFIELD || item->type == ITEM_TYPE_NUMERICFIELD)
 				{
-					item->cursorPos = 0;
-					g_editingField = qtrue;
-					g_editItem = item;
+					Item_TextField_BeginEdit(item);
 					//DC->setOverstrikeMode(qtrue);
 				}
 				else

@@ -1,0 +1,65 @@
+/*
+Copyright (C) 2019, NVIDIA CORPORATION. All rights reserved.
+
+This program is free software; you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation; either version 2 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along
+with this program; if not, write to the Free Software Foundation, Inc.,
+51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+*/
+
+#version 460
+#extension GL_GOOGLE_include_directive : enable
+
+#include "../path_tracer.h"	// contains global_ubo.h -> constants.h
+#include "../utils.glsl"
+
+#define GLOBAL_TEXTURES_DESC_SET_IDX 1
+#include "../global_textures.h"
+
+#define VERTEX_BUFFER_DESC_SET_IDX 4
+#define VERTEX_READONLY 1
+#include "../vertex_buffer.h"
+
+#include "path_tracer_transparency.glsl"
+#include "path_tracer_hit_shaders.h"
+
+layout (location = RT_PAYLOAD_EFFECTS) rayPayloadInEXT RayPayloadEffects ray_payload;
+hitAttributeEXT vec2 hit_attribs;
+
+void main()
+{
+	vec3 fx;
+	vec3 lit_L;
+	float lit_T;
+	TransparencyHit transparency = pt_logic_sprite(gl_PrimitiveID, hit_attribs.xy, fx, lit_L, lit_T);
+
+	if (transparency.hit)
+	{
+		if (lit_T < 1.0 || any(greaterThan(lit_L, vec3(0.0))))
+			update_payload_lit(ray_payload, lit_L, lit_T, gl_HitTEXT);
+
+		update_payload_transparency(ray_payload, transparency.L, transparency.T, gl_HitTEXT);
+
+		// The glow pass of the rasterizer draws only the glow stages: the red glow of a
+		// saber blade blooms, its white core does not.
+		vec4 glow = unpackHalf4x16(ray_payload.glow);
+		glow.rgb += transparency.glow;
+		ray_payload.glow = packHalf4x16(glow);
+
+		// A weapon effect adds as the rasterizer adds: the sum of the sprites, in display units.
+		vec4 fx_sum = unpackHalf4x16(ray_payload.fx);
+		fx_sum.rgb += fx;
+		ray_payload.fx = packHalf4x16(fx_sum);
+	}
+
+	ignoreIntersectionEXT;
+}

@@ -34,6 +34,11 @@ if(BuildSPRend2 )
 	add_subdirectory("${SPDir}/rd-rend2")
 endif(BuildSPRend2)
 
+#	Add Vulkan JKA Renderer Project
+if(BuildSPVulkan)
+	add_subdirectory("${SPDir}/rd-vulkan")
+endif(BuildSPVulkan)
+
 #    Add Engine Project
 if(BuildSPEngine)
 	# Libraries
@@ -41,7 +46,7 @@ if(BuildSPEngine)
 		set(SPEngineLibraries "winmm")
 	endif(WIN32)
 	# Defines
-	set(SPEngineDefines ${SharedDefines} "_JK2EXE") # it's called JK2EXE but it really just means Singleplayer Exe
+	set(SPEngineDefines ${SharedDefines} "Q_MATH_INLINE" "_JK2EXE") # it's called JK2EXE but it really just means Singleplayer Exe
 
 	set(SPEngineIncludeDirectories
 		${SPEngineIncludeDirectories}
@@ -130,9 +135,12 @@ if(BuildSPEngine)
 
 		"${SPDir}/client/cl_cgame.cpp"
 		"${SPDir}/client/cl_cin.cpp"
+		"${SPDir}/client/cl_dualref.cpp"
+		"${SPDir}/client/cl_dualref.h"
 		"${SPDir}/client/cl_console.cpp"
 		"${SPDir}/client/cl_input.cpp"
 		"${SPDir}/client/cl_keys.cpp"
+		"${SPDir}/client/cl_lightedit_keys.cpp"
 		"${SPDir}/client/cl_main.cpp"
 		"${SPDir}/client/cl_mp3.cpp"
 		"${SPDir}/client/cl_parse.cpp"
@@ -176,6 +184,9 @@ if(BuildSPEngine)
 		"${SPDir}/qcommon/cvar.cpp"
 
 		"${SPDir}/qcommon/files.cpp"
+
+		"${SPDir}/qcommon/jobs.cpp"
+		"${SPDir}/qcommon/jobs.h"
 
 		"${SPDir}/qcommon/md4.cpp"
 		"${SPDir}/qcommon/msg.cpp"
@@ -230,6 +241,7 @@ if(BuildSPEngine)
 		"${SPDir}/server/sv_game.cpp"
 		"${SPDir}/server/sv_init.cpp"
 		"${SPDir}/server/sv_main.cpp"
+		"${SPDir}/server/sv_perflog.cpp"
 		"${SPDir}/server/sv_savegame.cpp"
 		"${SPDir}/server/sv_snapshot.cpp"
 		"${SPDir}/server/sv_world.cpp"
@@ -315,6 +327,8 @@ if(BuildSPEngine)
 	set(SPEngineUIFiles
 		"${SPDir}/ui/ui_atoms.cpp"
 		"${SPDir}/ui/ui_connect.cpp"
+		"${SPDir}/ui/ui_lightedit.cpp"
+		"${SPDir}/ui/ui_lightedit.h"
 		"${SPDir}/ui/ui_main.cpp"
 		"${SPDir}/ui/ui_saber.cpp"
 		"${SPDir}/ui/ui_shared.cpp"
@@ -385,6 +399,10 @@ if(BuildSPEngine)
     # Transparently use either bundled or system zlib.
     list(APPEND SPEngineIncludeDirectories ${ZLIB_INCLUDE_DIR})
     list(APPEND SPEngineLibraries          ${ZLIB_LIBRARIES})
+
+	# The job pool uses std::thread.
+	find_package(Threads REQUIRED)
+	list(APPEND SPEngineLibraries          ${CMAKE_THREAD_LIBS_INIT})
 
 	# project macro so we can invoke it twice: for jk2 and for ja
 	function(add_sp_project ProjectName Label SPDirName InstallDir Component)

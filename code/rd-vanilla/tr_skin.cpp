@@ -371,7 +371,7 @@ qhandle_t RE_RegisterSkin( const char *name) {
 	char skinlower[MAX_QPATH] = { 0 };
 
 	bool multiskin = RE_SplitSkins(name, (char*)&skinhead, (char*)&skintorso, (char*)&skinlower);
-
+	
 	if ((!multiskin && strlen(name) >= MAX_QPATH)) {
 		Com_Printf("WARNING : RE_REGISTERSkin Skin name (%s) exceeds MAX_QPATH\n", name);
 		return 0;

@@ -472,10 +472,21 @@ public:
 	intptr_t		*mTransformedVertsArray;	// used to create an array of pointers to transformed verts per surface for collision detection
 	CBoneCache		*mBoneCache;
 	int				mSkin;
+	// GLA of this instance, in place of the GLA of its model (G2API_SetAnimOverride). Not saved: the game sets it again on load.
+	char			mAnimOverride[MAX_QPATH];
 
 	// these occasionally are not valid (like after a vid_restart)
 	// call the questionably efficient G2_SetupModelPointers(this) to insure validity
 	bool				mValid; // all the below are proper and valid
+
+	// When these still match the renderer, the pointers below were already resolved this
+	// frame and G2_SetupModelPointers can return immediately. CG_Player asks for 8 to 25
+	// bolt matrices per character per frame and each one re-resolved the model by name,
+	// which made this the largest single item in the cgame frame.
+	// Both fields sit after BSAVE_END_FIELD, so save games are unaffected.
+	int					mSetupFrame;
+	int					mSetupEpoch;
+
 	const model_s		*currentModel;
 	int					currentModelSize;
 	const model_s		*animModel;
@@ -503,6 +514,8 @@ public:
 	mBoneCache(0),
 	mSkin(0),
 	mValid(false),
+	mSetupFrame(-1),
+	mSetupEpoch(-1),
 	currentModel(0),
 	currentModelSize(0),
 	animModel(0),
@@ -510,6 +523,7 @@ public:
 	aHeader(0)
 	{
 		mFileName[0] = 0;
+		mAnimOverride[0] = 0;
 	}
 
 

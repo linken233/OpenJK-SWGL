@@ -32,6 +32,20 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 #define	REF_API_VERSION 9
 
+// Vulkan opaque handle forward declarations (see shared/sys/sys_public.h for
+// why these are hand-declared instead of including the Vulkan SDK headers).
+#ifndef OPENJK_VK_HANDLES_DECLARED
+#define OPENJK_VK_HANDLES_DECLARED
+#ifndef VULKAN_CORE_H_
+typedef struct VkInstance_T* VkInstance;
+#if defined(__LP64__) || defined(_WIN64) || (defined(__x86_64__) && !defined(__ILP32__)) || defined(_M_X64) || defined(__ia64) || defined(_M_IA64) || defined(__aarch64__) || defined(__powerpc64__)
+typedef struct VkSurfaceKHR_T* VkSurfaceKHR;
+#else
+typedef uint64_t VkSurfaceKHR;
+#endif
+#endif // VULKAN_CORE_H_
+#endif // OPENJK_VK_HANDLES_DECLARED
+
 //
 // these are the functions exported by the refresh module
 //
@@ -332,6 +346,12 @@ typedef struct refimport_s {
 	// OpenGL-specific
 	void *			(*GL_GetProcAddress)				( const char *name );
 	qboolean		(*GL_ExtensionSupported)			( const char *extension );
+
+	// Vulkan-specific
+	qboolean		(*VK_IsMinimized)					( void );
+	void *			(*VK_GetInstanceProcAddress)		( void );
+	qboolean		(*VK_createSurfaceImpl)				( VkInstance instance, VkSurfaceKHR *surface );
+	void			(*VK_destroyWindow)					( void );
 
 	// gpvCachedMapDiskImage
 	void *			(*CM_GetCachedMapDiskImage)			( void );
