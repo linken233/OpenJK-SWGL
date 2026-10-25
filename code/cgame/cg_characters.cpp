@@ -650,6 +650,25 @@ void CG_Characters_ResetSearch_f()
 #pragma endregion
 
 #pragma region Search
+// The text is in the name, the name key or the code of the character or of one of its variants.
+static qboolean NameMatchesSearch(const characterInfo_t *character, const char *text)
+{
+	if (Q_stristr(character->nameKey, text) || Q_stristr(character->code, text) || Q_stristr(character->name, text))
+	{
+		return qtrue;
+	}
+	const int variantCount = GetVariantCount(character);
+	for (int v = 0; v < variantCount; v++)
+	{
+		const characterVariant_t *variant = &character->variantList[v];
+		if (Q_stristr(variant->nameKey, text) || Q_stristr(variant->code, text) || Q_stristr(variant->name, text))
+		{
+			return qtrue;
+		}
+	}
+	return qfalse;
+}
+
 qboolean filterFunction(characterInfo_t *character)
 {
 	//Faction filter
@@ -680,11 +699,9 @@ qboolean filterFunction(characterInfo_t *character)
 			return qfalse;
 		}
 	}
-	//Search if the name is found in this character's name, if not, return false
+	//Search if the name is found in this character's names or its variants' names, if not, return false
 	if (ui_c_filter_name.string != NULL && ui_c_filter_name.string[0] != '\0'
-		&& Q_stristr(character->nameKey, ui_c_filter_name.string) == NULL
-		&& Q_stristr(character->code, ui_c_filter_name.string) == NULL
-		&& Q_stristr(character->name, ui_c_filter_name.string) == NULL)
+		&& !NameMatchesSearch(character, ui_c_filter_name.string))
 	{
 		return qfalse;
 	}
