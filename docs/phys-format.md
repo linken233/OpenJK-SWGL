@@ -137,6 +137,7 @@ How the collisions work:
 | --- | --- | --- |
 | `detail` | 1 | Density of the simulation mesh. 1 gives cells of 4 units, 2 gives cells of 2 units. Up: more folds, slower. Down: fewer folds, faster. A cell is fixed when most of it is fixed. |
 | `subdivide` | 0 | 0 to 2. Makes the drawn mesh smoother: each level cuts each triangle in 4. The simulation does not change. The fixed part is not changed, so the cloth stays on the body. A group draws 16384 vertices at most. A level that gives more vertices is not used. |
+| `simsubdivide` | 0 | 0 to 2. Adds particles to the simulation: each level cuts each triangle of the model mesh in 4 (linear split, the shape of the model does not change). Each level also halves the cell of `detail`. Up: smaller folds, slower. The drawn mesh is the refined mesh; `subdivide` adds its levels on top. A refined mesh has 8192 vertices at most. A level that gives more vertices is not used. Not used with `lag`. |
 | `range` | 0 | Largest distance from the view, in units, that moves the cloth. 0: no limit. |
 | `enabled` | 1 | `enabled 0` stops the group. |
 

@@ -89,6 +89,7 @@ struct physGroupDef_t
 	float	detail;		// density of the simulation mesh, 1 = cells of 4 units
 	float	range;		// maximum distance from the view that runs the solver
 	int		subdivide;	// levels of Loop subdivision of the drawn mesh, 0 to PHYS_MAX_SUBDIVIDE
+	int		simSubdivide;	// levels of linear subdivision of the simulation mesh, 0 to PHYS_MAX_SUBDIVIDE
 
 	// Solver values. They are not keywords of the file.
 	float	proxy;		// cell size of the simulation mesh, in units
@@ -212,6 +213,19 @@ enum physShape_t
 	PHYS_SHAPE_BOX			// rounded box
 };
 
+// Constraint types of physCloth_t::dbgCorr.
+enum physCorr_t
+{
+	PHYS_CORR_EDGES,	// stretch and bend
+	PHYS_CORR_SHAPE,
+	PHYS_CORR_TETHER,
+	PHYS_CORR_FOLLOW,
+	PHYS_CORR_REACH,
+	PHYS_CORR_COLLIDE,
+	PHYS_CORR_CROSS,	// exit across a collider, on the side of the animated position
+	PHYS_CORR_SPEED		// largest particle speed, units per second
+};
+
 // A collider is the set of points within radius of a core shape: a segment or an inner box.
 struct physCollider_w
 {
@@ -250,6 +264,24 @@ struct physCloth_t
 	float				frameOmega[3];		// turn speed, radians per second, around this axis
 	float				frameQ[4];			// turn of the pinned particles from the bind pose, quaternion x y z w
 
+	// Reference bone (Phys_ClothSetReference): when set, it is the model frame, in place of the fit of the pinned particles.
+	bool				hasReference;
+	float				refOrigin[3];
+	float				refAxis[3][3];
+
+	// Low-pass on the model frame (Phys_SmoothFrame): the frame before the filter and after it.
+	float				rawOrigin[3];
+	float				rawAxis[3][3];
+	float				smoothOrigin[3];
+	float				smoothAxis[3][3];
+	bool				teleported;			// the last step moved the cloth as one rigid piece (ph_debug)
+
+	// ph_debug: when debug is set, a step keeps the largest correction of each constraint type (physCorr_t),
+	// in units, and the largest particle speed.
+	bool				debug;
+	float				dbgCorr[8];
+	std::vector<float>	dbgP;
+
 	// Frame state that the cloth took at the end of the last step. The next step starts from it, so no part
 	// of a speed change is lost when a frame ends between two steps.
 	float				appliedOrigin[3];
@@ -267,8 +299,16 @@ struct physCloth_t
 	std::vector<float>	shapeRot;			// 4 per particle: turn of its zone, quaternion x y z w
 	std::vector<float>	shapeGoal, shapeCount;
 
-	physCloth_t() : numParticles( 0 ), valid( false ), accum( 0.0f ), loose( false ), frameSpeedValid( false ) {}
+	physCloth_t() : numParticles( 0 ), valid( false ), accum( 0.0f ), loose( false ), hasReference( false ), teleported( false ), debug( false ), frameSpeedValid( false )
+	{
+		for ( int k = 0; k < 8; k++ )
+			dbgCorr[k] = 0.0f;
+	}
 };
+
+// Sets the model frame of this frame: the world transform of the reference bone. origin NULL = no reference bone,
+// the frame is the fit of the pinned particles. Call it before Phys_ClothReset and Phys_ClothStep.
+void	Phys_ClothSetReference( physCloth_t &cloth, const float *origin, const float axis[3][3] );
 
 // freeFactor: 0 = pinned, 1 = free, per particle. topo gives the bind pose of the tethers.
 void	Phys_ClothInit( physCloth_t &cloth, const physGroupDef_t &def, const physTopology_t &topo, const float *freeFactor );
@@ -375,5 +415,18 @@ void	Phys_BuildSubdiv( physSubdiv_t &sd, const physTopology_t &topo, const physS
 
 // out[point] = blend of in[particle], 3 floats each.
 void	Phys_ApplySubdiv( const physSubdiv_t &sd, const float *in, float *out );
+
+// out[point] = blend of in[particle], 1 float each.
+void	Phys_ApplySubdivScalar( const physSubdiv_t &sd, const float *in, float *out );
+
+// The topology of the refined mesh: one particle per refined point. The first base.numParticles points are
+// the particles of base, at the same index.
+void	Phys_SubdivTopology( physTopology_t &out, const physSubdiv_t &sd, const physTopology_t &base );
+
+// The triangles of a refined surface, indexes of its drawn vertices (sd.surfaces[s].point).
+void	Phys_SubdivSurfaceTris( const physSubdivSurface_t &surf, std::vector<int> &tris );
+
+// A draw mesh of the refined surfaces of mesh: each drawn point is the particle of the same index.
+void	Phys_SubdivIdentity( physSubdiv_t &out, const physSubdiv_t &mesh );
 
 #endif

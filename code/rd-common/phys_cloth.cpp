@@ -10,7 +10,9 @@ Cloth and hair physics: .phys parser and position based solver.
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <functional>
 #include <map>
+#include <queue>
 #include <utility>
 
 #define PHYS_GRAVITY		800.0f
@@ -168,6 +170,7 @@ void Phys_InitGroup( physGroupDef_t &g, bool hair )
 	g.detail = 1.0f;
 	g.range = 0.0f;
 	g.subdivide = 0;
+	g.simSubdivide = 0;
 
 	g.maxSpeed = hair ? 400.0f : 700.0f;
 	g.margin = 0.5f;
@@ -254,6 +257,11 @@ void Phys_DeriveGroup( physGroupDef_t &g )
 		g.subdivide = 0;
 	else if ( g.subdivide > PHYS_MAX_SUBDIVIDE )
 		g.subdivide = PHYS_MAX_SUBDIVIDE;
+
+	if ( g.simSubdivide < 0 )
+		g.simSubdivide = 0;
+	else if ( g.simSubdivide > PHYS_MAX_SUBDIVIDE )
+		g.simSubdivide = PHYS_MAX_SUBDIVIDE;
 
 	if ( g.iterations < 1 )
 		g.iterations = 1;
@@ -572,6 +580,7 @@ static void Phys_ParseLine( physGroupDef_t &g, const std::vector<std::string> &t
 	else if ( !Phys_Stricmp( key, "detail" ) )		g.detail = Phys_Arg( tok, 1, g.detail );
 	else if ( !Phys_Stricmp( key, "range" ) )		g.range = Phys_Arg( tok, 1, g.range );
 	else if ( !Phys_Stricmp( key, "subdivide" ) )	g.subdivide = (int)Phys_Arg( tok, 1, (float)g.subdivide );
+	else if ( !Phys_Stricmp( key, "simsubdivide" ) )	g.simSubdivide = (int)Phys_Arg( tok, 1, (float)g.simSubdivide );
 	else if ( !Phys_Stricmp( key, "enabled" ) )		g.enabled = Phys_Arg( tok, 1, 1.0f ) != 0.0f;
 	// Old keywords: converted to the new ones.
 	else if ( !Phys_Stricmp( key, "gravity" ) )		g.weight = Phys_Arg( tok, 1, g.weight );
@@ -704,6 +713,18 @@ static inline void Vec3Sub( const float *a, const float *b, float *out )
 static inline float Vec3Dot( const float *a, const float *b )
 {
 	return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+}
+
+static inline void Vec3Normalize( float *v )
+{
+	const float len = sqrtf( Vec3Dot( v, v ) );
+
+	if ( len > 1e-8f )
+	{
+		v[0] /= len;
+		v[1] /= len;
+		v[2] /= len;
+	}
 }
 
 static inline float Vec3Dist( const float *a, const float *b )
@@ -1311,6 +1332,8 @@ void Phys_ProxyApply( physProxy_t &px, const float *proxyX, const float *proxyTa
 #define PHYS_BEND_COMPLIANCE	2e-4f
 #define PHYS_MAX_FRAME_SPEED	2000.0f	// a faster model frame is a teleport: its speed change is not given to the cloth
 #define PHYS_MAX_FRAME_TURN		1.0f	// a larger turn in one frame, radians, is a teleport too
+#define PHYS_FRAME_SMOOTH		0.1f	// time constant of the low-pass on the model frame, seconds
+#define PHYS_TELEPORT_MIN_DT	0.05f	// the teleport test uses a frame time of this length at least, seconds
 
 static inline float Phys_Compliance( float stiffness, float scale )
 {
@@ -1342,8 +1365,10 @@ static float Phys_NormalizeAxes( const float in[3][3], float out[3][3] )
 	return sum > 1e-6f ? sum / 3.0f : 1.0f;
 }
 
-// Tethers (long range attachments): each free particle stays within its bind pose distance of the
-// nearest pinned particle, as the tethers of NvCloth.
+// Tethers (long range attachments): each free particle stays within its distance from the nearest pinned
+// particle, as the geodesic tethers of NvCloth. The distance is along the edges of the mesh in the bind pose: a
+// straight line is shorter than a cloth that is curved in the bind pose (a cape on the back), and then the tether
+// pulls the cloth through the body against the edges and the colliders.
 static void Phys_BuildTethers( physCloth_t &cloth, const physTopology_t &topo )
 {
 	const int n = cloth.numParticles;
@@ -1354,29 +1379,76 @@ static void Phys_BuildTethers( physCloth_t &cloth, const physTopology_t &topo )
 	if ( (int)topo.bindPos.size() != n * 3 )
 		return;
 
+	// Neighbors of each particle, from the edges.
+	const int numEdges = (int)topo.edgeRest.size();
+	std::vector<int> adjStart( n + 1, 0 ), adj( numEdges * 2 );
+	std::vector<float> adjLen( numEdges * 2 );
+
+	for ( int e = 0; e < numEdges; e++ )
+	{
+		adjStart[topo.edges[e * 2] + 1]++;
+		adjStart[topo.edges[e * 2 + 1] + 1]++;
+	}
+
+	for ( int i = 0; i < n; i++ )
+		adjStart[i + 1] += adjStart[i];
+
+	std::vector<int> fill( adjStart.begin(), adjStart.end() - 1 );
+
+	for ( int e = 0; e < numEdges; e++ )
+	{
+		const int a = topo.edges[e * 2], b = topo.edges[e * 2 + 1];
+
+		adj[fill[a]] = b;
+		adjLen[fill[a]++] = topo.edgeRest[e];
+		adj[fill[b]] = a;
+		adjLen[fill[b]++] = topo.edgeRest[e];
+	}
+
+	// Shortest path from all the pinned particles (Dijkstra with several sources).
+	std::vector<float> dist( n, 1e30f );
+	std::priority_queue<std::pair<float, int>, std::vector<std::pair<float, int> >, std::greater<std::pair<float, int> > > open;
+
 	for ( int i = 0; i < n; i++ )
 	{
 		if ( cloth.pinned[i] )
+		{
+			dist[i] = 0.0f;
+			cloth.tether[i] = i;
+			open.push( std::make_pair( 0.0f, i ) );
+		}
+	}
+
+	while ( !open.empty() )
+	{
+		const std::pair<float, int> top = open.top();
+
+		open.pop();
+
+		if ( top.first > dist[top.second] )
 			continue;
 
-		float best = 1e30f;
-
-		for ( int j = 0; j < n; j++ )
+		for ( int k = adjStart[top.second]; k < adjStart[top.second + 1]; k++ )
 		{
-			if ( !cloth.pinned[j] )
-				continue;
+			const int j = adj[k];
+			const float d = top.first + adjLen[k];
 
-			const float d = Vec3Dist( &topo.bindPos[i * 3], &topo.bindPos[j * 3] );
-
-			if ( d < best )
+			if ( d < dist[j] )
 			{
-				best = d;
-				cloth.tether[i] = j;
+				dist[j] = d;
+				cloth.tether[j] = cloth.tether[top.second];
+				open.push( std::make_pair( d, j ) );
 			}
 		}
+	}
 
-		if ( cloth.tether[i] >= 0 )
-			cloth.tetherLength[i] = best;
+	// A particle with no path to a pinned particle has no tether.
+	for ( int i = 0; i < n; i++ )
+	{
+		if ( cloth.pinned[i] || dist[i] >= 1e29f )
+			cloth.tether[i] = -1;
+		else
+			cloth.tetherLength[i] = dist[i];
 	}
 }
 
@@ -1436,6 +1508,15 @@ static void Phys_ClothFrame( physCloth_t &cloth, const physTopology_t &topo, con
 							 const float axis[3][3], int iterations, float outOrigin[3], float outAxis[3][3] )
 {
 	const int n = cloth.numParticles;
+
+	// A reference bone is rigid: the fit of the pinned particles also turns with the skin around them (a collar
+	// with the head), and that turn drags the free particles through the damping.
+	if ( cloth.hasReference )
+	{
+		Phys_NormalizeAxes( cloth.refAxis, outAxis );
+		memcpy( outOrigin, cloth.refOrigin, sizeof( float ) * 3 );
+		return;
+	}
 
 	Phys_NormalizeAxes( axis, outAxis );
 	memcpy( outOrigin, origin, sizeof( float ) * 3 );
@@ -1538,6 +1619,17 @@ static void Phys_ClothFrame( physCloth_t &cloth, const physTopology_t &topo, con
 	memcpy( outOrigin, cw, sizeof( cw ) );
 }
 
+void Phys_ClothSetReference( physCloth_t &cloth, const float *origin, const float axis[3][3] )
+{
+	cloth.hasReference = origin != NULL;
+
+	if ( !origin )
+		return;
+
+	memcpy( cloth.refOrigin, origin, sizeof( cloth.refOrigin ) );
+	memcpy( cloth.refAxis, axis, sizeof( cloth.refAxis ) );
+}
+
 void Phys_ClothReset( physCloth_t &cloth, const physTopology_t &topo, const float *target, const float origin[3], const float axis[3][3] )
 {
 	if ( cloth.numParticles == 0 )
@@ -1555,6 +1647,10 @@ void Phys_ClothReset( physCloth_t &cloth, const physTopology_t &topo, const floa
 	cloth.frameQ[0] = cloth.frameQ[1] = cloth.frameQ[2] = 0.0f;
 	cloth.frameQ[3] = 1.0f;
 	Phys_ClothFrame( cloth, topo, target, origin, axis, 50, cloth.frameOrigin, cloth.frameAxis );
+	memcpy( cloth.rawOrigin, cloth.frameOrigin, sizeof( cloth.rawOrigin ) );
+	memcpy( cloth.rawAxis, cloth.frameAxis, sizeof( cloth.rawAxis ) );
+	memcpy( cloth.smoothOrigin, cloth.frameOrigin, sizeof( cloth.smoothOrigin ) );
+	memcpy( cloth.smoothAxis, cloth.frameAxis, sizeof( cloth.smoothAxis ) );
 	memset( cloth.frameVel, 0, sizeof( cloth.frameVel ) );
 	memset( cloth.frameOmega, 0, sizeof( cloth.frameOmega ) );
 	memcpy( cloth.appliedOrigin, cloth.frameOrigin, sizeof( cloth.appliedOrigin ) );
@@ -1781,9 +1877,12 @@ static void Phys_ExitOnSide( float *pos, const physCollider_w &c, const float *s
 // Pushes pos out of one collider. rest: distance from the core in the bind pose, < 0 = none. A particle that is
 // inside the collider in the bind pose can stay at that depth, so a collider of the stock skeleton does not push
 // the rest shape of the cloth out.
-// A particle deep inside, on the side opposite to its animated position, went through the collider. It leaves
-// on the side of the animated position (the backstop of APEX and Chaos), not on the nearest side.
-static bool Phys_Collide( float *pos, const float *tgt, const physCollider_w &c, float margin, float rest )
+// A particle deep inside, on the side opposite to its position at the start of the step (prev), went through the
+// collider in this step. It leaves on the side it comes from, not on the nearest side. The side of the animated
+// position is not used: when the animation puts a limb through the cloth, neighbor particles have their animated
+// positions on the two sides, leave on the two sides, and the edges between them pull across the limb.
+// prev NULL: the nearest side.
+static bool Phys_Collide( float *pos, const float *tgt, const float *prev, const physCollider_w &c, float margin, float rest, float *crossMax )
 {
 	float radius = c.radius + margin;
 
@@ -1800,22 +1899,40 @@ static bool Phys_Collide( float *pos, const float *tgt, const physCollider_w &c,
 	if ( dist >= radius )
 		return false;
 
-	float nT[3];
-	bool hasNT;
-	const float distT = Phys_CoreDistance( c, tgt, nT, hasNT );
+	float nS[3];
+	bool hasNS = false;
+	const float distS = prev ? Phys_CoreDistance( c, prev, nS, hasNS ) : 0.0f;
 
-	if ( hasN && hasNT && dist < radius * 0.5f && distT > dist && Vec3Dot( n, nT ) < 0.0f )
+	if ( hasN && hasNS && dist < radius * 0.5f && distS >= radius * 0.5f && Vec3Dot( n, nS ) < 0.0f )
 	{
-		Phys_ExitOnSide( pos, c, nT, radius );
+		const float before[3] = { pos[0], pos[1], pos[2] };
+
+		Phys_ExitOnSide( pos, c, nS, radius );
+
+		// ph_debug: the largest move across a collider.
+		if ( crossMax )
+		{
+			const float d = Vec3Dist( before, pos );
+
+			*crossMax = d > *crossMax ? d : *crossMax;
+		}
+
 		return true;
 	}
 
 	if ( !hasN )
 	{
-		// On the axis: leave on the side of the animated position.
-		n[0] = hasNT ? nT[0] : 0.0f;
-		n[1] = hasNT ? nT[1] : -1.0f;
-		n[2] = hasNT ? nT[2] : 0.0f;
+		// On the axis: leave on the side the particle comes from, else on the side of the animated position.
+		float nT[3];
+		bool hasNT;
+
+		Phys_CoreDistance( c, tgt, nT, hasNT );
+
+		const float *side = hasNS ? nS : ( hasNT ? nT : NULL );
+
+		n[0] = side ? side[0] : 0.0f;
+		n[1] = side ? side[1] : -1.0f;
+		n[2] = side ? side[2] : 0.0f;
 	}
 
 	const float push = radius - dist;
@@ -1827,13 +1944,13 @@ static bool Phys_Collide( float *pos, const float *tgt, const physCollider_w &c,
 }
 
 // All colliders and the floor, for one particle. rest: its rest distances (numColliders), NULL = none.
-static bool Phys_CollideAll( float *pos, const float *tgt, float margin, const physCollider_w *colliders, int numColliders,
-							 const float *rest, bool hasGround, float groundZ )
+static bool Phys_CollideAll( float *pos, const float *tgt, const float *prev, float margin, const physCollider_w *colliders, int numColliders,
+							 const float *rest, bool hasGround, float groundZ, float *crossMax = NULL )
 {
 	bool hit = false;
 
 	for ( int c = 0; c < numColliders; c++ )
-		hit |= Phys_Collide( pos, tgt, colliders[c], margin, rest ? rest[c] : -1.0f );
+		hit |= Phys_Collide( pos, tgt, prev, colliders[c], margin, rest ? rest[c] : -1.0f, crossMax );
 
 	if ( hasGround )
 	{
@@ -1858,7 +1975,7 @@ void Phys_ProjectColliders( float *pos, const float *target, const float *freeFa
 	for ( int i = 0; i < n; i++ )
 	{
 		if ( freeFactor[i] > PHYS_MIN_FREE )
-			Phys_CollideAll( pos + i * 3, target + i * 3, margin, colliders, numColliders,
+			Phys_CollideAll( pos + i * 3, target + i * 3, NULL, margin, colliders, numColliders,
 				restDist ? restDist + i * numColliders : NULL, hasGround, groundZ );
 	}
 }
@@ -2046,6 +2163,92 @@ static inline void Phys_FrameSpeedAt( const float *vel, const float *omega, cons
 	out[2] = vel[2] + omega[0] * r[1] - omega[1] * r[0];
 }
 
+// ph_debug: the largest correction of each constraint type in this frame.
+static inline void Phys_DebugCorr( physCloth_t &cloth, int type, float value )
+{
+	if ( cloth.debug && value > cloth.dbgCorr[type] )
+		cloth.dbgCorr[type] = value;
+}
+
+// ph_debug: the largest move of a particle since cloth.dbgP.
+static void Phys_DebugMove( physCloth_t &cloth, float *p, int n, int type )
+{
+	for ( int i = 0; i < n; i++ )
+		Phys_DebugCorr( cloth, type, Vec3Dist( &cloth.dbgP[i * 3], &p[i * 3] ) );
+
+	cloth.dbgP.assign( p, p + n * 3 );
+}
+
+// A teleport of the model frame: it moves faster than PHYS_MAX_FRAME_SPEED or turns more than PHYS_MAX_FRAME_TURN
+// in one frame. The distance is the test, so the time is at least PHYS_TELEPORT_MIN_DT: a normal move in a
+// very short frame (1 ms) is not a teleport.
+static bool Phys_FrameJump( const float vel[3], float dt, float angle )
+{
+	const float t = dt > PHYS_TELEPORT_MIN_DT ? dt : PHYS_TELEPORT_MIN_DT;
+	const float maxDist = PHYS_MAX_FRAME_SPEED * t;
+
+	return Vec3Dot( vel, vel ) * dt * dt > maxDist * maxDist || angle > PHYS_MAX_FRAME_TURN;
+}
+
+// Low-pass on the model frame, time constant PHYS_FRAME_SMOOTH. The frame speed is a difference over one
+// frame, and the damping gives it to each particle times its distance from the frame: a pop or a jitter of
+// the animation becomes a large push on the far particles. A teleport of the frame is not smoothed.
+static void Phys_SmoothFrame( physCloth_t &cloth, float dt, float origin[3], float axis[3][3] )
+{
+	float R[3][3], omega[3], vel[3];
+	const float angle = Phys_FrameTurn( cloth.rawAxis, axis, dt, R, omega );
+
+	for ( int k = 0; k < 3; k++ )
+		vel[k] = ( origin[k] - cloth.rawOrigin[k] ) / dt;
+
+	if ( Phys_FrameJump( vel, dt, angle ) )
+	{
+		// The smoothed frame takes the same rigid jump: it keeps its lag, so the cloth moves with the jump only.
+		float rel[3];
+
+		Vec3Sub( cloth.smoothOrigin, cloth.rawOrigin, rel );
+		Phys_Rotate( R, rel );
+
+		for ( int k = 0; k < 3; k++ )
+		{
+			cloth.smoothOrigin[k] = origin[k] + rel[k];
+			Phys_Rotate( R, cloth.smoothAxis[k] );
+		}
+
+		memcpy( cloth.rawOrigin, origin, sizeof( cloth.rawOrigin ) );
+		memcpy( cloth.rawAxis, axis, sizeof( cloth.rawAxis ) );
+		memcpy( origin, cloth.smoothOrigin, sizeof( cloth.smoothOrigin ) );
+		memcpy( axis, cloth.smoothAxis, sizeof( cloth.smoothAxis ) );
+		return;
+	}
+
+	memcpy( cloth.rawOrigin, origin, sizeof( cloth.rawOrigin ) );
+	memcpy( cloth.rawAxis, axis, sizeof( cloth.rawAxis ) );
+
+	const float a = 1.0f - expf( -dt / PHYS_FRAME_SMOOTH );
+	float *s0 = cloth.smoothAxis[0], *s1 = cloth.smoothAxis[1], *s2 = cloth.smoothAxis[2];
+
+	for ( int k = 0; k < 3; k++ )
+	{
+		cloth.smoothOrigin[k] += ( origin[k] - cloth.smoothOrigin[k] ) * a;
+		s0[k] += ( axis[0][k] - s0[k] ) * a;
+		s1[k] += ( axis[1][k] - s1[k] ) * a;
+	}
+
+	// Orthonormal again: axis 2 from axes 0 and 1, then axis 1 from axes 2 and 0.
+	Vec3Normalize( s0 );
+	s2[0] = s0[1] * s1[2] - s0[2] * s1[1];
+	s2[1] = s0[2] * s1[0] - s0[0] * s1[2];
+	s2[2] = s0[0] * s1[1] - s0[1] * s1[0];
+	Vec3Normalize( s2 );
+	s1[0] = s2[1] * s0[2] - s2[2] * s0[1];
+	s1[1] = s2[2] * s0[0] - s2[0] * s0[2];
+	s1[2] = s2[0] * s0[1] - s2[1] * s0[0];
+
+	memcpy( origin, cloth.smoothOrigin, sizeof( cloth.smoothOrigin ) );
+	memcpy( axis, cloth.smoothAxis, sizeof( cloth.smoothAxis ) );
+}
+
 void Phys_ClothStep( physCloth_t &cloth, const physTopology_t &topo, const physGroupDef_t &def,
 					 float dt, const float *target, const float windVel[3], const float entOrigin[3], const float axis[3][3],
 					 const physCollider_w *frameColliders, const physCollider_w *prevColliders, int numColliders,
@@ -2084,6 +2287,7 @@ void Phys_ClothStep( physCloth_t &cloth, const physTopology_t &topo, const physG
 	const float scale = Phys_NormalizeAxes( axis, unitAxis );	// the rest lengths are in model units
 
 	Phys_ClothFrame( cloth, topo, target, entOrigin, axis, PHYS_SHAPE_ITERATIONS, origin, unitAxis );
+	Phys_SmoothFrame( cloth, dt, origin, unitAxis );
 	float angle = Phys_FrameTurn( cloth.frameAxis, unitAxis, dt, turn, frameOmega );
 
 	for ( int k = 0; k < 3; k++ )
@@ -2099,8 +2303,13 @@ void Phys_ClothStep( physCloth_t &cloth, const physTopology_t &topo, const physG
 		turn[0][0] = turn[1][1] = turn[2][2] = 1.0f;
 	}
 
-	if ( Vec3Dot( frameVel, frameVel ) > PHYS_MAX_FRAME_SPEED * PHYS_MAX_FRAME_SPEED || angle > PHYS_MAX_FRAME_TURN )
+	cloth.teleported = false;
+	memset( cloth.dbgCorr, 0, sizeof( cloth.dbgCorr ) );
+
+	if ( Phys_FrameJump( frameVel, dt, angle ) )
 	{
+		cloth.teleported = true;
+
 		// Teleport: the cloth moves with the frame as one rigid piece and keeps its speed relative to the frame,
 		// as a cloth in the local space of NvCloth. The frame speed stays the speed of the last frame.
 		const int numVecs = n * 3;
@@ -2347,14 +2556,23 @@ void Phys_ClothStep( physCloth_t &cloth, const physTopology_t &topo, const physG
 
 		for ( int it = 0; it < def.iterations; it++ )
 		{
+			if ( cloth.debug )
+				cloth.dbgP.assign( p, p + n * 3 );
+
 			for ( int e = 0; e < numEdges; e++ )
 				Phys_SolveDistance( p, &cloth.pinned[0], topo.edges[e * 2], topo.edges[e * 2 + 1], topo.edgeRest[e] * scale, alphaStretch, cloth.lambda[e] );
 
 			for ( int b = 0; b < numBends; b++ )
 				Phys_SolveDistance( p, &cloth.pinned[0], topo.bends[b * 2], topo.bends[b * 2 + 1], topo.bendRest[b] * scale, alphaBend, cloth.lambda[numEdges + b] );
 
+			if ( cloth.debug )
+				Phys_DebugMove( cloth, p, n, PHYS_CORR_EDGES );
+
 			if ( shapeK > 0.0f )
 				Phys_SolveShape( cloth, p, tgt, shapeK );
+
+			if ( cloth.debug )
+				Phys_DebugMove( cloth, p, n, PHYS_CORR_SHAPE );
 
 			for ( int i = 0; i < n; i++ )
 			{
@@ -2376,6 +2594,8 @@ void Phys_ClothStep( physCloth_t &cloth, const physTopology_t &topo, const physG
 
 						for ( int c = 0; c < 3; c++ )
 							p[i * 3 + c] = p[cloth.tether[i] * 3 + c] + d[c] * k;
+
+						Phys_DebugCorr( cloth, PHYS_CORR_TETHER, len - limit );
 					}
 				}
 
@@ -2393,6 +2613,7 @@ void Phys_ClothStep( physCloth_t &cloth, const physTopology_t &topo, const physG
 						const float k = dl / len;
 
 						cloth.lambdaFollow[i] += dl;
+						Phys_DebugCorr( cloth, PHYS_CORR_FOLLOW, fabsf( dl ) );
 
 						for ( int c = 0; c < 3; c++ )
 						{
@@ -2424,6 +2645,8 @@ void Phys_ClothStep( physCloth_t &cloth, const physTopology_t &topo, const physG
 				{
 					const float scale = 1.0f / sqrtf( e );
 
+					Phys_DebugCorr( cloth, PHYS_CORR_REACH, sqrtf( Vec3Dot( d, d ) ) * ( 1.0f - scale ) );
+
 					for ( int c = 0; c < 3; c++ )
 						p[i * 3 + c] = tgt[i * 3 + c] + d[c] * scale;
 				}
@@ -2432,9 +2655,16 @@ void Phys_ClothStep( physCloth_t &cloth, const physTopology_t &topo, const physG
 			// Collisions run last, so the result of an iteration is outside the colliders.
 			for ( int i = 0; i < n; i++ )
 			{
-				if ( !cloth.pinned[i] )
-					Phys_CollideAll( &p[i * 3], &tgt[i * 3], margin, colliders, numColliders,
-						rest ? rest + i * numColliders : NULL, hasGround, groundZ );
+				if ( cloth.pinned[i] )
+					continue;
+
+				const float before[3] = { p[i * 3], p[i * 3 + 1], p[i * 3 + 2] };
+
+				Phys_CollideAll( &p[i * 3], &tgt[i * 3], &cloth.x[i * 3], margin, colliders, numColliders,
+					rest ? rest + i * numColliders : NULL, hasGround, groundZ, cloth.debug ? &cloth.dbgCorr[PHYS_CORR_CROSS] : NULL );
+
+				if ( cloth.debug )
+					Phys_DebugCorr( cloth, PHYS_CORR_COLLIDE, Vec3Dist( before, &p[i * 3] ) );
 			}
 		}
 
@@ -2447,6 +2677,9 @@ void Phys_ClothStep( physCloth_t &cloth, const physTopology_t &topo, const physG
 			{
 				if ( !cloth.pinned[i] )
 					cloth.v[i * 3 + k] = ( p[i * 3 + k] - x[k] ) / h;
+
+				if ( cloth.debug && !cloth.pinned[i] && k == 2 )
+					Phys_DebugCorr( cloth, PHYS_CORR_SPEED, sqrtf( Vec3Dot( &cloth.v[i * 3], &cloth.v[i * 3] ) ) );
 
 				x[k] = p[i * 3 + k];
 				cloth.offPrev[i * 3 + k] = cloth.offCurr[i * 3 + k];
@@ -2718,7 +2951,8 @@ void Phys_LagCollide( physLag_t &lag, const physGroupDef_t &def, const float *ta
 
 			float pushed[3] = { outPos[i * 3], outPos[i * 3 + 1], outPos[i * 3 + 2] };
 
-			if ( !Phys_CollideAll( pushed, target + i * 3, def.margin, colliders, numColliders,
+			// Lag mode has no position at the start of a step: the animated side, as before.
+			if ( !Phys_CollideAll( pushed, target + i * 3, target + i * 3, def.margin, colliders, numColliders,
 					restDist ? restDist + i * numColliders : NULL, hasGround, groundZ ) )
 				continue;
 
@@ -2885,8 +3119,9 @@ static void Phys_Emit( std::string &out, const char *key, float value, float def
 	if ( fabsf( value - def ) < 1e-6f )
 		return;
 
-	// The value starts at column 12 (tabs of 4), with 3 decimals at most.
-	std::string tabs( ( 12 - strlen( key ) + 3 ) / 4, '\t' );
+	// The value starts at column 12 (tabs of 4), with 3 decimals at most. A longer key gets one tab.
+	const int pad = 12 - (int)strlen( key );
+	std::string tabs( pad > 0 ? ( pad + 3 ) / 4 : 1, '\t' );
 
 	snprintf( buf, sizeof( buf ), "\t%s%s%g\n", key, tabs.c_str(), floor( value * 1000.0 + 0.5 ) / 1000.0 );
 	out += buf;
@@ -2987,6 +3222,7 @@ std::string Phys_GroupToText( const physGroupDef_t &g )
 	Phys_Emit( out, "detail", g.detail, d.detail );
 	Phys_Emit( out, "range", g.range, d.range );
 	Phys_Emit( out, "subdivide", (float)g.subdivide, (float)d.subdivide );
+	Phys_Emit( out, "simsubdivide", (float)g.simSubdivide, (float)d.simSubdivide );
 
 	// Old solver values: kept when the file sets them.
 	Phys_Emit( out, "maxspeed", g.maxSpeed, d.maxSpeed );
@@ -3446,4 +3682,96 @@ void Phys_ApplySubdiv( const physSubdiv_t &sd, const float *in, float *out )
 		out[p * 3 + 1] = y;
 		out[p * 3 + 2] = z;
 	}
+}
+
+void Phys_ApplySubdivScalar( const physSubdiv_t &sd, const float *in, float *out )
+{
+	for ( int p = 0; p < sd.numPoints; p++ )
+	{
+		float x = 0.0f;
+
+		for ( int k = sd.stencilStart[p]; k < sd.stencilStart[p + 1]; k++ )
+			x += sd.stencilWeight[k] * in[sd.stencilParticle[k]];
+
+		out[p] = x;
+	}
+}
+
+void Phys_SubdivSurfaceTris( const physSubdivSurface_t &surf, std::vector<int> &tris )
+{
+	tris.clear();
+
+	for ( size_t c = 0; c + 3 < surf.chunks.size(); c += 4 )
+	{
+		const int firstVert = surf.chunks[c], firstIndex = surf.chunks[c + 2], numIndexes = surf.chunks[c + 3];
+
+		for ( int i = 0; i < numIndexes; i++ )
+			tris.push_back( firstVert + surf.indexes[firstIndex + i] );
+	}
+}
+
+void Phys_SubdivTopology( physTopology_t &out, const physSubdiv_t &sd, const physTopology_t &base )
+{
+	out = physTopology_t();
+	out.numParticles = sd.numPoints;
+	out.bindPos.resize( sd.numPoints * 3 );
+	out.firstVertex.assign( sd.numPoints, -1 );
+	out.vertParticle.resize( sd.surfaces.size() );
+
+	Phys_ApplySubdiv( sd, &base.bindPos[0], &out.bindPos[0] );
+
+	std::vector<int> tris;
+
+	for ( size_t s = 0; s < sd.surfaces.size(); s++ )
+	{
+		const physSubdivSurface_t &surf = sd.surfaces[s];
+
+		out.vertParticle[s] = surf.point;
+
+		for ( size_t v = 0; v < surf.point.size(); v++ )
+		{
+			if ( out.firstVertex[surf.point[v]] < 0 )
+				out.firstVertex[surf.point[v]] = (int)( ( s << 24 ) | v );
+		}
+
+		Phys_SubdivSurfaceTris( surf, tris );
+
+		for ( size_t t = 0; t + 2 < tris.size(); t += 3 )
+		{
+			const int a = surf.point[tris[t]], b = surf.point[tris[t + 1]], c = surf.point[tris[t + 2]];
+
+			if ( a == b || b == c || a == c )
+				continue;
+
+			out.tris.push_back( a );
+			out.tris.push_back( b );
+			out.tris.push_back( c );
+		}
+	}
+
+	// A point that no drawn vertex uses keeps the first vertex of its base particle.
+	for ( int p = 0; p < sd.numPoints; p++ )
+	{
+		if ( out.firstVertex[p] < 0 )
+			out.firstVertex[p] = p < base.numParticles ? base.firstVertex[p] : 0;
+	}
+
+	Phys_BuildEdges( out );
+}
+
+void Phys_SubdivIdentity( physSubdiv_t &out, const physSubdiv_t &mesh )
+{
+	out = physSubdiv_t();
+	out.levels = mesh.levels;
+	out.numPoints = mesh.numPoints;
+	out.surfaces = mesh.surfaces;
+	out.stencilStart.resize( mesh.numPoints + 1 );
+	out.stencilParticle.resize( mesh.numPoints );
+	out.stencilWeight.assign( mesh.numPoints, 1.0f );
+
+	for ( int p = 0; p <= mesh.numPoints; p++ )
+		out.stencilStart[p] = p;
+
+	for ( int p = 0; p < mesh.numPoints; p++ )
+		out.stencilParticle[p] = p;
 }

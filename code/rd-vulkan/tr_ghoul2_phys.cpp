@@ -43,6 +43,10 @@ static cvar_t	*ph_range;
 #define PHYS_MAX_WIND			600.0f
 #define PHYS_DEFAULT_PROXY		4.0f	// cell size of the simulation mesh when the group does not set one
 #define PHYS_MAX_SUBDIV_VERTS	16384	// drawn vertices of a subdivided group, at most
+#define PHYS_MAX_SIM_VERTS		8192	// simsubdivide: vertices of the refined simulation mesh, at most
+#define PHYS_MIN_PIN_FREE		0.01f	// a particle with this free factor or less is pinned
+#define PHYS_REF_MIN_SHARE		0.1f	// reference bone: smallest part of the weight of the pinned vertices
+#define PHYS_DBG_SPEED			400.0f	// ph_debug 6: a particle speed that prints a line, units per second
 
 struct physResolvedCollider_t
 {
@@ -69,7 +73,12 @@ struct physGroupInst_t
 	std::vector<std::vector<float> >	outXYZ;
 	std::vector<std::vector<float> >	outNormal;
 	std::vector<physSurfaceOut_t>		out;
-	physTopology_t						topo;
+	physTopology_t						topo;			// the simulation mesh before the proxy: the model mesh, or the refined mesh
+	physTopology_t						baseTopo;		// simsubdivide: the model mesh. Its particle i is particle i of topo
+	physSubdiv_t						simSubdiv;		// simsubdivide: the points of topo from the particles of baseTopo, levels 0 = none
+	std::vector<float>					baseTarget;		// simsubdivide: per particle of baseTopo, world space
+	std::vector<float>					baseSkin;		// simsubdivide: per particle of baseTopo, animated normal
+	std::vector<float>					particleSkin;	// per particle: animated normal, model space
 	physProxy_t							proxy;			// the simulation mesh and its links to the full mesh
 	physCloth_t							cloth;			// state of the simulation mesh
 	physLag_t							lag;
@@ -84,6 +93,8 @@ struct physGroupInst_t
 	std::vector<float>					modelPos;		// per particle, model space
 	std::vector<float>					particleNormal;
 	std::vector<physResolvedCollider_t>	colliders;
+	int									refBone;		// reference bone: its transform is the model frame of the solver, -1 = none
+	float								refBind[3];		// bind pose center of the pinned particles: the origin of the frame
 	physSubdiv_t						subdiv;			// subdivided draw mesh, levels 0 = none
 	std::vector<float>					pointXYZ;		// per refined point, model space
 	std::vector<float>					pointNormal;
@@ -92,8 +103,12 @@ struct physGroupInst_t
 	bool								usable;
 	int									frame;			// frame of the last update
 	int									reportTime;		// ph_debug 4
+	float								dbgAxis[3][3];	// ph_debug 5: entity axes of the last frame
+	float								dbgOrigin[3];
+	std::vector<float>					dbgTarget;		// ph_debug 6: animated positions of the last frame
+	std::vector<float>					dbgModel, dbgPrevModel;	// ph_debug 6: animated positions in model space, this and the last frame
 
-	physGroupInst_t() : def( NULL ), owner( NULL ), primed( false ), built( false ), usable( false ), frame( -1 ), reportTime( 0 ) {}
+	physGroupInst_t() : def( NULL ), owner( NULL ), primed( false ), refBone( -1 ), built( false ), usable( false ), frame( -1 ), reportTime( 0 ) {}
 };
 
 struct physInstance_t
@@ -740,20 +755,147 @@ static void Phys_BuildGroup( physGroupInst_t &gi, const model_t *glm, CBoneCache
 		}
 	}
 
-	const int n = gi.topo.numParticles;
+	gi.freeFactor.assign( gi.topo.numParticles, 1.0f );
 
-	gi.freeFactor.assign( n, 1.0f );
-
-	int numFree = 0;
-
-	for ( int i = 0; i < n; i++ )
+	for ( int i = 0; i < gi.topo.numParticles; i++ )
 	{
 		const int first = gi.topo.firstVertex[i];
 		const int s = first >> 24;
 		const int vertex = first & 0xFFFFFF;
 
 		gi.freeFactor[i] = Phys_PinFactor( def, aHeader, ruleBone, ruleBones, &gi.topo.bindPos[i * 3], surfs[s], vertex );
+	}
 
+	// Reference bone, as in Chaos: of the bones that move the pinned vertices, the bone nearest the root. A bone
+	// with less than PHYS_REF_MIN_SHARE of the weight is not used. At the same depth, the largest weight.
+	std::map<int, float> pinWeight;
+	float pinTotal = 0.0f;
+	int numPinned = 0;
+
+	gi.refBone = -1;
+	VectorClear( gi.refBind );
+
+	for ( int i = 0; i < gi.topo.numParticles && aHeader && !def.lag; i++ )
+	{
+		if ( gi.freeFactor[i] > PHYS_MIN_PIN_FREE )
+			continue;
+
+		const int first = gi.topo.firstVertex[i];
+		const mdxmSurface_t *surf = surfs[first >> 24];
+		const mdxmVertex_t *v = (const mdxmVertex_t *)( (const byte *)surf + surf->ofsVerts ) + ( first & 0xFFFFFF );
+		const int *boneRefs = (const int *)( (const byte *)surf + surf->ofsBoneReferences );
+		const int numWeights = G2_GetVertWeights( v );
+		float total = 0.0f;
+
+		for ( int k = 0; k < numWeights; k++ )
+		{
+			const float w = G2_GetVertBoneWeight( v, k, total, numWeights );
+
+			pinWeight[boneRefs[G2_GetVertBoneIndex( v, k )]] += w;
+			pinTotal += w;
+		}
+
+		VectorAdd( gi.refBind, &gi.topo.bindPos[i * 3], gi.refBind );
+		numPinned++;
+	}
+
+	int refDepth = 1 << 30;
+	float refWeight = 0.0f;
+
+	for ( std::map<int, float>::const_iterator it = pinWeight.begin(); it != pinWeight.end(); ++it )
+	{
+		if ( it->second < pinTotal * PHYS_REF_MIN_SHARE )
+			continue;
+
+		int depth = 0;
+
+		for ( int p = Phys_Skel( aHeader, it->first )->parent; p >= 0 && depth < 256; p = Phys_Skel( aHeader, p )->parent )
+			depth++;
+
+		if ( depth < refDepth || ( depth == refDepth && it->second > refWeight ) )
+		{
+			gi.refBone = it->first;
+			refDepth = depth;
+			refWeight = it->second;
+		}
+	}
+
+	if ( numPinned )
+		VectorScale( gi.refBind, 1.0f / (float)numPinned, gi.refBind );
+
+	if ( ph_debug->integer && gi.refBone >= 0 )
+		ri.Printf( PRINT_ALL, "phys: %s group '%s': reference bone %s, %d pinned particle(s)\n", modelName, def.name.c_str(),
+			Phys_Skel( aHeader, gi.refBone )->name, numPinned );
+
+	// Texture coordinates and triangles of the surfaces: the input of the subdivisions.
+	std::vector<std::vector<float> > st( numActive );
+	std::vector<std::vector<int> > sdTris( numActive );
+	std::vector<physSubdivInput_t> sdIn( numActive );
+
+	for ( int s = 0; s < numActive; s++ )
+	{
+		const mdxmVertex_t *verts = (const mdxmVertex_t *)( (const byte *)surfs[s] + surfs[s]->ofsVerts );
+		const mdxmVertexTexCoord_t *tc = (const mdxmVertexTexCoord_t *)&verts[surfs[s]->numVerts];
+
+		st[s].resize( surfs[s]->numVerts * 2 + 2 );
+
+		for ( int i = 0; i < surfs[s]->numVerts; i++ )
+		{
+			st[s][i * 2] = tc[i].texCoords[0];
+			st[s][i * 2 + 1] = tc[i].texCoords[1];
+		}
+
+		sdIn[s].numVerts = surfs[s]->numVerts;
+		sdIn[s].st = &st[s][0];
+		sdIn[s].numTris = surfs[s]->numTriangles;
+		sdIn[s].tris = inputs[s].tris;
+	}
+
+	// simsubdivide: the simulation runs on a refined mesh. The split is linear, so the mesh keeps the shape of the model.
+	gi.baseTopo = physTopology_t();
+	gi.simSubdiv = physSubdiv_t();
+
+	if ( def.simSubdivide > 0 && !def.lag )
+	{
+		const std::vector<float> linear( gi.topo.numParticles, 0.0f );
+
+		Phys_BuildSubdiv( gi.simSubdiv, gi.topo, &sdIn[0], numActive, &linear[0], def.simSubdivide,
+			SHADER_MAX_VERTEXES - 200, SHADER_MAX_INDEXES - 600, PHYS_MAX_SIM_VERTS );
+
+		if ( gi.simSubdiv.levels > 0 )
+		{
+			const std::vector<float> baseFree = gi.freeFactor;
+
+			gi.baseTopo = gi.topo;
+			Phys_SubdivTopology( gi.topo, gi.simSubdiv, gi.baseTopo );
+			gi.freeFactor.resize( gi.topo.numParticles );
+			Phys_ApplySubdivScalar( gi.simSubdiv, &baseFree[0], &gi.freeFactor[0] );
+			gi.baseTarget.assign( gi.baseTopo.numParticles * 3, 0.0f );
+			gi.baseSkin.assign( gi.baseTopo.numParticles * 3, 0.0f );
+
+			// The refined surfaces are the input of the drawn subdivision.
+			for ( int s = 0; s < numActive; s++ )
+			{
+				const physSubdivSurface_t &surf = gi.simSubdiv.surfaces[s];
+
+				Phys_SubdivSurfaceTris( surf, sdTris[s] );
+				sdIn[s].numVerts = (int)surf.point.size();
+				sdIn[s].st = surf.st.empty() ? NULL : &surf.st[0];
+				sdIn[s].numTris = (int)sdTris[s].size() / 3;
+				sdIn[s].tris = sdTris[s].empty() ? NULL : &sdTris[s][0];
+			}
+		}
+
+		if ( ph_debug->integer )
+			ri.Printf( PRINT_ALL, "phys: %s group '%s': simsubdivide %d of %d, %d particle(s)\n", modelName, def.name.c_str(),
+				gi.simSubdiv.levels, def.simSubdivide, gi.topo.numParticles );
+	}
+
+	const int n = gi.topo.numParticles;
+	int numFree = 0;
+
+	for ( int i = 0; i < n; i++ )
+	{
 		if ( gi.freeFactor[i] > 0.01f )
 			numFree++;
 	}
@@ -765,7 +907,10 @@ static void Phys_BuildGroup( physGroupInst_t &gi, const model_t *glm, CBoneCache
 	if ( !def.lag )
 	{
 		// The soft transform of the lag mode has no per particle state. A cloth runs on a coarse mesh.
-		Phys_BuildProxy( gi.proxy, gi.topo, &gi.freeFactor[0], def.proxy > 0.0f ? def.proxy : PHYS_DEFAULT_PROXY );
+		// Each simsubdivide level halves the cell, so the proxy keeps the new particles.
+		const float cell = ( def.proxy > 0.0f ? def.proxy : PHYS_DEFAULT_PROXY ) / (float)( 1 << gi.simSubdiv.levels );
+
+		Phys_BuildProxy( gi.proxy, gi.topo, &gi.freeFactor[0], cell );
 		Phys_ClothInit( gi.cloth, def, gi.proxy.topo, &gi.proxy.freeFactor[0] );
 		gi.proxyTarget.assign( gi.proxy.numProxy * 3, 0.0f );
 	}
@@ -775,6 +920,7 @@ static void Phys_BuildGroup( physGroupInst_t &gi, const model_t *glm, CBoneCache
 	gi.target.assign( n * 3, 0.0f );
 	gi.modelPos.assign( n * 3, 0.0f );
 	gi.particleNormal.assign( n * 3, 0.0f );
+	gi.particleSkin.assign( n * 3, 0.0f );
 
 	gi.skinXYZ.assign( numActive, std::vector<float>() );
 	gi.skinNormal.assign( numActive, std::vector<float>() );
@@ -802,58 +948,40 @@ static void Phys_BuildGroup( physGroupInst_t &gi, const model_t *glm, CBoneCache
 
 	if ( def.subdivide > 0 )
 	{
-		std::vector<std::vector<float> > st( numActive );
-		std::vector<physSubdivInput_t> sdIn( numActive );
-
-		for ( int s = 0; s < numActive; s++ )
-		{
-			const mdxmVertex_t *verts = (const mdxmVertex_t *)( (const byte *)surfs[s] + surfs[s]->ofsVerts );
-			const mdxmVertexTexCoord_t *tc = (const mdxmVertexTexCoord_t *)&verts[surfs[s]->numVerts];
-
-			st[s].resize( surfs[s]->numVerts * 2 + 2 );
-
-			for ( int i = 0; i < surfs[s]->numVerts; i++ )
-			{
-				st[s][i * 2] = tc[i].texCoords[0];
-				st[s][i * 2 + 1] = tc[i].texCoords[1];
-			}
-
-			sdIn[s].numVerts = surfs[s]->numVerts;
-			sdIn[s].st = &st[s][0];
-			sdIn[s].numTris = surfs[s]->numTriangles;
-			sdIn[s].tris = inputs[s].tris;
-		}
-
 		Phys_BuildSubdiv( gi.subdiv, gi.topo, &sdIn[0], numActive, &gi.freeFactor[0], def.subdivide,
 			SHADER_MAX_VERTEXES - 200, SHADER_MAX_INDEXES - 600, PHYS_MAX_SUBDIV_VERTS );
-
-		if ( gi.subdiv.levels > 0 )
-		{
-			gi.pointXYZ.assign( gi.subdiv.numPoints * 3, 0.0f );
-			gi.pointNormal.assign( gi.subdiv.numPoints * 3, 0.0f );
-			gi.drawNormal.assign( n * 3, 0.0f );
-
-			for ( int s = 0; s < numActive; s++ )
-			{
-				const physSubdivSurface_t &sds = gi.subdiv.surfaces[s];
-				const int count = (int)sds.point.size();
-
-				gi.outXYZ[s].assign( count * 3, 0.0f );
-				gi.outNormal[s].assign( count * 3, 0.0f );
-				gi.out[s].numVerts = count;
-				gi.out[s].xyz = count ? &gi.outXYZ[s][0] : NULL;
-				gi.out[s].normal = count ? &gi.outNormal[s][0] : NULL;
-				gi.out[s].st = count ? &sds.st[0] : NULL;
-				gi.out[s].chunks = count ? &sds.chunks[0] : NULL;
-				gi.out[s].indexes = count ? &sds.indexes[0] : NULL;
-				gi.out[s].numChunks = (int)sds.chunks.size() / 4;
-				gi.out[s].numIndexes = (int)sds.indexes.size();
-			}
-		}
 
 		if ( ph_debug->integer )
 			ri.Printf( PRINT_ALL, "phys: %s group '%s': subdivide %d of %d, %d point(s)\n", modelName, def.name.c_str(),
 				gi.subdiv.levels, def.subdivide, gi.subdiv.numPoints );
+	}
+
+	// A refined simulation mesh with no more drawn levels: each drawn point is its particle.
+	if ( gi.subdiv.levels == 0 && gi.simSubdiv.levels > 0 )
+		Phys_SubdivIdentity( gi.subdiv, gi.simSubdiv );
+
+	if ( gi.subdiv.levels > 0 )
+	{
+		gi.pointXYZ.assign( gi.subdiv.numPoints * 3, 0.0f );
+		gi.pointNormal.assign( gi.subdiv.numPoints * 3, 0.0f );
+		gi.drawNormal.assign( n * 3, 0.0f );
+
+		for ( int s = 0; s < numActive; s++ )
+		{
+			const physSubdivSurface_t &sds = gi.subdiv.surfaces[s];
+			const int count = (int)sds.point.size();
+
+			gi.outXYZ[s].assign( count * 3, 0.0f );
+			gi.outNormal[s].assign( count * 3, 0.0f );
+			gi.out[s].numVerts = count;
+			gi.out[s].xyz = count ? &gi.outXYZ[s][0] : NULL;
+			gi.out[s].normal = count ? &gi.outNormal[s][0] : NULL;
+			gi.out[s].st = count ? &sds.st[0] : NULL;
+			gi.out[s].chunks = count ? &sds.chunks[0] : NULL;
+			gi.out[s].indexes = count ? &sds.indexes[0] : NULL;
+			gi.out[s].numChunks = (int)sds.chunks.size() / 4;
+			gi.out[s].numIndexes = (int)sds.indexes.size();
+		}
 	}
 
 	// Colliders.
@@ -1370,8 +1498,7 @@ static void Phys_DrawGroupView( const physGroupInst_t &gi, const trRefEntity_t *
 			if ( gi.freeFactor[i] <= 0.01f || ( k++ % step ) )
 				continue;
 
-			const int first = gi.topo.firstVertex[i];
-			const float *nrm = &gi.skinNormal[first >> 24][( first & 0xFFFFFF ) * 3];
+			const float *nrm = &gi.particleSkin[i * 3];
 			const float r = def.lag ? def.maxDist : def.maxDist * gi.freeFactor[i];
 			const float rn = ( !def.lag && def.maxDistN > 0.0f ) ? r * def.maxDistN / def.maxDist : r;
 			float center[3], u[3], v[3];
@@ -1584,11 +1711,30 @@ static void Phys_UpdateGroup( physInstance_t *inst, physGroupInst_t &gi, const t
 			Phys_SkinVertex( bc, boneRefs, &verts[i], &gi.skinXYZ[s][i * 3], &gi.skinNormal[s][i * 3] );
 	}
 
-	for ( int i = 0; i < n; i++ )
-	{
-		const int first = gi.topo.firstVertex[i];
+	// Animated position and normal of each particle. A refined particle blends the particles of the model mesh.
+	const bool refined = gi.simSubdiv.levels > 0;
+	const physTopology_t &base = refined ? gi.baseTopo : gi.topo;
+	float *animPos = refined ? &gi.baseTarget[0] : &gi.target[0];
+	float *animNormal = refined ? &gi.baseSkin[0] : &gi.particleSkin[0];
 
-		Phys_ModelToWorld( ent, &gi.skinXYZ[first >> 24][( first & 0xFFFFFF ) * 3], &gi.target[i * 3] );
+	for ( int i = 0; i < base.numParticles; i++ )
+	{
+		const int first = base.firstVertex[i];
+
+		Phys_ModelToWorld( ent, &gi.skinXYZ[first >> 24][( first & 0xFFFFFF ) * 3], &animPos[i * 3] );
+		VectorCopy( &gi.skinNormal[first >> 24][( first & 0xFFFFFF ) * 3], &animNormal[i * 3] );
+	}
+
+	if ( refined )
+	{
+		Phys_ApplySubdiv( gi.simSubdiv, &gi.baseTarget[0], &gi.target[0] );
+		Phys_ApplySubdiv( gi.simSubdiv, &gi.baseSkin[0], &gi.particleSkin[0] );
+
+		for ( int i = 0; i < n; i++ )
+		{
+			if ( VectorNormalize( &gi.particleSkin[i * 3] ) == 0.0f )
+				gi.particleSkin[i * 3 + 2] = 1.0f;
+		}
 	}
 
 	// Colliders of this frame, in world space.
@@ -1655,6 +1801,34 @@ static void Phys_UpdateGroup( physInstance_t *inst, physGroupInst_t &gi, const t
 	const float *restDist = ( colliderData && gi.restDist.size() == (size_t)n * colliders.size() ) ? &gi.restDist[0] : NULL;
 	const bool hasGround = ( ent->e.renderfx & RF_SHADOW_PLANE ) != 0;
 
+	// Model frame of the solver: the reference bone in world space.
+	if ( !def.lag && gi.refBone >= 0 )
+	{
+		const mdxaBone_t &m = G2Phys_BoneMatrix( bc, gi.refBone );
+		float o[3], refOrigin[3], refAxis[3][3];
+
+		for ( int k = 0; k < 3; k++ )
+			o[k] = DotProduct( m.matrix[k], gi.refBind ) + m.matrix[k][3];
+
+		Phys_ModelToWorld( ent, o, refOrigin );
+
+		// Axis k: the model axis k turned by the bone, then in world space.
+		for ( int k = 0; k < 3; k++ )
+		{
+			for ( int j = 0; j < 3; j++ )
+				refAxis[k][j] = m.matrix[0][k] * ent->e.axis[0][j] + m.matrix[1][k] * ent->e.axis[1][j] + m.matrix[2][k] * ent->e.axis[2][j];
+		}
+
+		Phys_ClothSetReference( gi.cloth, refOrigin, refAxis );
+	}
+	else if ( !def.lag )
+	{
+		Phys_ClothSetReference( gi.cloth, NULL, NULL );
+	}
+
+	const int solveStart = ri.Milliseconds();
+
+	gi.cloth.debug = ph_debug->integer == 6;
 	const bool reset = stale || !gi.primed;
 
 	if ( reset )
@@ -1724,6 +1898,114 @@ static void Phys_UpdateGroup( physInstance_t *inst, physGroupInst_t &gi, const t
 		Phys_ProjectColliders( &gi.worldPos[0], &gi.target[0], &gi.freeFactor[0], n, def.margin, colliderData, (int)colliders.size(), restDist, hasGround, ent->e.shadowPlane );
 	}
 
+	// ph_debug 6: fast cloth. When a particle moves faster than PHYS_DBG_SPEED, the line gives the largest
+	// correction of each constraint type in the frame, the largest move of an animated pinned particle (a pop
+	// of the animation) in world and in model space, with the main bone of that particle, and the time of the solver.
+	if ( ph_debug->integer == 6 && !def.lag )
+	{
+		const int solveMs = ri.Milliseconds() - solveStart;
+		float pinPop = 0.0f, modelPop = 0.0f;
+		int worstPin = -1;
+
+		// The animated positions in model space: a move there is a move of the skeleton, not of the entity.
+		gi.dbgModel.resize( n * 3 );
+
+		for ( int i = 0; i < n; i++ )
+			Phys_WorldToModel( ent, &gi.target[i * 3], &gi.dbgModel[i * 3] );
+
+		if ( (int)gi.dbgTarget.size() == n * 3 && (int)gi.dbgPrevModel.size() == n * 3 && !reset )
+		{
+			for ( int i = 0; i < n; i++ )
+			{
+				if ( gi.freeFactor[i] > PHYS_MIN_PIN_FREE )
+					continue;
+
+				const float move = Distance( &gi.target[i * 3], &gi.dbgTarget[i * 3] );
+				const float moveModel = Distance( &gi.dbgModel[i * 3], &gi.dbgPrevModel[i * 3] );
+
+				pinPop = move > pinPop ? move : pinPop;
+
+				if ( moveModel > modelPop )
+				{
+					modelPop = moveModel;
+					worstPin = i;
+				}
+			}
+
+			const float *c = gi.cloth.dbgCorr;
+
+			if ( c[PHYS_CORR_SPEED] > PHYS_DBG_SPEED )
+			{
+				// The bone with the largest weight on that pinned particle.
+				const physTopology_t &base = gi.simSubdiv.levels > 0 ? gi.baseTopo : gi.topo;
+				const mdxaHeader_t *boneHeader = G2Phys_BoneHeader( bc );
+				const char *pinBone = "-";
+
+				if ( worstPin >= 0 && worstPin < base.numParticles && boneHeader )
+				{
+					const int first = base.firstVertex[worstPin];
+					const mdxmSurface_t *surf = (const mdxmSurface_t *)G2_FindSurface( glm, gi.active[first >> 24], PHYS_LOD );
+					const mdxmVertex_t *v = (const mdxmVertex_t *)( (const byte *)surf + surf->ofsVerts ) + ( first & 0xFFFFFF );
+					const int *boneRefs = (const int *)( (const byte *)surf + surf->ofsBoneReferences );
+					const int numWeights = G2_GetVertWeights( v );
+					float total = 0.0f, best = -1.0f;
+
+					for ( int k = 0; k < numWeights; k++ )
+					{
+						const float w = G2_GetVertBoneWeight( v, k, total, numWeights );
+
+						if ( w > best )
+						{
+							best = w;
+							pinBone = Phys_Skel( boneHeader, boneRefs[G2_GetVertBoneIndex( v, k )] )->name;
+						}
+					}
+				}
+
+				const float *bp = worstPin >= 0 ? &gi.topo.bindPos[worstPin * 3] : vec3_origin;
+
+				ri.Printf( PRINT_ALL, "phys fast: '%s' t %d dt %.1f ms solve %d ms: speed %.0f, pin pop %.1f (model %.1f, bind %.0f %.0f %.0f, bone %s), correction edges %.2f shape %.2f tether %.2f hold %.2f reach %.2f collide %.2f (across %.2f)%s\n",
+					def.name.c_str(), tr.refdef.time, dt * 1000.0f, solveMs, c[PHYS_CORR_SPEED], pinPop, modelPop, bp[0], bp[1], bp[2], pinBone,
+					c[PHYS_CORR_EDGES], c[PHYS_CORR_SHAPE], c[PHYS_CORR_TETHER], c[PHYS_CORR_FOLLOW], c[PHYS_CORR_REACH], c[PHYS_CORR_COLLIDE], c[PHYS_CORR_CROSS],
+					gi.cloth.teleported ? ", teleport" : "" );
+			}
+		}
+
+		gi.dbgTarget = gi.target;
+		gi.dbgPrevModel = gi.dbgModel;
+	}
+
+	// ph_debug 5: speed of the model frame (reference bone, or fit of the pinned particles) against the speed of
+	// the entity. A frame that moves or turns faster than the entity drags the free particles through the damping.
+	if ( ph_debug->integer == 5 && !def.lag && dt > 0.0f && !reset )
+	{
+		const float *om = gi.cloth.frameOmega;
+		const float frameTurn = sqrtf( om[0] * om[0] + om[1] * om[1] + om[2] * om[2] );
+		float entTurn = 0.0f;
+
+		for ( int k = 0; k < 3; k++ )
+		{
+			const float c = DotProduct( ent->e.axis[k], gi.dbgAxis[k] ) / ( VectorLength( ent->e.axis[k] ) * VectorLength( gi.dbgAxis[k] ) + 1e-6f );
+			const float a = acosf( c > 1.0f ? 1.0f : ( c < -1.0f ? -1.0f : c ) ) / dt;
+
+			entTurn = a > entTurn ? a : entTurn;
+		}
+
+		const float frameSpeed = VectorLength( gi.cloth.frameVel );
+		const float entSpeed = Distance( ent->e.origin, gi.dbgOrigin ) / dt;
+		const mdxaHeader_t *boneHeader = G2Phys_BoneHeader( bc );
+
+		if ( frameTurn > 1.0f || fabsf( frameSpeed - entSpeed ) > 40.0f )
+			ri.Printf( PRINT_ALL, "phys frame: '%s' bone %s t %d dt %.1f ms: frame turn %.2f, entity turn %.2f rad/s, frame speed %.0f, entity speed %.0f\n",
+				def.name.c_str(), ( gi.refBone >= 0 && boneHeader ) ? Phys_Skel( boneHeader, gi.refBone )->name : "(fit)", tr.refdef.time, dt * 1000.0f,
+				frameTurn, entTurn, frameSpeed, entSpeed );
+	}
+
+	VectorCopy( ent->e.axis[0], gi.dbgAxis[0] );
+	VectorCopy( ent->e.axis[1], gi.dbgAxis[1] );
+	VectorCopy( ent->e.axis[2], gi.dbgAxis[2] );
+	VectorCopy( ent->e.origin, gi.dbgOrigin );
+
 	// ph_debug 4: distance of the free particles from the animation, twice per second.
 	if ( ph_debug->integer == 4 && tr.refdef.time / 500 != gi.reportTime / 500 )
 	{
@@ -1775,8 +2057,7 @@ static void Phys_UpdateGroup( physInstance_t *inst, physGroupInst_t &gi, const t
 	{
 		for ( int p = 0; p < n; p++ )
 		{
-			const int first = gi.topo.firstVertex[p];
-			const float *skin = &gi.skinNormal[first >> 24][( first & 0xFFFFFF ) * 3];
+			const float *skin = &gi.particleSkin[p * 3];
 			float sim[3] = { gi.particleNormal[p * 3], gi.particleNormal[p * 3 + 1], gi.particleNormal[p * 3 + 2] };
 			float *nrm = &gi.drawNormal[p * 3];
 
@@ -2085,9 +2366,12 @@ void G2Phys_SurfaceOutline( const trRefEntity_t *ent, const physInstance_t *inst
 		}
 	}
 
-	if ( gi && (int)gi->topo.vertParticle[slot].size() == surf->numVerts )
+	// The particles of the model mesh have the same index in a refined mesh.
+	const physTopology_t *base = gi ? ( gi->simSubdiv.levels > 0 ? &gi->baseTopo : &gi->topo ) : NULL;
+
+	if ( base && (int)base->vertParticle[slot].size() == surf->numVerts )
 	{
-		const std::vector<int> &vp = gi->topo.vertParticle[slot];
+		const std::vector<int> &vp = base->vertParticle[slot];
 
 		for ( int i = 0; i < surf->numVerts; i++ )
 			VectorCopy( &gi->modelPos[vp[i] * 3], &xyz[i * 3] );
@@ -2420,7 +2704,7 @@ int G2Phys_UICommand( const char *cmd, const char *arg, char *out, int outSize )
 			{ "air", g.air },						{ "hold", g.hold },
 			{ "bounce", g.bounce },					{ "inertia", g.inertia },
 			{ "shape", g.shape },					{ "detail", g.detail },
-			{ "subdivide", (float)g.subdivide } };
+			{ "subdivide", (float)g.subdivide },	{ "simsubdivide", (float)g.simSubdivide } };
 		std::string text;
 
 		for ( size_t i = 0; i < ARRAY_LEN( values ); i++ )

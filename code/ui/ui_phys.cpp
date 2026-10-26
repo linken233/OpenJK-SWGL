@@ -67,6 +67,7 @@ static const physSliderDef_t s_settingSliders[] =
 	{ "across",		"Across",		0.0f,	128.0f,	1, 1, "Largest distance from the animation, across the cloth. Down: the cloth does not go into the body.", "= Reach" },
 	{ "detail",		"Detail",		0.25f,	4.0f,	2, 1, "Density of the simulation mesh. Up: more folds, slower. Down: fewer folds, faster." },
 	{ "subdivide",	"Subdivide",	0.0f,	2.0f,	0, 0, "Rounds the drawn mesh. 1 or 2: smoother, more vertices to draw. 0: the mesh of the model.", "off" },
+	{ "simsubdivide", "Sim split",	0.0f,	2.0f,	0, 1, "Cuts each triangle of the simulation mesh in 4 per level. Up: smaller folds, slower. 0: the mesh of the model.", "off" },
 };
 
 static const physSliderDef_t s_colliderSliders[] =
@@ -145,7 +146,6 @@ struct physSliderPanel_t
 
 static struct
 {
-	bool						menuLoaded;
 	std::string					modelPath;
 	std::vector<std::string>	unused;
 	std::vector<physUsedEntry_t> used;
@@ -1078,16 +1078,13 @@ static void Phys_UpdatePreview( void )
 		Cvar_VariableString( "g_char_skin_head" ), Cvar_VariableString( "g_char_skin_torso" ), Cvar_VariableString( "g_char_skin_legs" ) ) );
 }
 
-// Parses the menu file once.
+// Parses the menu file when the menu is not there. A game load resets the menus (UI_LoadMenus).
 void UI_Phys_LoadMenu( void )
 {
 	extern void UI_ParseMenu( const char *menuFile );
 
-	if ( !s_phys.menuLoaded )
-	{
+	if ( !Menus_FindByName( "physEdit" ) )
 		UI_ParseMenu( "ui/physedit.menu" );
-		s_phys.menuLoaded = true;
-	}
 }
 
 static void Phys_Open( void )
