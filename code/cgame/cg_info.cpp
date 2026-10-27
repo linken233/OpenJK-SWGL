@@ -977,7 +977,7 @@ void CG_DrawInformation( void ) {
 		}
 		else
 		{
-			levelshot = cgi_R_RegisterShaderNoMip(va("levelshots_sav/%s", s + 5));
+			levelshot = cgi_R_RegisterShaderNoMip(va("levelshots_sav/%s", s));
 			CG_DrawLoadingScreen(levelshot, s);
 			cgi_UI_Run_Command("loadframe show");
 			cgi_UI_Menu_Paint(cgi_UI_GetMenuByName("loadscreen"), qtrue);
