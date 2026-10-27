@@ -977,7 +977,7 @@ void CG_DrawInformation( void ) {
 		}
 		else
 		{
-			levelshot = cgi_R_RegisterShaderNoMip(va("levelshots_sav/%s", s + 5));
+			levelshot = cgi_R_RegisterShaderNoMip(va("levelshots_sav/%s", s));
 			CG_DrawLoadingScreen(levelshot, s);
 			cgi_UI_Menu_Paint(cgi_UI_GetMenuByName("loadscreen"), qtrue);
 			vec4_t	rectColor = { 1, 0.1, 0, 1 };
