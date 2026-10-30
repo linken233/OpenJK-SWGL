@@ -31,7 +31,6 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "wp_saber.h"
 #include "g_vehicles.h"
 #include "NPC_SWGL.h"
-#include <ctime>
 
 extern qboolean G_CheckInSolid(gentity_t *self, qboolean fix);
 extern void ClientUserinfoChanged(int clientNum);
@@ -1933,10 +1932,7 @@ gentity_t *NPC_Spawn_Do(gentity_t *ent, qboolean fullSpawnNow)
 	newent->classname = "NPC";
 	if (!Q_stricmp(ent->NPC_type, DOOKU) || !Q_stricmp(ent->NPC_type, DOOKU_RITUAL) || !Q_stricmp(ent->NPC_type, DOOKU_JEDI))
 	{
-		std::time_t tp = std::time(NULL);
-
-		std::tm* ts = std::localtime(&tp);
-		if (ts->tm_mon == 3 && ts->tm_mday == 1)
+		if (Q_IsAprilFoolsDay())
 		{
 			ent->NPC_type = WONKA;
 		}
@@ -5722,10 +5718,7 @@ static void NPC_Spawn_f(void)
 
 	if (!Q_stricmp(NPCspawner->NPC_type, DOOKU))
 	{
-		std::time_t tp = std::time(NULL);
-
-		std::tm* ts = std::localtime(&tp);
-		if (ts->tm_mon == 3 && ts->tm_mday == 1)
+		if (Q_IsAprilFoolsDay())
 		{
 			NPCspawner->NPC_type = WONKA;
 		}

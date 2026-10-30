@@ -2930,6 +2930,8 @@ typedef enum
 */
 int Q_FindFirstBitIndex(int bits);
 
+qboolean Q_IsAprilFoolsDay(void);
+
 /* Q_IntToBinaryString
 	Return an int in it's binary representation.
 	4 =>  00000100

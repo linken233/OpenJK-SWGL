@@ -25,6 +25,15 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 // q_shared.c -- stateless support routines that are included in each code dll
 
 #include "../game/common_headers.h"
+#include <ctime>
+
+qboolean Q_IsAprilFoolsDay(void)
+{
+	std::time_t tp = std::time(NULL);
+	std::tm* ts = std::localtime(&tp);
+
+	return (ts->tm_mon == 3 && ts->tm_mday == 1) ? qtrue : qfalse;
+}
 
 /*
 ============

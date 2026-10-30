@@ -48,6 +48,7 @@ static int factionPage = 0;					// page of the faction rows of the left column
 static const int factionsPerPage = 9;		// rows of a page: buttons factionButton1..9 of the menu
 static int filteredPages = 0;				// page count of the character grid at the last filter (0: no filter yet)
 qboolean searchChanged = qtrue;
+int EzraBridgerRandomName = -1;				// Ezra Bridger's name is randomized on April Fool's Day. This int is to prevent it from changing.
 
 // Saved configuration of the "My Characters" screen: characters_configs/<code>_<variant code>/<name>.cfg.
 struct myConfig_t
@@ -92,6 +93,27 @@ static void GetVariantTitle(const characterInfo_t *character, const characterVar
 	if (!Q_IsStringEmpty(variant->name))
 	{
 		Q_strncpyz(buffer, variant->name, bufferSize);
+
+		if (!Q_strncmp(variant->name, "Ezra Bridger", 12) &&
+			(variant->name[12] == '\0' ||
+				variant->name[12] == ' ') && Q_IsAprilFoolsDay())
+		{
+			if (EzraBridgerRandomName == -1)
+			{
+				EzraBridgerRandomName = Q_irand(0, 1);
+			}
+			const char* suffix = variant->name + strlen("Ezra Bridger");
+			Com_sprintf(
+				buffer,
+				bufferSize,
+				"%s%s",
+				EzraBridgerRandomName ? "Jabba the Hutt" : "Lando Calrissian",
+				suffix);
+			return;
+		}
+
+		EzraBridgerRandomName = -1;
+
 	}
 	else if (!Q_IsStringEmpty(character->name))
 	{
