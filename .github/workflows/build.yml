@@ -17,11 +17,24 @@ on:
   release:
     types: [published]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'release' }}
+
+env:
+  CI_SP_TARGETS: "-DBuildSPEngine=ON -DBuildSPGame=ON -DBuildSPRdVanilla=ON -DBuildSPRend2=ON"
+  CI_MP_TARGETS: "-DBuildMPEngine=ON -DBuildMPDed=ON -DBuildMPGame=ON -DBuildMPCGame=ON -DBuildMPRdVanilla=ON -DBuildMPRend2=ON -DBuildMPUI=ON"
+
 jobs:
   msvc:
     name: Windows ${{ matrix.arch }} ${{ matrix.build_type }} (${{ matrix.portable }})
     runs-on: windows-2022
+    timeout-minutes: 120
     strategy:
+      fail-fast: false
       matrix:
         arch: [x86, x86_64]
         build_type: [Debug, Release]
@@ -65,7 +78,7 @@ jobs:
           else
             OPTIONS+=" -DBuildPortableVersion=OFF"
           fi
-          OPTIONS+=" -DBuildJK2SPEngine=ON -DBuildJK2SPGame=ON -DBuildJK2SPRdVanilla=ON -DBuildJK2SPRdRend2=ON"
+          OPTIONS+=" $CI_SP_TARGETS $CI_MP_TARGETS"
           cmake $GITHUB_WORKSPACE -A ${{ matrix.platform }} $OPTIONS
 
       - name: Build
@@ -89,6 +102,7 @@ jobs:
   ubuntu:
     name: Ubuntu ${{ matrix.arch }} ${{ matrix.build_type }} (${{ matrix.portable }})
     runs-on: ubuntu-22.04
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
@@ -121,7 +135,7 @@ jobs:
             sudo aptitude -y install libglib2.0-dev:i386 libsdl2-dev:i386
           else
             sudo apt-get -qq update
-            sudo apt-get install libjpeg-dev libpng-dev zlib1g-dev libsdl2-dev
+            sudo apt-get -y install libjpeg-dev libpng-dev zlib1g-dev libsdl2-dev ninja-build
           fi
           cmake -E make_directory ${{ github.workspace }}/build
 
@@ -129,45 +143,122 @@ jobs:
         shell: bash
         working-directory: ${{ github.workspace }}/build
         run: |
-          OPTIONS="-DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/install"
-          if [ "${{ matrix.portable }}" == "Portable" ]; then
-            OPTIONS+=" -DUseInternalLibs=ON -DBuildPortableVersion=ON"
-          else
-            OPTIONS+=" -DUseInternalLibs=OFF -DBuildPortableVersion=OFF"
-          fi
+          OPTIONS="-G Ninja -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/install"
+          OPTIONS+=" -DUseInternalLibs=OFF -DBuildPortableVersion=OFF"
+          OPTIONS+=" $CI_SP_TARGETS $CI_MP_TARGETS"
           if [ ${{ matrix.arch }} == "x86" ]; then
-            OPTIONS+=" -DCMAKE_TOOLCHAIN_FILE=cmake/Toolchains/linux-i686.cmake"
+            OPTIONS+=" -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/cmake/Toolchains/linux-i686.cmake"
           fi
-          OPTIONS+=" -DBuildJK2SPEngine=ON -DBuildJK2SPGame=ON -DBuildJK2SPRdVanilla=ON"
           cmake $GITHUB_WORKSPACE $OPTIONS
 
       - name: Build
         working-directory: ${{ github.workspace }}/build
-        shell: bash
         run: cmake --build . -j $(nproc) --verbose
 
       - name: Install
         if: ${{ matrix.build_type == 'Release' }}
         working-directory: ${{ github.workspace }}/build
-        shell: bash
         run: cmake --install .
 
       - name: Create OpenJK binary archive
         if: ${{ matrix.build_type == 'Release' }}
         working-directory: ${{ github.workspace }}/install/SWGL
-        shell: bash
         run: tar -czvf OpenJK-linux-${{ matrix.arch }}-${{ matrix.build_type }}-${{ matrix.portable }}.tar.gz *
 
       - uses: actions/upload-artifact@v4
         if: ${{ matrix.build_type == 'Release' }}
         with:
           name: OpenJK-linux-${{ matrix.arch }}-${{ matrix.build_type }}-${{ matrix.portable }}
-          path: ${{github.workspace}}/install/SWGL/OpenJK-linux-${{ matrix.arch }}-${{ matrix.build_type }}-${{ matrix.portable }}.tar.gz
+          path: ${{ github.workspace }}/install/SWGL/OpenJK-linux-${{ matrix.arch }}-${{ matrix.build_type }}-${{ matrix.portable }}.tar.gz
+          if-no-files-found: error
+
+  debian:
+    name: Debian 12 ${{ matrix.arch }} ${{ matrix.build_type }} (${{ matrix.portable }})
+    runs-on: ubuntu-22.04
+    container: debian:12
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86, x86_64]
+        build_type: [Debug, Release]
+        portable: [Non-Portable]
+
+    steps:
+      - name: Prepare container
+        shell: bash
+        run: |
+          apt-get update
+          apt-get -y --no-install-recommends install git ca-certificates
+
+      - uses: actions/checkout@v4
+        if: github.event_name == 'pull_request'
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - uses: actions/checkout@v4
+        if: github.event_name != 'pull_request'
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Create Build Environment
+        shell: bash
+        run: |
+          if [ ${{ matrix.arch }} == "x86" ]; then
+            dpkg --add-architecture i386
+            apt-get -qq update
+            apt-get -y --no-install-recommends install build-essential cmake ninja-build gcc-multilib g++-multilib aptitude
+            apt-get -y --allow-downgrades install libpcre2-8-0:i386 libjpeg-dev:i386 libpng-dev:i386 libcurl4-openssl-dev:i386
+            aptitude -y install libglib2.0-dev:i386 libsdl2-dev:i386
+          else
+            apt-get -qq update
+            apt-get -y --no-install-recommends install build-essential cmake ninja-build libjpeg-dev libpng-dev zlib1g-dev libsdl2-dev
+          fi
+          cmake -E make_directory ${{ github.workspace }}/build
+
+      - name: Configure CMake
+        shell: bash
+        working-directory: ${{ github.workspace }}/build
+        run: |
+          OPTIONS="-G Ninja -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/install"
+          OPTIONS+=" -DUseInternalLibs=OFF -DBuildPortableVersion=OFF"
+          OPTIONS+=" $CI_SP_TARGETS $CI_MP_TARGETS"
+          if [ ${{ matrix.arch }} == "x86" ]; then
+            OPTIONS+=" -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/cmake/Toolchains/linux-i686.cmake"
+          fi
+          cmake $GITHUB_WORKSPACE $OPTIONS
+
+      - name: Build
+        shell: bash
+        working-directory: ${{ github.workspace }}/build
+        run: cmake --build . -j $(nproc) --verbose
+
+      - name: Install
+        if: ${{ matrix.build_type == 'Release' }}
+        shell: bash
+        working-directory: ${{ github.workspace }}/build
+        run: cmake --install .
+
+      - name: Create OpenJK binary archive
+        if: ${{ matrix.build_type == 'Release' }}
+        shell: bash
+        working-directory: ${{ github.workspace }}/install/SWGL
+        run: tar -czvf OpenJK-debian-12-${{ matrix.arch }}-${{ matrix.build_type }}-${{ matrix.portable }}.tar.gz *
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ matrix.build_type == 'Release' }}
+        with:
+          name: OpenJK-debian-12-${{ matrix.arch }}-${{ matrix.build_type }}-${{ matrix.portable }}
+          path: ${{ github.workspace }}/install/SWGL/OpenJK-debian-12-${{ matrix.arch }}-${{ matrix.build_type }}-${{ matrix.portable }}.tar.gz
           if-no-files-found: error
 
   macos:
     name: macOS ${{ matrix.arch }} ${{ matrix.build_type }} (${{ matrix.portable}})
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
@@ -196,37 +287,29 @@ jobs:
 
       - name: Create Build Environment
         run: |
-          brew install zlib libjpeg libpng sdl2
+          brew install zlib libjpeg libpng sdl2 ninja
           cmake -E make_directory ${{ github.workspace }}/build
 
       - name: Configure CMake
         shell: bash
         working-directory: ${{ github.workspace }}/build
         run: |
-          OPTIONS="-DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/install"
-          if [ "${{ matrix.portable }}" == "Portable" ]; then
-            OPTIONS+=" -DUseInternalLibs=ON -DBuildPortableVersion=ON"
-          else
-            OPTIONS+=" -DUseInternalLibs=OFF -DBuildPortableVersion=OFF"
-          fi
-          OPTIONS+=" -DBuildJK2SPEngine=ON -DBuildJK2SPGame=ON -DBuildJK2SPRdVanilla=ON"
+          OPTIONS="-G Ninja -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/install -DBuildPortableVersion=OFF"
+          OPTIONS+=" $CI_SP_TARGETS $CI_MP_TARGETS"
           cmake $GITHUB_WORKSPACE $OPTIONS
 
       - name: Build
         working-directory: ${{ github.workspace }}/build
-        shell: bash
         run: cmake --build . -j $(getconf _NPROCESSORS_ONLN) --verbose
 
       - name: Install
         if: ${{ matrix.build_type == 'Release' }}
         working-directory: ${{ github.workspace }}/build
-        shell: bash
         run: cmake --install .
 
       - name: Create OpenJK binary archive
         if: ${{ matrix.build_type == 'Release' }}
         working-directory: ${{ github.workspace }}/install/SWGL
-        shell: bash
         run: tar -czvf openjk-macos-${{ matrix.arch }}-${{ matrix.build_type }}-${{ matrix.portable }}.tar.gz *
 
       - uses: actions/upload-artifact@v4
@@ -238,12 +321,13 @@ jobs:
 
   create-latest:
     if: github.event_name == 'workflow_dispatch'
-    needs: [msvc, ubuntu, macos]
+    needs: [msvc, ubuntu, debian, macos]
     runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
 
       - name: Download Artifacts
         uses: actions/download-artifact@v4
@@ -254,6 +338,8 @@ jobs:
           7z a -r OpenJK-swgl-windows-x86_64.zip ./OpenJK-windows-x86_64-Release-Non-Portable/* '-x!msvcp*.*' '-x!vcruntime*.*' '-x!concrt*.*'
           mv ./OpenJK-linux-x86-Release-Non-Portable/* OpenJK-swgl-linux-x86.tar.gz
           mv ./OpenJK-linux-x86_64-Release-Non-Portable/* OpenJK-swgl-linux-x86_64.tar.gz
+          mv ./OpenJK-debian-12-x86-Release-Non-Portable/* OpenJK-swgl-debian-12-x86.tar.gz
+          mv ./OpenJK-debian-12-x86_64-Release-Non-Portable/* OpenJK-swgl-debian-12-x86_64.tar.gz
           mv ./OpenJK-macos-x86_64-Release-Non-Portable/* OpenJK-swgl-macos-x86_64.tar.gz
           mv ./OpenJK-macos-arm64-Release-Non-Portable/* OpenJK-swgl-macos-arm64.tar.gz
 
@@ -270,17 +356,19 @@ jobs:
 
   create-release:
     if: github.event_name == 'release'
-    needs: [msvc, ubuntu, macos]
+    needs: [msvc, ubuntu, debian, macos]
     runs-on: ubuntu-22.04
+    permissions:
+      contents: write
 
     strategy:
       matrix:
         include:
-          - artifact_dir: OpenJK-windows-x86-Release-Non-Portable/SWGL
+          - artifact_dir: OpenJK-windows-x86-Release-Non-Portable
             artifact_name: OpenJK-swgl-windows-x86.zip
             zip: true
 
-          - artifact_dir: OpenJK-windows-x86_64-Release-Non-Portable/SWGL
+          - artifact_dir: OpenJK-windows-x86_64-Release-Non-Portable
             artifact_name: OpenJK-swgl-windows-x86_64.zip
             zip: true
 
@@ -292,18 +380,24 @@ jobs:
             artifact_name: OpenJK-swgl-linux-x86_64.tar.gz
             zip: false
 
+          - artifact_dir: OpenJK-debian-12-x86-Release-Non-Portable
+            artifact_name: OpenJK-swgl-debian-12-x86.tar.gz
+            zip: false
+
+          - artifact_dir: OpenJK-debian-12-x86_64-Release-Non-Portable
+            artifact_name: OpenJK-swgl-debian-12-x86_64.tar.gz
+            zip: false
+
           - artifact_dir: OpenJK-macos-x86_64-Release-Non-Portable
             artifact_name: OpenJK-swgl-macos-x86_64.tar.gz
             zip: false
 
           - artifact_dir: OpenJK-macos-arm64-Release-Non-Portable
-            artifact_name: OpenJK-macos-arm64.tar.gz
+            artifact_name: OpenJK-swgl-macos-arm64.tar.gz
             zip: false
 
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
 
       - name: Download Artifacts
         uses: actions/download-artifact@v4

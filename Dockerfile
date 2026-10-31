@@ -1,57 +1,58 @@
-# Builder image
-FROM ubuntu:18.04 as builder
+# Build stage
+FROM debian:12 AS builder
 
-# Install build tools and libraries
-RUN dpkg --add-architecture i386 &&\
-	apt-get -q update &&\
-	DEBIAN_FRONTEND="noninteractive" apt-get -q install -y -o Dpkg::Options::="--force-confnew" --no-install-recommends build-essential gcc-multilib g++-multilib cmake libjpeg-dev libjpeg-dev:i386 libpng-dev libpng-dev:i386 zlib1g-dev zlib1g-dev:i386 &&\
-	rm -rf /var/lib/apt/lists/*
+RUN dpkg --add-architecture i386 && \
+    apt-get -q update && \
+    DEBIAN_FRONTEND=noninteractive apt-get -q install -y --no-install-recommends \
+        build-essential cmake ninja-build git gcc-multilib g++-multilib \
+        libjpeg-dev libjpeg-dev:i386 libpng-dev libpng-dev:i386 zlib1g-dev zlib1g-dev:i386 && \
+    rm -rf /var/lib/apt/lists/*
 
-# Copy sources
-COPY . /usr/src/openjk
+COPY . /usr/src/swgl
 
-# Build i386 arch
-RUN mkdir /usr/src/openjk/build.i386 &&\
-	cd /usr/src/openjk/build.i386 &&\
-	cmake -DCMAKE_TOOLCHAIN_FILE=CMakeModules/Toolchains/linux-i686.cmake \
-		-DCMAKE_INSTALL_PREFIX=/opt \
-		-DBuildMPCGame=OFF -DBuildMPEngine=OFF -DBuildMPRdVanilla=OFF -DBuildMPUI=OFF \
-		-DBuildSPEngine=OFF -DBuildSPGame=OFF -DBuildSPRdVanilla=OFF \
-		.. &&\
-	make &&\
-	make install
+RUN cmake -S /usr/src/swgl -B /usr/src/swgl/build.i386 -G Ninja \
+        -DCMAKE_TOOLCHAIN_FILE=/usr/src/swgl/cmake/Toolchains/linux-i686.cmake \
+        -DCMAKE_INSTALL_PREFIX=/opt/swgl-i386 \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DUseInternalLibs=OFF -DBuildPortableVersion=OFF \
+        -DBuildSPEngine=OFF -DBuildSPGame=OFF -DBuildSPRdVanilla=OFF -DBuildSPRend2=OFF \
+        -DBuildMPEngine=OFF -DBuildMPCGame=OFF -DBuildMPUI=OFF -DBuildMPRdVanilla=OFF -DBuildMPRend2=OFF \
+        -DBuildMPDed=ON -DBuildMPGame=ON && \
+    cmake --build /usr/src/swgl/build.i386 -j "$(nproc)" && \
+    cmake --install /usr/src/swgl/build.i386
 
-# Build x86_64 arch
-RUN mkdir /usr/src/openjk/build.x86_64 &&\
-	cd /usr/src/openjk/build.x86_64 &&\
-	cmake -DCMAKE_INSTALL_PREFIX=/opt \
-		-DBuildMPCGame=OFF -DBuildMPEngine=OFF -DBuildMPRdVanilla=OFF -DBuildMPUI=OFF \
-		-DBuildSPEngine=OFF -DBuildSPGame=OFF -DBuildSPRdVanilla=OFF \
-		.. &&\
-	make &&\
-	make install
+RUN cmake -S /usr/src/swgl -B /usr/src/swgl/build.x86_64 -G Ninja \
+        -DCMAKE_INSTALL_PREFIX=/opt/swgl-x86_64 \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DUseInternalLibs=OFF -DBuildPortableVersion=OFF \
+        -DBuildSPEngine=OFF -DBuildSPGame=OFF -DBuildSPRdVanilla=OFF -DBuildSPRend2=OFF \
+        -DBuildMPEngine=OFF -DBuildMPCGame=OFF -DBuildMPUI=OFF -DBuildMPRdVanilla=OFF -DBuildMPRend2=OFF \
+        -DBuildMPDed=ON -DBuildMPGame=ON && \
+    cmake --build /usr/src/swgl/build.x86_64 -j "$(nproc)" && \
+    cmake --install /usr/src/swgl/build.x86_64
 
+# Server stage
+FROM debian:12
 
-# Server image
-FROM ubuntu:18.04
+RUN dpkg --add-architecture i386 && \
+    apt-get -q update && \
+    DEBIAN_FRONTEND=noninteractive apt-get -q install -y --no-install-recommends \
+        socat libstdc++6 libstdc++6:i386 zlib1g zlib1g:i386 && \
+    rm -rf /var/lib/apt/lists/*
 
-# Install utilities and libraries
-RUN dpkg --add-architecture i386 &&\
-	apt-get -q update &&\
-	DEBIAN_FRONTEND="noninteractive" apt-get -q install -y -o Dpkg::Options::="--force-confnew" --no-install-recommends socat libstdc++6 libstdc++6:i386 zlib1g zlib1g:i386 &&\
-	rm -rf /var/lib/apt/lists/*
+RUN mkdir -p /opt/openjk/cdpath/base /opt/openjk/cdpath/SWGL /opt/openjk/basepath /opt/openjk/homepath/SWGL
 
-# Copy binaries and scripts
-RUN mkdir -p /opt/openjk/cdpath/base /opt/openjk/basepath /opt/openjk/homepath
-COPY --from=builder /opt/JediAcademy/openjkded.* /opt/openjk/
-COPY --from=builder /opt/JediAcademy/base/ /opt/openjk/cdpath/base/
-COPY --from=builder /opt/JediAcademy/OpenJK/ /opt/openjk/cdpath/OpenJK/
+COPY --from=builder /opt/swgl-i386/SWGL/SWGLDed.i386 /opt/openjk/SWGLDed.i386
+COPY --from=builder /opt/swgl-x86_64/SWGL/SWGLDed.x86_64 /opt/openjk/SWGLDed.x86_64
+COPY --from=builder /opt/swgl-i386/SWGL/SWGL/swglmpgamei386.so /opt/openjk/cdpath/SWGL/swglmpgamei386.so
+COPY --from=builder /opt/swgl-x86_64/SWGL/SWGL/swglmpgamex86_64.so /opt/openjk/cdpath/SWGL/swglmpgamex86_64.so
+
 COPY scripts/docker/*.sh /opt/openjk/
-COPY scripts/docker/server.cfg /opt/openjk/cdpath/base/
-COPY scripts/docker/server.cfg /opt/openjk/cdpath/OpenJK/
-RUN chmod +x /opt/openjk/openjkded.* /opt/openjk/*.sh
+COPY scripts/docker/server.cfg /opt/openjk/cdpath/base/server.cfg
+COPY scripts/docker/server.cfg /opt/openjk/cdpath/SWGL/server.cfg
+COPY scripts/docker/server.cfg /opt/openjk/homepath/SWGL/server.cfg
+RUN chmod +x /opt/openjk/SWGLDed.* /opt/openjk/*.sh
 
-# Execution
 ENV OJK_OPTS="+exec server.cfg"
 EXPOSE 29070/udp
 HEALTHCHECK --interval=10s --timeout=9s --retries=6 CMD ["/opt/openjk/healthcheck.sh"]
