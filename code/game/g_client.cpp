@@ -2441,6 +2441,7 @@ void G_ChangeScale(const char* data)
 	player->s.modelScale[0] = player->s.modelScale[1] = player->s.modelScale[2] = value / 100.0f;
 }
 
+extern qboolean G_SetAnimOverrideGLA( gentity_t *ent, const char *glaPath );
 void G_ChangePlayerModel( gentity_t *ent, const char *newModel )
 {
 	if ( !ent || !ent->client || !newModel )
@@ -2453,10 +2454,26 @@ void G_ChangePlayerModel( gentity_t *ent, const char *newModel )
 		G_CreateG2AttachedWeaponModel(ent, weaponData[ent->client->ps.weapon].weaponMdl, ent->handLBolt, 1);
 	}
 
+	// The new Ghoul2 instance loses the moveset of the old one (animoverride, character menu).
+	char animOverride[MAX_QPATH] = { 0 };
+	char oldModelName[MAX_QPATH] = { 0 };
+	if ( ent->playerModel >= 0 && ent->playerModel < ent->ghoul2.size() )
+	{
+		Q_strncpyz( animOverride, ent->ghoul2[ent->playerModel].mAnimOverride, sizeof(animOverride) );
+		Q_strncpyz( oldModelName, ent->ghoul2[ent->playerModel].mFileName, sizeof(oldModelName) );
+	}
+
 	G_RemovePlayerModel( ent );
 	if ( Q_stricmp( "player", newModel ) == 0 )
 	{
 		G_InitPlayerFromCvars( ent );
+		// Same model again (saber menu): set the moveset again.
+		if ( animOverride[0]
+			&& ent->playerModel >= 0 && ent->playerModel < ent->ghoul2.size()
+			&& !Q_stricmp( oldModelName, ent->ghoul2[ent->playerModel].mFileName ) )
+		{
+			G_SetAnimOverrideGLA( ent, animOverride );
+		}
 		return;
 	}
 	if (Q_stricmp(PHASMA, newModel) == 0 || Q_stricmp(DROIDEKA, newModel) == 0)

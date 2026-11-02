@@ -1580,6 +1580,7 @@ Forces the animation override <overrideName> on an entity, in place of the overr
 "default" forces _humanoid.gla. NULL or "" removes it. Returns qfalse if the override GLA is missing or does not have the skeleton of the model.
 ======================
 */
+qboolean G_SetAnimOverrideGLA(gentity_t *ent, const char *glaPath);
 qboolean G_SetAnimOverride(gentity_t *ent, const char *overrideName)
 {
 	if (!ent || !ent->client || ent->playerModel < 0 || ent->playerModel >= ent->ghoul2.size())
@@ -1589,6 +1590,16 @@ qboolean G_SetAnimOverride(gentity_t *ent, const char *overrideName)
 
 	char glaPath[MAX_QPATH];
 	G_AnimOverrideGLAPath(overrideName, glaPath, sizeof(glaPath));
+	return G_SetAnimOverrideGLA(ent, glaPath);
+}
+
+// Sets the override GLA glaPath ("" removes it) on the player model of ent, then the animation file set of that GLA.
+qboolean G_SetAnimOverrideGLA(gentity_t *ent, const char *glaPath)
+{
+	if (!ent || !ent->client || ent->playerModel < 0 || ent->playerModel >= ent->ghoul2.size())
+	{
+		return qfalse;
+	}
 
 	CGhoul2Info &ghoul2 = ent->ghoul2[ent->playerModel];
 	if (!gi.G2API_SetAnimOverride(&ghoul2, glaPath))
