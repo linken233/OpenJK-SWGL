@@ -41,7 +41,6 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "g_vehicles.h"
 #include "g_navigator.h"
 #include "qcommon/ojk_saved_game_helper.h"
-#include <ctime>
 #include "NPC_SWGL.h"
 
 extern	cvar_t	*com_buildScript;
@@ -1098,12 +1097,8 @@ static qboolean G_AddSexToPlayerString ( char *string, qboolean qDoBoth )
 			}	//IF found slash
 		}
 
-		std::time_t tp = std::time(NULL);
-
-		std::tm* ts = std::localtime(&tp);
-
 		// April Fools day gets a special treat :)
-		if (ts->tm_mon == 3 && ts->tm_mday == 1)
+		if (Q_IsAprilFoolsDay())
 		{
 			start = strstr(string, "maul_3/dooku");
 			if (start != NULL)
@@ -9761,10 +9756,7 @@ extern void LockDoors(gentity_t *const ent);
 	case SET_SABER2:
 		if (!Q_stricmp(data, DOOKU))
 		{
-			std::time_t tp = std::time(NULL);
-
-			std::tm* ts = std::localtime(&tp);
-			if (ts->tm_mon == 3 && ts->tm_mday == 1)
+			if (Q_IsAprilFoolsDay())
 			{
 				data = "wonka_lolly";
 			}

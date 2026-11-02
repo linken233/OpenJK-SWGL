@@ -36,7 +36,6 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "snd_music.h"
 #define __STDC_FORMAT_MACROS
 #include <inttypes.h>
-#include <ctime>
 #if defined(_WIN32)
 #include <windows.h>
 #endif
@@ -3747,12 +3746,8 @@ static void S_MenuMusic_f(void)
 {
 	if (atoi(Cvar_VariableString("disableMusicRepeat")) != 1) 
 	{
-		std::time_t tp = std::time(NULL);
-
-		std::tm* ts = std::localtime(&tp);
-
 		// April Fools day gets a special treat :)
-		if (ts->tm_mon == 3 && ts->tm_mday == 1)
+		if (Q_IsAprilFoolsDay())
 		{
 			// Using Q_irand(0, 1) always kept giving us 0.
 			// Idk why, so I guess we will use rand().
