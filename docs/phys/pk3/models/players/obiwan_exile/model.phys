@@ -1,0 +1,7 @@
+cloth robe
+{
+	surfaces	hips_robe l_arm_robe r_arm_robe l_shoulder_robe r_shoulder_robe torso_robe
+	pin			gradient pelvis -z 0 14
+	reach		24
+	collide		humanoid
+}

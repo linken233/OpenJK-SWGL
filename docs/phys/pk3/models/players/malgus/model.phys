@@ -1,0 +1,8 @@
+// Darth Malgus: collar and back cape
+cloth cape
+{
+	surfaces	cape1 cape2 cape3
+	pin			gradient thoracic -z 0 40
+	reach		26 38
+	collide		humanoid
+}

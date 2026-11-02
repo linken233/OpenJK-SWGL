@@ -1,0 +1,16 @@
+// test: Jodo Kast cloak and cape
+cloth cloak
+{
+	surfaces	hips_cloak
+	pin			gradient pelvis -z 0 14
+	reach		26
+	collide		humanoid
+}
+
+cloth cape
+{
+	surfaces	torso_cape
+	pin			gradient thoracic -z 2 24
+	reach		26 38
+	collide		humanoid
+}

@@ -746,6 +746,22 @@ static void *DR_GetExtension( const char *name )
 	return NULL;
 }
 
+// Both renderers keep their own .phys data: the editor changes both. The result comes from renderer 0.
+static int DR_PhysCommand( const char *cmd, const char *arg, char *out, int outSize )
+{
+	if ( dr_re[1].PhysCommand ) {
+		char scratch[256];
+		dr_re[1].PhysCommand( cmd, arg, scratch, sizeof( scratch ) );
+	}
+	if ( !dr_re[0].PhysCommand ) {
+		if ( out && outSize > 0 ) {
+			out[0] = '\0';
+		}
+		return -1;
+	}
+	return dr_re[0].PhysCommand( cmd, arg, out, outSize );
+}
+
 const refexport_t *CL_DualRef_Init( const refexport_t *first, const char *firstName, const refexport_t *second, const char *secondName )
 {
 	static refexport_t dual;
@@ -761,6 +777,7 @@ const refexport_t *CL_DualRef_Init( const refexport_t *first, const char *firstN
 
 	dual.Shutdown = DR_Shutdown;
 	dual.GetExtension = DR_GetExtension;
+	dual.PhysCommand = DR_PhysCommand;
 	dual.BeginRegistration = DR_BeginRegistration;
 	dual.RegisterModel = DR_RegisterModel;
 	dual.RegisterSkin = DR_RegisterSkin;

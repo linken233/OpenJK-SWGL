@@ -1,0 +1,18 @@
+// Darth Zash: wide skirt and hair
+cloth skirt
+{
+	surfaces	skirt
+	pin			gradient pelvis -z 0 18
+	reach		24
+	collide		humanoid
+}
+
+hair hair
+{
+	surfaces	hair
+	pin			gradient cranium -z -4 1
+	mode		lag
+	hold		0.45
+	bounce		0.55
+	reach		4
+}

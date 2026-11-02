@@ -105,6 +105,7 @@ if(BuildSPRdVanilla)
 		"${SPDir}/rd-vanilla/tr_curve.cpp"
 		"${SPDir}/rd-vanilla/tr_draw.cpp"
 		"${SPDir}/rd-vanilla/tr_ghoul2.cpp"
+		"${SPDir}/rd-vanilla/tr_ghoul2_phys.cpp"
 		"${SPDir}/rd-vanilla/tr_image.cpp"
 		"${SPDir}/rd-vanilla/tr_init.cpp"
 		"${SPDir}/rd-vanilla/tr_light.cpp"
@@ -137,6 +138,8 @@ if(BuildSPRdVanilla)
 	set(SPRDVanillaRdCommonFiles
 		"${SPDir}/rd-common/mdx_format.h"
 		"${SPDir}/rd-common/mdx_merge.h"
+		"${SPDir}/rd-common/phys_cloth.cpp"
+		"${SPDir}/rd-common/phys_cloth.h"
 		"${SPDir}/rd-common/tr_common.h"
 		"${SPDir}/rd-common/tr_font.cpp"
 		"${SPDir}/rd-common/tr_font.h"

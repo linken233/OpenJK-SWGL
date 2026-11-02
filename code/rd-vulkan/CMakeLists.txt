@@ -49,6 +49,7 @@ set(SPVulkanRendererFiles
 	"${SPDir}/rd-vulkan/tr_curve.cpp"
 	"${SPDir}/rd-vulkan/tr_decals.cpp"
 	"${SPDir}/rd-vulkan/tr_ghoul2.cpp"
+	"${SPDir}/rd-vulkan/tr_ghoul2_phys.cpp"
 	"${SPDir}/rd-vulkan/tr_image.cpp"
 	"${SPDir}/rd-vulkan/tr_init.cpp"
 	"${SPDir}/rd-vulkan/tr_light.cpp"
@@ -111,6 +112,8 @@ set(SPVulkanRendererFiles ${SPVulkanRendererFiles} ${SPVulkanRendererGhoul2Files
 set(SPVulkanRendererRdCommonFiles
 	"${SPDir}/rd-common/mdx_format.h"
 	"${SPDir}/rd-common/mdx_merge.h"
+	"${SPDir}/rd-common/phys_cloth.cpp"
+	"${SPDir}/rd-common/phys_cloth.h"
 	"${SPDir}/rd-common/tr_common.h"
 	"${SPDir}/rd-common/tr_font.cpp"
 	"${SPDir}/rd-common/tr_font.h"

@@ -1,0 +1,11 @@
+// Elween: hair, colliders fitted to the model
+hair hair
+{
+	surfaces	headd_hair1 headd_hair2 headd_hair3 headc_hair
+	pin			gradient cranium -z -4 1
+	mode		lag
+	hold		0.45
+	bounce		0.55
+	reach		4
+	collide		model
+}

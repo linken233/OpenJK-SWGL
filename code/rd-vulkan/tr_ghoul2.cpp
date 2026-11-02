@@ -172,6 +172,7 @@ bool HackadelicOnClient=false; // means this is a render traversal
 
 static int R_G2_SnapAcquire( CBoneCache *bc );
 static void R_G2_SnapMarkBones( int slot, const mdxmSurface_t *surface );
+static int R_G2_SnapPhysVerts( const physSurfaceOut_t *physOut, const mdxmSurface_t *surface, int *numChunks );
 
 qboolean G2_SetupModelPointers(CGhoul2Info *ghlInfo);
 qboolean G2_SetupModelPointers(CGhoul2Info_v &ghoul2);
@@ -433,10 +434,12 @@ public:
 
 	// skinned vertices for the collision traces, see g2CollisionVerts_t
 	g2CollisionVerts_t collVerts;
+	void *physInst;			// cloth and hair state of the model, owned by tr_ghoul2_phys.cpp
 
 	CBoneCache(const model_t *amod,const mdxaHeader_t *aheader) :
 		header(aheader),
-		mod(amod)
+		mod(amod),
+		physInst(NULL)
 	{
 		assert(amod);
 		assert(aheader);
@@ -480,6 +483,11 @@ public:
 		mLastTouch=2;
 		mLastLastTouch=1;
 //rww - RAGDOLL_END
+	}
+
+	~CBoneCache()
+	{
+		G2Phys_FreeInstance(physInst);
 	}
 
 	SBoneCalc &Root()
@@ -597,6 +605,22 @@ public:
 	}
 	//rww - RAGDOLL_END
 };
+
+// Accessors for tr_ghoul2_phys.cpp.
+const mdxaBone_t &G2Phys_BoneMatrix(CBoneCache *boneCache, int bone)
+{
+	return boneCache->EvalRender(bone);
+}
+
+const mdxaHeader_t *G2Phys_BoneHeader(CBoneCache *boneCache)
+{
+	return boneCache->header;
+}
+
+void **G2Phys_BoneSlot(CBoneCache *boneCache)
+{
+	return &boneCache->physInst;
+}
 
 void RemoveBoneCache(CBoneCache *boneCache)
 {
@@ -860,6 +884,7 @@ public:
 	model_t			*currentModel;
 	int				lod;
 	boltInfo_v		&boltList;
+	const physInstance_t	*physInst;	// cloth and hair state of this frame, or NULL
 #ifdef _G2_GORE
 	shader_t		*gore_shader;
 	CGoreSet		*gore_set;
@@ -896,10 +921,12 @@ public:
 	lod(initlod),
 #ifdef _G2_GORE
 	boltList(initboltList),
+	physInst(NULL),
 	gore_shader(initgore_shader),
 	gore_set(initgore_set)
 #else
-	boltList(initboltList)
+	boltList(initboltList),
+	physInst(NULL)
 #endif
 	{}
 };
@@ -2353,8 +2380,11 @@ void RenderSurfaces(CRenderSurface &RS) //also ended up just ripping right from 
 
 	assert(RS.currentModel);
 	assert(RS.currentModel->data.glm && RS.currentModel->data.glm->header);
+	// A cloth surface is solved on LOD 0 and drawn from the solved vertices.
+	const physSurfaceOut_t	*physOut = G2Phys_GetSurface(RS.physInst, RS.surfaceNum);
+
 	// back track and get the surfinfo struct for this surface
-	mdxmSurface_t			*surface = (mdxmSurface_t *)G2_FindSurface(RS.currentModel, RS.surfaceNum, RS.lod);
+	mdxmSurface_t			*surface = (mdxmSurface_t *)G2_FindSurface(RS.currentModel, RS.surfaceNum, physOut ? 0 : RS.lod);
 	mdxmHierarchyOffsets_t	*surfIndexes = (mdxmHierarchyOffsets_t *)((byte *)RS.currentModel->data.glm->header + sizeof(mdxmHeader_t));
 	mdxmSurfHierarchy_t		*surfInfo = (mdxmSurfHierarchy_t *)((byte *)surfIndexes + surfIndexes->offsets[surface->thisSurfaceIndex]);
 
@@ -2387,21 +2417,41 @@ void RenderSurfaces(CRenderSurface &RS) //also ended up just ripping right from 
 			shader = R_GetShaderByHandle( surfInfo->shaderIndex );
 		}
 
+		// The phys editor draws the outline of the surface that it shows.
+		G2Phys_SurfaceOutline( tr.currentEntity, RS.physInst, RS.boneCache, RS.currentModel, RS.surfaceNum, surfInfo->name );
+
 		// don't add third_person objects if not viewing through a portal
 		if ( !RS.personalModel )
 		{		// set the surface info to point at the where the transformed bone list is going to be for when the surface gets rendered out
 			CRenderableSurface *newSurf = AllocGhoul2RenderableSurface();
+			int numChunks = 0;
 			newSurf->surfaceData = surface;
+			newSurf->physVerts = R_G2_SnapPhysVerts( physOut, surface, &numChunks );
+			newSurf->physChunk = numChunks ? 0 : -1;
 #ifdef USE_VBO_GHOUL2
-			vk_set_ghoul2_vbo_mesh( RS, newSurf, RS.lod, surface->thisSurfaceIndex );
+			if ( newSurf->physVerts < 0 )
+				vk_set_ghoul2_vbo_mesh( RS, newSurf, physOut ? 0 : RS.lod, surface->thisSurfaceIndex );
 #endif
 			newSurf->g2Snap = RS.g2Snap;
 			R_G2_SnapMarkBones( RS.g2Snap, newSurf->surfaceData );
 			R_AddDrawSurf( (surfaceType_t *)newSurf, (shader_t *)shader, RS.fogNum, qfalse );
 			tr.needScreenMap |= shader->hasScreenMap;
 
+			// A subdivided cloth surface: one draw surface per chunk. A pass that tessellates one
+			// surface without RB_EndSurface (the G-buffer pass) then never sees a batch overflow.
+			for ( int chunk = 1; chunk < numChunks; chunk++ )
+			{
+				CRenderableSurface *chunkSurf = AllocGhoul2RenderableSurface();
+
+				chunkSurf->surfaceData = surface;
+				chunkSurf->physVerts = newSurf->physVerts;
+				chunkSurf->physChunk = chunk;
+				chunkSurf->g2Snap = RS.g2Snap;
+				R_AddDrawSurf( (surfaceType_t *)chunkSurf, (shader_t *)shader, RS.fogNum, qfalse );
+			}
+
 #ifdef _G2_GORE
-			if (RS.gore_set && drawGore)
+			if (RS.gore_set && drawGore && !physOut)
 			{
 				int curTime = G2API_GetTime(tr.refdef.time);
 				std::pair<std::multimap<int,SGoreSurface>::iterator,std::multimap<int,SGoreSurface>::iterator> range=
@@ -3174,10 +3224,24 @@ void R_G2_SnapReset( void )
 		}
 	}
 
+	if ( snap.overflowPhys )
+	{
+		static int lastPhysWarnTime = -100000;
+		const int now = ri.Milliseconds();
+
+		if ( now - lastPhysWarnTime >= 5000 )
+		{
+			lastPhysWarnTime = now;
+			ri.Printf( PRINT_WARNING, "Ghoul2 snapshot cloth pool is full: %d surfaces drawn without cloth.\n", snap.overflowPhys );
+		}
+	}
+
 	snap.numModels = 0;
 	snap.numBones = 0;
 	snap.overflowModels = 0;
 	snap.overflowBones = 0;
+	snap.numPhysFloats = 0;
+	snap.overflowPhys = 0;
 #ifdef USE_RTX
 	snap.numRtxModels = 0;
 	snap.numRtxMeshes = 0;
@@ -3226,6 +3290,72 @@ static int R_G2_SnapAcquire( CBoneCache *bc )
 
 	bc->snapSlot = slot;
 	return slot;
+}
+
+// Copies the solved vertices of a cloth surface into the snapshot, once per frame.
+// Returns the first float in backEndData->g2.physVerts, or -1 when the pool is full.
+// numChunks gets the chunks of a subdivided surface, 0 for the vertices of the surface.
+static int R_G2_SnapPhysVerts( const physSurfaceOut_t *physOut, const mdxmSurface_t *surface, int *numChunks )
+{
+	g2Snapshot_t &snap = backEndData->g2;
+	const bool refined = physOut && physOut->st;
+
+	*numChunks = 0;
+
+	if ( !physOut || ( refined ? physOut->numChunks <= 0 : physOut->numVerts != surface->numVerts ) )
+		return -1;
+
+	if ( physOut->snapScene == g2SnapSerial )
+	{
+		*numChunks = ( refined && physOut->snapOffset >= 0 ) ? physOut->numChunks : 0;
+		return physOut->snapOffset;
+	}
+
+	const int numFloats = refined ? 2 + physOut->numChunks * 4 + physOut->numVerts * 8 + physOut->numIndexes : physOut->numVerts * 6;
+
+	physOut->snapScene = g2SnapSerial;
+	physOut->snapOffset = -1;
+
+	if ( snap.numPhysFloats + numFloats > G2_SNAP_MAX_PHYS_FLOATS )
+	{
+		snap.overflowPhys++;
+		return -1;
+	}
+
+	float *dst = snap.physVerts + snap.numPhysFloats;
+
+	if ( refined )
+	{
+		// The layout: number of chunks and of vertices, chunks, vertices (position, normal, texture coordinates), indexes.
+		( (int *)dst )[0] = physOut->numChunks;
+		( (int *)dst )[1] = physOut->numVerts;
+		dst += 2;
+		Com_Memcpy( dst, physOut->chunks, sizeof( int ) * 4 * physOut->numChunks );
+		dst += physOut->numChunks * 4;
+
+		for ( int i = 0; i < physOut->numVerts; i++, dst += 8 )
+		{
+			VectorCopy( &physOut->xyz[i * 3], dst );
+			VectorCopy( &physOut->normal[i * 3], dst + 3 );
+			dst[6] = physOut->st[i * 2];
+			dst[7] = physOut->st[i * 2 + 1];
+		}
+
+		Com_Memcpy( dst, physOut->indexes, sizeof( int ) * physOut->numIndexes );
+		*numChunks = physOut->numChunks;
+	}
+	else
+	{
+		for ( int i = 0; i < physOut->numVerts; i++, dst += 6 )
+		{
+			VectorCopy( &physOut->xyz[i * 3], dst );
+			VectorCopy( &physOut->normal[i * 3], dst + 3 );
+		}
+	}
+
+	physOut->snapOffset = snap.numPhysFloats;
+	snap.numPhysFloats += numFloats;
+	return physOut->snapOffset;
 }
 
 // Marks the bones a drawn surface skins with. Only the CPU skinning path evaluates by this mask.
@@ -3394,6 +3524,11 @@ void R_AddGhoulSurfaces( trRefEntity_t *ent ) {
 #else
 			CRenderSurface RS(ghoul2[i].mSurfaceRoot, ghoul2[i].mSlist, cust_shader, fogNum, personalModel, ghoul2[i].mBoneCache, ent->e.renderfx, skin, (model_t *)ghoul2[i].currentModel, whichLod, ghoul2[i].mBltlist);
 #endif
+			if (!personalModel)
+			{
+				RS.physInst = G2Phys_Update(ent, ghoul2[i].mBoneCache, ghoul2[i].currentModel, ghoul2[i].mSlist);
+				G2Phys_AddBoneMarkers(ent, ghoul2[i].mBoneCache, ghoul2[i].currentModel);
+			}
 			if (!personalModel && (RS.renderfx & RF_SHADOW_PLANE) && !bInShadowRange(ent->e.origin))
 			{
 				RS.renderfx |= RF_NOSHADOW;
@@ -4186,6 +4321,12 @@ void RB_SurfaceGhoul(CRenderableSurface* surf)
 
 		if ( surface->vbo != NULL || surface->ibo != NULL ) {
 
+			// A solved cloth surface may be queued in tess. It cannot share a batch with a VBO mesh.
+			if ( tess.numIndexes && !tess.vbo_model ) {
+				RB_EndSurface();
+				RB_BeginSurface( tess.shader, tess.fogNum );
+			}
+
 			int numIndexes = surface->numIndexes;
 			int numVertexes = surface->numVertexes;
 			int minIndex = surface->minIndex;
@@ -4422,9 +4563,47 @@ void RB_SurfaceGhoul(CRenderableSurface* surf)
 	const g2SnapModel_t &snapModel = backEndDataBE->g2.models[surf->g2Snap];
 	const mdxaBone_t *bones = (const mdxaBone_t *)( backEndDataBE->g2.bones + snapModel.firstBone );
 
+	// Cloth: the solved vertices come from the frontend snapshot too.
+	const float *physVerts = ( surf->physVerts >= 0 ) ? backEndDataBE->g2.physVerts + surf->physVerts : NULL;
+	const int physChunk = physVerts ? surf->physChunk : -1;
+
 #ifndef _G2_GORE //we use this later, for gore
 	delete surf;
 #endif
+
+	// A queued VBO mesh cannot share a batch with the solved vertices.
+	if (physVerts && tess.vbo_model)
+	{
+		RB_EndSurface();
+		RB_BeginSurface(tess.shader, tess.fogNum);
+	}
+
+	// Subdivided cloth: this draw surface is one chunk, which fits in one batch.
+	if (physChunk >= 0)
+	{
+		const int numChunks = ((const int *)physVerts)[0];
+		const int numPhysVerts = ((const int *)physVerts)[1];
+		const int *ch = (const int *)physVerts + 2 + physChunk * 4;
+		const float *v = physVerts + 2 + numChunks * 4 + ch[0] * 8;
+		const int *chunkIndexes = (const int *)(physVerts + 2 + numChunks * 4 + numPhysVerts * 8) + ch[2];
+
+		RB_CHECKOVERFLOW(ch[1], ch[3]);
+
+		for (int j = 0; j < ch[1]; j++, v += 8)
+		{
+			VectorCopy(v, tess.xyz[tess.numVertexes + j]);
+			VectorCopy(v + 3, tess.normal[tess.numVertexes + j]);
+			tess.texCoords[0][tess.numVertexes + j][0] = v[6];
+			tess.texCoords[0][tess.numVertexes + j][1] = v[7];
+		}
+
+		for (int j = 0; j < ch[3]; j++)
+			tess.indexes[tess.numIndexes + j] = tess.numVertexes + chunkIndexes[j];
+
+		tess.numIndexes += ch[3];
+		tess.numVertexes += ch[1];
+		return;
+	}
 
 	// first up, sanity check our numbers
 	RB_CheckOverflow(surface->numVerts, surface->numTriangles);
@@ -4452,6 +4631,18 @@ void RB_SurfaceGhoul(CRenderableSurface* surf)
 	mdxmVertex_t* v = (mdxmVertex_t*)((byte*)surface + surface->ofsVerts);
 	mdxmVertexTexCoord_t* pTexCoords = (mdxmVertexTexCoord_t*)&v[numVerts];
 
+	if (physVerts)
+	{
+		// Cloth: the vertices come from the solver, only the texture coordinates are read.
+		for (int j = 0; j < numVerts; j++, baseVertex++, physVerts += 6)
+		{
+			VectorCopy(physVerts, tess.xyz[baseVertex]);
+			VectorCopy(physVerts + 3, tess.normal[baseVertex]);
+			tess.texCoords[0][baseVertex][0] = pTexCoords[j].texCoords[0];
+			tess.texCoords[0][baseVertex][1] = pTexCoords[j].texCoords[1];
+		}
+	}
+	else
 	for (int j = 0; j < numVerts; j++, baseVertex++, v++)
 	{
 		const mdxaBone_t* bone = &bones[piBoneReferences[G2_GetVertBoneIndex(v, 0)]];

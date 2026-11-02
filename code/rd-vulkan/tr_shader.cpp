@@ -5349,6 +5349,25 @@ static void CreateInternalShaders( void )
 	stages[0].stateBits = GLS_DEPTHTEST_DISABLE | GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA;
 	tr.whiteShader = FinishShader();
 
+	// The lines and dots of the phys editor are drawn last: once with depth test, once without it for the
+	// hidden parts. The vertex alpha of the second copy is lower.
+	for ( int hidden = 0; hidden < 2; hidden++ )
+	{
+		InitShader( hidden ? "<physhidden>" : "<physline>", lightmapsNone, stylesDefault );
+		stages[0].bundle[0].image[0] = tr.physDotImage ? tr.physDotImage : tr.whiteImage;
+		stages[0].active = qtrue;
+		stages[0].bundle[0].rgbGen = CGEN_EXACT_VERTEX;
+		stages[0].bundle[0].alphaGen = AGEN_VERTEX;
+		stages[0].stateBits = GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA | ( hidden ? GLS_DEPTHTEST_DISABLE : 0 );
+		shader.cullType = CT_TWO_SIDED;
+		shader.sort = SS_NEAREST;
+
+		if ( hidden )
+			tr.physHiddenShader = FinishShader();
+		else
+			tr.physLineShader = FinishShader();
+	}
+
 	InitShader("<cinematic>", lightmapsNone, stylesDefault);
 	stages[0].bundle[0].image[0] = tr.defaultImage; // will be updated by specific cinematic images
 	stages[0].active = qtrue;

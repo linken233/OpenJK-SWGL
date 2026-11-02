@@ -1,0 +1,18 @@
+// Lana Beniko (NPC model): cape and hair
+cloth cape
+{
+	surfaces	torso_cape
+	pin			gradient thoracic -z 0 40
+	reach		26 38
+	collide		humanoid
+}
+
+hair hair
+{
+	surfaces	head_hair head_hair2 head_hair3
+	pin			gradient cranium -z -4 1
+	mode		lag
+	hold		0.45
+	bounce		0.55
+	reach		4
+}

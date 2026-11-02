@@ -236,9 +236,12 @@ public:
 	float			mSmoothFactor;
 //	int				mWraithID; // this is just used for debug prints, can use it for any int of interest in JK2
 
+	void *physInst;			// cloth and hair state of the model, owned by tr_ghoul2_phys.cpp
+
 	CBoneCache(const model_t *amod,const mdxaHeader_t *aheader) :
 		header(aheader),
-		mod(amod)
+		mod(amod),
+		physInst(NULL)
 	{
 		assert(amod);
 		assert(aheader);
@@ -271,6 +274,7 @@ public:
 	}
 	~CBoneCache ()
 	{
+		G2Phys_FreeInstance(physInst);
 		delete [] mBones;
 		// Alignment
 		R_Free(mFinalBones);
@@ -641,6 +645,26 @@ int G2_GetParentBoneMatrixLow(CGhoul2Info &ghoul2,int boneNum,const vec3_t scale
 }
 //rww - RAGDOLL_END
 
+// Accessors for tr_ghoul2_phys.cpp.
+const mdxaBone_t &G2Phys_BoneMatrix(CBoneCache *boneCache, int bone)
+{
+#ifdef JK2_MODE
+	return boneCache->Eval(bone);
+#else
+	return boneCache->EvalRender(bone);
+#endif
+}
+
+const mdxaHeader_t *G2Phys_BoneHeader(CBoneCache *boneCache)
+{
+	return boneCache->header;
+}
+
+void **G2Phys_BoneSlot(CBoneCache *boneCache)
+{
+	return &boneCache->physInst;
+}
+
 void RemoveBoneCache(CBoneCache *boneCache)
 {
 	delete boneCache;
@@ -667,6 +691,7 @@ public:
 	const model_t	*currentModel;
 	int				lod;
 	boltInfo_v		&boltList;
+	const physInstance_t	*physInst;	// cloth and hair state of this frame, or NULL
 #ifdef _G2_GORE
 	shader_t		*gore_shader;
 	CGoreSet		*gore_set;
@@ -702,10 +727,12 @@ public:
 	lod(initlod),
 #ifdef _G2_GORE
 	boltList(initboltList),
+	physInst(NULL),
 	gore_shader(initgore_shader),
 	gore_set(initgore_set)
 #else
-	boltList(initboltList)
+	boltList(initboltList),
+	physInst(NULL)
 #endif
 	{}
 };
@@ -2248,8 +2275,11 @@ void RenderSurfaces(CRenderSurface &RS)
 
 	assert(RS.currentModel);
 	assert(RS.currentModel->mdxm);
+	// A cloth surface is solved on LOD 0 and drawn from the solved vertices.
+	const physSurfaceOut_t	*physOut = G2Phys_GetSurface(RS.physInst, RS.surfaceNum);
+
 	// back track and get the surfinfo struct for this surface
-	mdxmSurface_t			*surface = (mdxmSurface_t *)G2_FindSurface(RS.currentModel, RS.surfaceNum, RS.lod);
+	mdxmSurface_t			*surface = (mdxmSurface_t *)G2_FindSurface(RS.currentModel, RS.surfaceNum, physOut ? 0 : RS.lod);
 	mdxmHierarchyOffsets_t	*surfIndexes = (mdxmHierarchyOffsets_t *)((byte *)RS.currentModel->mdxm + sizeof(mdxmHeader_t));
 	mdxmSurfHierarchy_t		*surfInfo = (mdxmSurfHierarchy_t *)((byte *)surfIndexes + surfIndexes->offsets[surface->thisSurfaceIndex]);
 
@@ -2293,6 +2323,9 @@ void RenderSurfaces(CRenderSurface &RS)
 			shader = R_GetShaderByHandle( surfInfo->shaderIndex );
 		}
 
+		// The phys editor draws the outline of the surface that it shows.
+		G2Phys_SurfaceOutline( tr.currentEntity, RS.physInst, RS.boneCache, RS.currentModel, RS.surfaceNum, surfInfo->name );
+
 		// we will add shadows even if the main object isn't visible in the view
 		// stencil shadows can't do personal models unless I polyhedron clip
 		//using z-fail now so can do personal models -rww
@@ -2335,11 +2368,12 @@ void RenderSurfaces(CRenderSurface &RS)
 		{		// set the surface info to point at the where the transformed bone list is going to be for when the surface gets rendered out
 			CRenderableSurface *newSurf = AllocRS();
 			newSurf->surfaceData = surface;
+			newSurf->physOut = physOut;
 			newSurf->boneCache = RS.boneCache;
 			R_AddDrawSurf( (surfaceType_t *)newSurf, shader, RS.fogNum, qfalse );
 
 #ifdef _G2_GORE
-			if (RS.gore_set && drawGore)
+			if (RS.gore_set && drawGore && !physOut)
 			{
 				int curTime = G2API_GetTime(tr.refdef.time);
 				std::pair<std::multimap<int,SGoreSurface>::iterator,std::multimap<int,SGoreSurface>::iterator> range=
@@ -2688,6 +2722,11 @@ void R_AddGhoulSurfaces( trRefEntity_t *ent ) {
 #else
 			CRenderSurface RS(ghoul2[i].mSurfaceRoot, ghoul2[i].mSlist, cust_shader, fogNum, personalModel, ghoul2[i].mBoneCache, ent->e.renderfx, skin,ghoul2[i].currentModel, whichLod, ghoul2[i].mBltlist);
 #endif
+			if (!personalModel)
+			{
+				RS.physInst = G2Phys_Update(ent, ghoul2[i].mBoneCache, ghoul2[i].currentModel, ghoul2[i].mSlist);
+				G2Phys_AddBoneMarkers(ent, ghoul2[i].mBoneCache, ghoul2[i].currentModel);
+			}
 			if (!personalModel && (RS.renderfx & RF_SHADOW_PLANE) && !bInShadowRange(ent->e.origin))
 			{
 				RS.renderfx |= RF_NOSHADOW;
@@ -2901,6 +2940,43 @@ void RB_SurfaceGhoul( CRenderableSurface *surf )
 	mdxmSurface_t	*surface = surf->surfaceData;
 
 	CBoneCache *bones = surf->boneCache;
+	const physSurfaceOut_t *physOut = surf->physOut;
+
+	// Subdivided cloth: each chunk fits in one batch.
+	if (physOut && physOut->st)
+	{
+		for (int c = 0; c < physOut->numChunks; c++)
+		{
+			const int *ch = &physOut->chunks[c * 4];
+
+			RB_CHECKOVERFLOW( ch[1], ch[3] );
+
+			for (int i = 0; i < ch[1]; i++)
+			{
+				const int src = ch[0] + i;
+
+				VectorCopy( &physOut->xyz[src * 3], tess.xyz[tess.numVertexes + i] );
+				VectorCopy( &physOut->normal[src * 3], tess.normal[tess.numVertexes + i] );
+				tess.texCoords[tess.numVertexes + i][0][0] = physOut->st[src * 2];
+				tess.texCoords[tess.numVertexes + i][0][1] = physOut->st[src * 2 + 1];
+			}
+
+			for (int i = 0; i < ch[3]; i++)
+			{
+				tess.indexes[tess.numIndexes + i] = tess.numVertexes + physOut->indexes[ch[2] + i];
+			}
+
+			tess.numIndexes += ch[3];
+			tess.numVertexes += ch[1];
+		}
+
+		return;
+	}
+
+	if (physOut && physOut->numVerts != surface->numVerts)
+	{
+		physOut = NULL;
+	}
 
 	// first up, sanity check our numbers
 	RB_CheckOverflow( surface->numVerts, surface->numTriangles );
@@ -2989,7 +3065,20 @@ void RB_SurfaceGhoul( CRenderableSurface *surf )
 		float t2;
 		const mdxaBone_t *bone;
 		const mdxaBone_t *bone2;
-		for ( j = 0; j < numVerts; j++, baseVertex++,v++ )
+
+		if (physOut)
+		{
+			// Cloth: the vertices come from the solver, only the texture coordinates are read.
+			for ( j = 0; j < numVerts; j++, baseVertex++ )
+			{
+				VectorCopy( &physOut->xyz[j * 3], tess.xyz[baseVertex] );
+				VectorCopy( &physOut->normal[j * 3], tess.normal[baseVertex] );
+				tess.texCoords[baseVertex][0][0] = pTexCoords[j].texCoords[0];
+				tess.texCoords[baseVertex][0][1] = pTexCoords[j].texCoords[1];
+			}
+		}
+
+		for ( j = 0; j < (physOut ? 0 : numVerts); j++, baseVertex++,v++ )
 		{
 #ifdef JK2_MODE
 			bone = &bones->Eval(piBoneReferences[G2_GetVertBoneIndex( v, 0 )]);

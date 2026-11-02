@@ -3860,6 +3860,32 @@ static void CreateInternalShaders( void ) {
 	tr.distortionShader = FinishShader();
 	shader.defaultShader = true;
 
+	// The lines and dots of the phys editor are drawn last: once with depth test, once without it for the
+	// hidden parts. The vertex alpha of the second copy is lower.
+	for ( int hidden = 0; hidden < 2; hidden++ )
+	{
+		memset( &shader, 0, sizeof( shader ) );
+		memset( &stages, 0, sizeof( stages ) );
+		Q_strncpyz( shader.name, hidden ? "<physhidden>" : "<physline>", sizeof( shader.name ) );
+		memcpy( shader.lightmapIndex, lightmapsNone, sizeof( shader.lightmapIndex ) );
+		memcpy( shader.styles, stylesDefault, sizeof( shader.styles ) );
+		for ( int i = 0 ; i < MAX_SHADER_STAGES ; i++ ) {
+			stages[i].bundle[0].texMods = texMods[i];
+		}
+		stages[0].bundle[0].image = tr.physDotImage ? tr.physDotImage : tr.whiteImage;
+		stages[0].active = true;
+		stages[0].rgbGen = CGEN_EXACT_VERTEX;
+		stages[0].alphaGen = AGEN_VERTEX;
+		stages[0].stateBits = GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA | ( hidden ? GLS_DEPTHTEST_DISABLE : 0 );
+		shader.cullType = CT_TWO_SIDED;
+		shader.sort = SS_NEAREST;
+
+		if ( hidden )
+			tr.physHiddenShader = FinishShader();
+		else
+			tr.physLineShader = FinishShader();
+	}
+
 	ARB_InitGlowShaders();
 }
 

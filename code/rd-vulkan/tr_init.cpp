@@ -910,6 +910,7 @@ static consoleCommand_t	commands[] = {
 	{ "r_fogDistance",		R_FogDistance_f },
 	{ "r_fogColor",			R_FogColor_f },
 	{ "r_reloadfonts",		R_ReloadFonts_f },
+	{ "ph_reload",			G2Phys_Reload_f },
 	{ "r_cleardecals",		RE_ClearDecals },
 	{ "remapSky",			R_RemapSkyShader_f },
 	{ "clearRemaps",		R_ClearRemaps_f },
@@ -1365,6 +1366,8 @@ Ghoul2 Insert End
 	ri.Cvar_CheckRange( r_aviMotionJpegQuality, 10, 100, qtrue );
 	ri.Cvar_CheckRange( r_screenshotJpegQuality, 10, 100, qtrue );
 
+	G2Phys_Init();
+
 	for (size_t i = 0; i < numCommands; i++)
 	{
 		ri.Cmd_AddCommand(commands[i].cmd, commands[i].func);
@@ -1453,7 +1456,8 @@ void R_Init( void ) {
 	// One buffer for the frontend and one for the backend when the render thread is on.
 	{
 		const size_t g2PoolBytes = sizeof(mat3x4_t) * G2_SNAP_MAX_BONES;
-		const size_t bufferBytes = sizeof( *backEndData ) + sizeof(srfPoly_t) * max_polys + sizeof(polyVert_t) * max_polyverts + g2PoolBytes * 3;
+		const size_t physPoolBytes = sizeof(float) * G2_SNAP_MAX_PHYS_FLOATS;
+		const size_t bufferBytes = sizeof( *backEndData ) + sizeof(srfPoly_t) * max_polys + sizeof(polyVert_t) * max_polyverts + g2PoolBytes * 3 + physPoolBytes;
 		const int numBuffers = R_RenderThreadWanted() ? 2 : 1;
 
 		for ( int b = 0; b < numBuffers; b++ )
@@ -1468,6 +1472,7 @@ void R_Init( void ) {
 			backEndDataBuf[b]->g2.bones = (mat3x4_t *)pool;
 			backEndDataBuf[b]->g2.prevBones = (mat3x4_t *)( pool + g2PoolBytes );
 			backEndDataBuf[b]->g2.rtxBones = (mat3x4_t *)( pool + g2PoolBytes * 2 );
+			backEndDataBuf[b]->g2.physVerts = (float *)( pool + g2PoolBytes * 3 );
 		}
 
 		if ( numBuffers == 1 )
@@ -1548,6 +1553,7 @@ void RE_Shutdown( qboolean destroyWindow, qboolean restarting ) {
 
 	R_ShutdownWorldEffects();
 	R_ShutdownFonts();
+	G2Phys_Shutdown();
 
 #ifdef USE_RTX
 	RTX_LightEdit_Invalidate();
@@ -2022,6 +2028,7 @@ Q_EXPORT refexport_t* QDECL GetRefAPI( int apiVersion, refimport_t *rimp ) {
 #endif
 
 	re.CaptureNextFrame						= RE_CaptureNextFrame;
+	re.PhysCommand							= G2Phys_UICommand;
 
 	// Fields left unassigned here are NULL in a zero-initialized refexport_t
 	// -- any caller reaching them crashes at a null function pointer, so

@@ -1939,6 +1939,7 @@ typedef struct trGlobals_s {
 	image_t					*dlightImage;		// inverse-quare highlight for projective adding
 	image_t					*flareImage;
 	image_t					*whiteImage;		// full of 0xff
+	image_t					*physDotImage;		// soft round dot of the phys editor
 #ifdef USE_VK_PBR
 	image_t					*brdfLutImage;		// PBR environment BRDF
 #endif
@@ -1956,6 +1957,8 @@ typedef struct trGlobals_s {
 	shader_t				*cinematicShader;
 	shader_t				*beamShader;	// white, additive, vertex colour: the RT_BEAM tube under RTX
 	shader_t				*shadowShader;
+	shader_t				*physLineShader;	// lines and dots of the phys editor: vertex colour, depth test
+	shader_t				*physHiddenShader;	// the same without depth test, for the hidden parts
 	shader_t				*distortionShader;
 	shader_t				*projectionShadowShader;
 
@@ -2742,6 +2745,38 @@ ANIMATED MODELS
 /*
 Ghoul2 Insert Start
 */
+// Cloth and hair physics (.phys), see tr_ghoul2_phys.cpp.
+struct physInstance_t;
+
+struct physSurfaceOut_t
+{
+	int		numVerts;
+	float	*xyz;		// 3 floats per vertex, model space
+	float	*normal;
+	// Subdivided mesh (subdivide): numVerts counts its vertices. st NULL: the vertices are those of the surface.
+	const float	*st;		// 2 floats per vertex
+	const int	*chunks;	// 4 per chunk: first vertex, vertex count, first index, index count
+	const int	*indexes;	// of each chunk, from the first vertex of the chunk
+	int			numChunks;
+	int			numIndexes;
+	mutable int	snapScene;	// copy of this frame in backEndData->g2.physVerts, see R_G2_SnapPhysVerts
+	mutable int	snapOffset;
+
+	physSurfaceOut_t() : numVerts( 0 ), xyz( NULL ), normal( NULL ), st( NULL ), chunks( NULL ), indexes( NULL ),
+		numChunks( 0 ), numIndexes( 0 ), snapScene( -1 ), snapOffset( -1 ) {}
+};
+
+void					G2Phys_Init( void );
+void					G2Phys_Shutdown( void );
+void					G2Phys_Reload_f( void );
+void					G2Phys_FreeInstance( void *inst );
+physInstance_t			*G2Phys_Update( const trRefEntity_t *ent, CBoneCache *bc, const model_t *glm, const surfaceInfo_v &slist );
+const physSurfaceOut_t	*G2Phys_GetSurface( const physInstance_t *inst, int surfaceNum );
+int						G2Phys_UICommand( const char *cmd, const char *arg, char *out, int outSize );
+void					G2Phys_SurfaceOutline( const trRefEntity_t *ent, const physInstance_t *inst, CBoneCache *bc, const model_t *glm,
+											   int surfaceNum, const char *surfaceName );
+void					G2Phys_AddBoneMarkers( const trRefEntity_t *ent, CBoneCache *bc, const model_t *glm );
+
 class CRenderableSurface
 {
 public:
@@ -2751,6 +2786,8 @@ public:
 	const int		ident;				// ident of this surface - required so the materials renderer knows what sort of surface this refers to
 #endif
 	int				g2Snap;				// index into backEndData->g2.models, -1 for none. The backend never reads the bone cache.
+	int				physVerts;			// first float of the solved cloth vertices in backEndData->g2.physVerts, -1 for a skinned surface
+	int				physChunk;			// subdivided cloth: the chunk this draw surface draws, -1 = the vertices of the surface
 #ifdef USE_VBO_GHOUL2
 	mdxmVBOMesh_t	*vboMesh;
 #endif
@@ -2770,6 +2807,8 @@ public:
 	{
 		ident			= src.ident;
 		g2Snap			= src.g2Snap;
+		physVerts		= src.physVerts;
+		physChunk		= src.physChunk;
 		surfaceData		= src.surfaceData;
 #ifdef _G2_GORE
 		alternateTex	= src.alternateTex;
@@ -2786,6 +2825,8 @@ public:
 CRenderableSurface():
 	ident( SF_MDX ),
 	g2Snap( -1 ),
+	physVerts( -1 ),
+	physChunk( -1 ),
 #ifdef USE_VBO_GHOUL2
 	vboMesh( nullptr ),
 #endif
@@ -2804,6 +2845,8 @@ CRenderableSurface():
 	{
 		ident			= SF_MDX;
 		g2Snap			= -1;
+		physVerts		= -1;
+		physChunk		= -1;
 		surfaceData		= nullptr;
 #ifdef _G2_GORE
 		alternateTex	= nullptr;
@@ -2981,9 +3024,15 @@ pool. The backend reads only this pool, never the bone cache of the game. Pool s
 G2_SNAP_MAX_BONES matrices of 48 bytes in each of three arrays (current, previous, tracer),
 about 9 MB, enough for 900 characters of 72 bones. When a pool is full the frontend counts
 the overflow, prints a warning and the model draws without skinning data.
+The solved cloth vertices go in a float pool of G2_SNAP_MAX_PHYS_FLOATS (6 floats per vertex:
+position then normal), about 6 MB. A subdivided surface puts the number of chunks and of vertices first (2 ints), then the
+chunks (4 ints each), 8 floats per vertex (position, normal, texture coordinates), then its
+indexes as ints. Each chunk has its own draw surface, so it fits in one batch.
+When the pool is full the surface draws skinned, without cloth.
 */
 #define G2_SNAP_MAX_MODELS		8192
 #define G2_SNAP_MAX_BONES		65536
+#define G2_SNAP_MAX_PHYS_FLOATS	( 6 * 262144 )
 #define G2_SNAP_MAX_RTX_MODELS	8192
 #define G2_SNAP_MAX_RTX_MESHES	32768
 
@@ -3016,6 +3065,9 @@ typedef struct g2Snapshot_s {
 	mat3x4_t		*bones;				// current pose
 	mat3x4_t		*prevBones;			// previous pose, filled when the velocity buffer is on
 	mat3x4_t		*rtxBones;			// pose for the path tracer
+	int				numPhysFloats;
+	int				overflowPhys;		// cloth surfaces drawn skinned this frame
+	float			*physVerts;			// solved cloth vertices, see CRenderableSurface::physVerts
 	g2SnapModel_t	models[G2_SNAP_MAX_MODELS];
 #ifdef USE_RTX
 	int				numRtxModels;

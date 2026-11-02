@@ -1389,6 +1389,7 @@ void CL_Init( void ) {
 	Cmd_AddCommand ("datapad", CL_DataPad_f);
 	Cmd_AddCommand("swglsystem", CL_System_f);
 	Cmd_AddCommand("swglspawner", CL_Spawner_f);
+	Cmd_AddCommand("ph_menu", CL_PhysMenu_f);
 	Cmd_AddCommand ("endscreendissolve", CL_EndScreenDissolve_f);
 	Cmd_AddCommand ("g_SwitchRenderer", CL_SwitchRenderer_f);
 	Cmd_AddCommand ("g_ShowSplit", CL_ShowSplit_f);
@@ -1445,6 +1446,7 @@ void CL_Shutdown( void ) {
 	Cmd_RemoveCommand ("uimenu");
 	Cmd_RemoveCommand ("datapad");
 	Cmd_RemoveCommand("swglspawner");
+	Cmd_RemoveCommand("ph_menu");
 	Cmd_RemoveCommand("swglsystem");
 	Cmd_RemoveCommand ("endscreendissolve");
 	Cmd_RemoveCommand ("g_SwitchRenderer");

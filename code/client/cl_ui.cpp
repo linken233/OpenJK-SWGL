@@ -210,6 +210,8 @@ void UI_Init( int apiVersion, uiimport_t *uiimport, qboolean inGameLoad );
 CL_InitUI
 ====================
 */
+static int CL_PhysCommand( const char *cmd, const char *arg, char *out, int outSize );
+
 void CL_InitUI( void ) {
 #ifdef JK2_MODE
 	JK2SP_Register("keynames", 0	/*SP_REGISTER_REQUIRED*/);		// reference is KEYNAMES
@@ -278,6 +280,7 @@ void CL_InitUI( void ) {
 	uii.R_RenderScene			= re.RenderScene;
 
 	uii.R_ModelBounds			= re.ModelBounds;
+	uii.PhysCommand				= CL_PhysCommand;
 
 	uii.R_SetColor				= re.SetColor;
 	uii.R_DrawStretchPic		= re.DrawStretchPic;
@@ -309,6 +312,7 @@ void CL_InitUI( void ) {
 #endif
 
 	uii.GetClipboardData		= GetClipboardData;
+	uii.SetClipboardData		= Sys_SetClipboardData;
 
 	uii.GetClientState			= GetClientState;
 
@@ -333,6 +337,24 @@ qboolean UI_GameCommand( void ) {
 	return UI_ConsoleCommand();
 }
 
+
+static int CL_PhysCommand( const char *cmd, const char *arg, char *out, int outSize )
+{
+	if ( !re.PhysCommand )
+	{
+		Q_strncpyz( out, "This renderer has no phys editor", outSize );
+		return -1;
+	}
+
+	return re.PhysCommand( cmd, arg, out, outSize );
+}
+
+void CL_PhysMenu_f(void)
+{
+	if (cls.uiStarted && cls.cgameStarted && (cls.state == CA_ACTIVE)) {
+		UI_SetActiveMenu("physEdit", NULL);
+	}
+}
 
 void CL_GenericMenu_f(void)
 {

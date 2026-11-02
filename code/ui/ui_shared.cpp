@@ -206,6 +206,7 @@ const char *types [] = {
 "ITEM_TYPE_TEXTSCROLL",
 "ITEM_TYPE_SLIDER_INTEGER",
 "ITEM_TYPE_SLIDER_ROTATE",
+"ITEM_TYPE_MODEL_CONTROL",
 NULL
 };
 
@@ -5158,6 +5159,24 @@ void Item_ValidateTypeData(itemDef_t *item)
 	{
 		item->typeData = UI_Alloc(sizeof(textScrollDef_t));
 	}
+	else if (item->type == ITEM_TYPE_MODEL_CONTROL)
+	{
+		item->typeData = UI_Alloc(sizeof(modelControlDef_t));
+		memset(item->typeData, 0, sizeof(modelControlDef_t));
+	}
+}
+
+// modelTarget <name>: the model item that an ITEM_TYPE_MODEL_CONTROL item controls.
+qboolean ItemParse_modelTarget( itemDef_t *item )
+{
+	Item_ValidateTypeData(item);
+
+	if (item->type != ITEM_TYPE_MODEL_CONTROL || !item->typeData)
+	{
+		return qfalse;
+	}
+
+	return PC_ParseStringMem(&((modelControlDef_t *)item->typeData)->target);
 }
 
 qboolean ItemParse_isCharacter( itemDef_t *item )
@@ -5259,6 +5278,7 @@ keywordHash_t itemParseKeywords[] = {
 	{"asset_model",		ItemParse_asset_model,		},
 	{"asset_shader",	ItemParse_asset_shader,		},
 	{"isCharacter",		ItemParse_isCharacter,		},
+	{"modelTarget",		ItemParse_modelTarget,		},
 	{"isSaber",			ItemParse_isSaber,			},
 	{"isSaber2",		ItemParse_isSaber2,			},
 	{"isNPC",			ItemParse_isNPC,			}, 
@@ -8680,6 +8700,16 @@ void Item_Model_Paint(itemDef_t *item)
 	float len = 0.5 * ( maxs[2] - mins[2] );
 	origin[0] = len / 0.268;
 
+	// A menu can zoom and move the model. The view values let it keep the point under the cursor.
+	if ( modelPtr->viewZoom > 0.0f )
+		origin[0] /= modelPtr->viewZoom;
+
+	origin[1] += modelPtr->viewPan[0];
+	origin[2] += modelPtr->viewPan[1];
+	( (modelDef_t *)modelPtr )->viewDist = origin[0];
+	( (modelDef_t *)modelPtr )->viewTan[0] = tan( refdef.fov_x / 360 * M_PI );
+	( (modelDef_t *)modelPtr )->viewTan[1] = tan( refdef.fov_y / 360 * M_PI );
+
 	DC->clearScene();
 
 	refdef.time = DC->realTime;
@@ -8790,7 +8820,10 @@ void Item_OwnerDraw_Paint(itemDef_t *item)
 			}
 		}
 
-		if (item->window.flags & WINDOW_HASFOCUS)
+		// The phys editor panels keep their color under the cursor: no pulse of the whole panel.
+		const bool physPanel = item->window.ownerDraw >= UI_PHYS_OWNERDRAW_FIRST && item->window.ownerDraw <= UI_PHYS_OWNERDRAW_LAST;
+
+		if ((item->window.flags & WINDOW_HASFOCUS) && !physPanel)
 		{
 			lowLight[0] = 0.8 * parent->focusColor[0];
 			lowLight[1] = 0.8 * parent->focusColor[1];
@@ -12475,6 +12508,112 @@ static void Scroll_Slider_ThumbFunc(void *p)
 }
 
 /*
+=================
+Item_ModelControl_Target
+
+The model item of an ITEM_TYPE_MODEL_CONTROL item, or NULL.
+=================
+*/
+static itemDef_t *Item_ModelControl_Target( itemDef_t *item, modelDef_t **model )
+{
+	const modelControlDef_t *control = (const modelControlDef_t *)item->typeData;
+	itemDef_t *target = ( control && control->target && item->parent ) ? Menu_FindItemByName( (menuDef_t *)item->parent, control->target ) : NULL;
+
+	if ( !target || target->type != ITEM_TYPE_MODEL || !target->typeData )
+	{
+		return NULL;
+	}
+
+	*model = (modelDef_t *)target->typeData;
+	return target;
+}
+
+/*
+=================
+Scroll_ModelControl
+
+The drag of an ITEM_TYPE_MODEL_CONTROL item: mouse 1 turns the model through the cvar of the item
+(720 degrees over the width of the item), mouse 2 moves the model under the cursor.
+=================
+*/
+static void Scroll_ModelControl( void *p )
+{
+	scrollInfo_t *si = (scrollInfo_t *)p;
+	modelDef_t *model;
+	itemDef_t *target = Item_ModelControl_Target( si->item, &model );
+
+	if ( si->scrollKey == A_MOUSE1 )
+	{
+		if ( si->item->cvar && si->item->window.rect.w > 0 )
+		{
+			const int angle = (int)( si->adjustValue + ( DC->cursorx - si->xStart ) / si->item->window.rect.w * 720.0f ) % 360;
+
+			DC->setCVar( si->item->cvar, va( "%d", angle ) );
+		}
+
+		return;
+	}
+
+	if ( !target || target->window.rect.w <= 0 || target->window.rect.h <= 0 )
+	{
+		return;
+	}
+
+	// Right on the screen is -Y of the view, down is -Z.
+	model->viewPan[0] -= ( DC->cursorx - si->xStart ) / ( target->window.rect.w * 0.5f ) * model->viewDist * model->viewTan[0];
+	model->viewPan[1] -= ( DC->cursory - si->yStart ) / ( target->window.rect.h * 0.5f ) * model->viewDist * model->viewTan[1];
+	si->xStart = DC->cursorx;
+	si->yStart = DC->cursory;
+}
+
+#define MODEL_ZOOM_STEP		1.15f
+#define MODEL_ZOOM_MIN		0.5f
+#define MODEL_ZOOM_MAX		6.0f
+
+/*
+=================
+Item_ModelControl_HandleKey
+
+The wheel zooms toward the cursor: the point under the cursor stays under it.
+=================
+*/
+static qboolean Item_ModelControl_HandleKey( itemDef_t *item, int key, qboolean down )
+{
+	modelDef_t *model;
+	itemDef_t *target;
+
+	if ( !down || ( key != A_MWHEELUP && key != A_MWHEELDOWN ) || !Rect_ContainsPoint( &item->window.rect, DC->cursorx, DC->cursory ) )
+	{
+		return qfalse;
+	}
+
+	target = Item_ModelControl_Target( item, &model );
+
+	if ( !target )
+	{
+		return qfalse;
+	}
+
+	const float zoom = model->viewZoom > 0.0f ? model->viewZoom : 1.0f;
+	float next = zoom * ( key == A_MWHEELUP ? MODEL_ZOOM_STEP : 1.0f / MODEL_ZOOM_STEP );
+
+	next = next < MODEL_ZOOM_MIN ? MODEL_ZOOM_MIN : ( next > MODEL_ZOOM_MAX ? MODEL_ZOOM_MAX : next );
+
+	if ( model->viewDist > 0.0f && target->window.rect.w > 0 && target->window.rect.h > 0 )
+	{
+		const float nx = ( DC->cursorx - ( target->window.rect.x + target->window.rect.w * 0.5f ) ) / ( target->window.rect.w * 0.5f );
+		const float ny = ( DC->cursory - ( target->window.rect.y + target->window.rect.h * 0.5f ) ) / ( target->window.rect.h * 0.5f );
+		const float change = model->viewDist * zoom / next - model->viewDist;
+
+		model->viewPan[0] -= nx * model->viewTan[0] * change;
+		model->viewPan[1] -= ny * model->viewTan[1] * change;
+	}
+
+	model->viewZoom = next;
+	return qtrue;
+}
+
+/*
  =================
  Scroll_Rotate
  =================
@@ -12630,6 +12769,21 @@ void Item_StartCapture(itemDef_t *item, int key)
 				scrollInfo.adjustValue = (int)DC->getCVarValue(item->cvar);
 				captureData = &scrollInfo;
 				captureFunc = &Scroll_Rotate;
+				itemCapture = item;
+			}
+			break;
+		}
+		case ITEM_TYPE_MODEL_CONTROL:
+		{
+			if (Rect_ContainsPoint(&item->window.rect, DC->cursorx, DC->cursory) && (key == A_MOUSE1 || key == A_MOUSE2))
+			{
+				scrollInfo.scrollKey = key;
+				scrollInfo.item = item;
+				scrollInfo.xStart = DC->cursorx;
+				scrollInfo.yStart = DC->cursory;
+				scrollInfo.adjustValue = item->cvar ? (int)DC->getCVarValue(item->cvar) : 0;
+				captureData = &scrollInfo;
+				captureFunc = &Scroll_ModelControl;
 				itemCapture = item;
 			}
 			break;
@@ -13434,6 +13588,9 @@ qboolean Item_HandleKey(itemDef_t *item, int key, qboolean down)
 			break;
 		case ITEM_TYPE_SLIDER_ROTATE:
 			return Item_Slider_HandleKey_Rotate(item, key, down);
+			break;
+		case ITEM_TYPE_MODEL_CONTROL:
+			return Item_ModelControl_HandleKey(item, key, down);
 			break;
 //JLF MPMOVED
 		case ITEM_TYPE_TEXT:

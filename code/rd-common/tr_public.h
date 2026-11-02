@@ -421,6 +421,8 @@ typedef struct {
 	// Returns the table of a named extension, or NULL when the renderer does not have it.
 	// See rtx_light_edit_api.h.
 	void		*(*GetExtension)(const char *name);
+	// Editor of the cloth and hair physics (.phys). NULL when the renderer has none.
+	int			(*PhysCommand)(const char *cmd, const char *arg, char *out, int outSize);
 } refexport_t;
 
 // this is the only function actually exported at the linker level

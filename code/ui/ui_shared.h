@@ -364,7 +364,19 @@ typedef struct modelDef_s {
 //Transition extras
 	vec3_t g2mins2, g2maxs2, g2minsEffect, g2maxsEffect;
 	float fov_x2, fov_y2, fov_Effectx, fov_Effecty;
+
+	// Zoom and move of the model, set by an ITEM_TYPE_MODEL_CONTROL item. 0 zoom = 1.
+	float	viewZoom;
+	float	viewPan[2];		// left, up
+	// Set by Item_Model_Paint: the distance of the model and tan( fov / 2 ) of the view.
+	float	viewDist;
+	float	viewTan[2];
 } modelDef_t;
+
+// ITEM_TYPE_MODEL_CONTROL: the model item it controls.
+typedef struct modelControlDef_s {
+	const char	*target;	// name of the model item in the same menu
+} modelControlDef_t;
 
 #define ITF_G2VALID			0x0001					// indicates whether or not g2 instance is valid.
 #define ITF_ISCHARACTER		0x0002					// a character item, uses customRGBA

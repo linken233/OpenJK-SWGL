@@ -112,6 +112,13 @@ void UI_SetActiveMenu( const char* menuname,const char *menuID )
 		return;
 	}
 
+	if (Q_stricmp(menuname, "physEdit") == 0)
+	{
+		ui.Cvar_Set("cl_paused", "1");
+		UI_PhysMenu();
+		return;
+	}
+
 	if (Q_stricmp(menuname, "GameSelectionMenu") == 0)
 	{
 		ui.Cvar_Set("cl_paused", "1");
@@ -255,6 +262,25 @@ qboolean UI_ConsoleCommand( void )
 	if ( Q_stricmp (cmd, "ui_report") == 0 )
 	{
 		UI_Report();
+		return qtrue;
+	}
+
+	// Tests of the phys editor without the mouse.
+	if ( Q_stricmp (cmd, "ph_ui") == 0 )
+	{
+		UI_Phys_Script( UI_Argv( 1 ), NULL );
+		return qtrue;
+	}
+
+	if ( Q_stricmp (cmd, "ph_sel") == 0 )
+	{
+		UI_Phys_FeederSelection( Q_stricmp( UI_Argv( 1 ), "used" ) == 0 ? 49.0f : ( Q_stricmp( UI_Argv( 1 ), "bones" ) == 0 ? 50.0f : 48.0f ), atoi( UI_Argv( 2 ) ) );
+		return qtrue;
+	}
+
+	if ( Q_stricmp (cmd, "ph_text") == 0 )
+	{
+		UI_Phys_SetText( UI_Argv( 1 ) );
 		return qtrue;
 	}
 

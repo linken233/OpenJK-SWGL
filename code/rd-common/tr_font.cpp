@@ -2027,7 +2027,8 @@ void RE_Font_DrawString(int ox, int oy, const char *psText, const float *rgba, c
 			break;
 		case 32:						// Space
 			pLetter = curfont->GetLetter(' ');
-			fx += curfont->mbRoundCalcs ? Round(pLetter->horizAdvance * fScale) : pLetter->horizAdvance * fScale;
+			// The aspect correction matches RE_Font_StrLenPixels.
+			fx += curfont->mbRoundCalcs ? Round(pLetter->horizAdvance * fScale * fAspectCorrection) : pLetter->horizAdvance * fScale * fAspectCorrection;
 			bNextTextWouldOverflow = ( iMaxPixelWidth != -1 && ((fx-fox) > (float)iMaxPixelWidth) ) ? qtrue : qfalse; // yeuch
 			break;
 		case '_':	// has a special word-break usage if in Thai (and followed by a thai char), and should not be displayed, else treat as normal

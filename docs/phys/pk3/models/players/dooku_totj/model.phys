@@ -1,0 +1,17 @@
+cloth cape
+{
+	surfaces	torso_cape
+	pin			gradient thoracic -z 2 22
+	reach		26 38
+	collide		humanoid
+}
+
+hair hair
+{
+	surfaces	head_hair
+	pin			gradient cranium -z -6 0
+	mode		lag
+	hold		0.45
+	bounce		0.55
+	reach		4
+}

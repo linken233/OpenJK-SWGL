@@ -1324,6 +1324,33 @@ static void R_CreateDefaultImage( void ) {
 R_CreateBuiltinImages
 ==================
 */
+#define PHYS_DOT_SIZE	64
+
+// The soft round dot of the phys editor: white, alpha 1 in the middle and 0 at the border. A line uses
+// the middle row of it, so it is soft across.
+static void R_CreatePhysDotImage( void )
+{
+	static byte	data[PHYS_DOT_SIZE][PHYS_DOT_SIZE][4];
+	const float	center = ( PHYS_DOT_SIZE - 1 ) * 0.5f;
+
+	for ( int y = 0; y < PHYS_DOT_SIZE; y++ )
+	{
+		for ( int x = 0; x < PHYS_DOT_SIZE; x++ )
+		{
+			const float dx = ( x - center ) / center, dy = ( y - center ) / center;
+			float a = ( 1.0f - sqrtf( dx * dx + dy * dy ) ) / 0.45f;
+
+			a = a < 0.0f ? 0.0f : ( a > 1.0f ? 1.0f : a );
+			a = a * a * ( 3.0f - 2.0f * a );
+
+			data[y][x][0] = data[y][x][1] = data[y][x][2] = 255;
+			data[y][x][3] = (byte)( a * 255.0f );
+		}
+	}
+
+	tr.physDotImage = R_CreateImage( "*physdot", (byte *)data, PHYS_DOT_SIZE, PHYS_DOT_SIZE, GL_RGBA, qtrue, qfalse, qfalse, GL_CLAMP );
+}
+
 void R_UpdateSaveGameImage(const char *filename);
 
 void R_CreateBuiltinImages( void ) {
@@ -1416,6 +1443,7 @@ void R_CreateBuiltinImages( void ) {
 
 	R_CreateDlightImage();
 	R_CreateFogImage();
+	R_CreatePhysDotImage();
 }
 
 

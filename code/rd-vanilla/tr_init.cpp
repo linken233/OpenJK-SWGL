@@ -1523,6 +1523,7 @@ static consoleCommand_t	commands[] = {
 	{ "r_fogDistance",		R_FogDistance_f },
 	{ "r_fogColor",			R_FogColor_f },
 	{ "r_reloadfonts",		R_ReloadFonts_f },
+	{ "ph_reload",			G2Phys_Reload_f },
 };
 
 static const size_t numCommands = ARRAY_LEN( commands );
@@ -1725,6 +1726,8 @@ Ghoul2 Insert End
 
 	ri.Cvar_CheckRange( r_screenshotJpegQuality, 10, 100, qtrue );
 
+	G2Phys_Init();
+
 	for ( size_t i = 0; i < numCommands; i++ )
 		ri.Cmd_AddCommand( commands[i].cmd, commands[i].func );
 }
@@ -1866,6 +1869,7 @@ void RE_Shutdown( qboolean destroyWindow, qboolean restarting ) {
 
 	R_ShutdownWorldEffects();
 	R_ShutdownFonts();
+	G2Phys_Shutdown();
 	if ( tr.registered )
 	{
 		R_IssuePendingRenderCommands();
@@ -2229,6 +2233,7 @@ extern "C" Q_EXPORT refexport_t* QDECL GetRefAPI ( int apiVersion, refimport_t *
 
 	re.CaptureNextFrame = RE_CaptureNextFrame;
 	re.GetExtension = RE_GetExtension;
+	re.PhysCommand = G2Phys_UICommand;
 
 	//Swap_Init();
 

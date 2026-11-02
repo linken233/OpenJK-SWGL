@@ -1,0 +1,22 @@
+// Elween (Sith): hair and sleeves, colliders fitted to the model
+hair hair
+{
+	surfaces	head_hair head_hair_2
+	pin			gradient cranium -z -4 1
+	mode		lag
+	hold		0.45
+	bounce		0.55
+	reach		4
+	collide		model
+}
+
+// The sleeves of the Sith skin (l_armc, r_armc): fixed at the shoulder, free along the arm
+cloth sleeves
+{
+	surfaces	l_armc r_armc
+	pin			gradient thoracic -z 0 14
+	detail		1.3333
+	reach		5 7
+	air			0.2
+	collide		model
+}

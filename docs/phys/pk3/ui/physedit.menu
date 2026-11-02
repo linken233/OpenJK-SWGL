@@ -1,0 +1,871 @@
+///----------------------------------------------------------------------------------------------
+/// Phys editor: creates and edits the .phys file of the player model in game.
+/// Open it with the console command ph_menu. Logic: code/ui/ui_phys.cpp
+///----------------------------------------------------------------------------------------------
+{
+	menuDef
+	{
+		name					"physEdit"
+		fullScreen				1
+		rect					0 0 640 480
+		visible					1
+		focusColor				1 1 1 1
+
+		onOpen
+		{
+			uiScript			physOpen
+			hide				usedTab
+			hide				boneTab
+			show				unusedTab
+			hide				colliderTab
+			hide				helpTab
+			show				settingsTab
+		}
+
+		onESC
+		{
+			uiScript			physRevert
+			uiScript			physClearHighlight
+			uiScript			physClose
+			close				all
+			uiScript			closeingame
+		}
+
+///----------------------------------------------------------------------------------------------
+/// Background, title and preview (the preview is painted first, so it stays behind the panels)
+///----------------------------------------------------------------------------------------------
+		itemDef
+		{
+			name				background
+			style				WINDOW_STYLE_SHADER
+			rect				0 0 640 480
+			background			"gfx/menus/characterbackground"
+			forecolor			1 1 1 1
+			visible				1
+			decoration
+		}
+
+		itemDef
+		{
+			name				character
+			type				ITEM_TYPE_MODEL
+			rect				182 36 270 370
+			model_g2anim		"BOTH_STAND1"
+			asset_model			"ui_char_model"
+			model_angle			180
+			model_g2mins		-20 -15 -10
+			model_g2maxs		20 15 45
+			model_rotation		0
+			model_fovx			50
+			model_fovy			50
+			cvar				ui_char_model_angle
+			isCharacter			1
+			visible				1
+			decoration
+		}
+
+		itemDef
+		{
+			name				character_control
+			type				ITEM_TYPE_MODEL_CONTROL
+			rect				182 36 270 370
+			modelTarget			character
+			cvar				ui_char_model_angle
+			visible				1
+		}
+
+		itemDef
+		{
+			name				titleBack
+			style				WINDOW_STYLE_SHADER
+			background			"gfx/menu/w_bg_np.tga"
+			backgroundStyle		BACKGROUND_NINE_PATCH_STRETCH
+			backgroundOffset	4 3 3 4
+			rect				11 6 618 26
+			forecolor			1 1 1 1
+			visible				1
+			decoration
+		}
+
+		itemDef
+		{
+			name				title
+			text				"PHYS EDITOR"
+			style				WINDOW_STYLE_EMPTY
+			rect				11 6 618 26
+			font				3
+			textscale			1
+			textalign			ITEM_ALIGN_CENTER
+			textalignx			309
+			textaligny			1
+			forecolor			0.87 0.61 0 1
+			visible				1
+			decoration
+		}
+
+///----------------------------------------------------------------------------------------------
+/// Left: surfaces, groups and bones
+///----------------------------------------------------------------------------------------------
+		itemDef
+		{
+			name				tabUnused
+			text				"Unused"
+			type				ITEM_TYPE_BUTTON
+			style				WINDOW_STYLE_SHADER
+			background			"gfx/menu/w_btn_bg.tga"
+			rect				11 38 56 22
+			font				2
+			textscale			0.7
+			textalign			ITEM_ALIGN_CENTER
+			textalignx			28
+			textaligny			3
+			forecolor			0.89 0.45 0 1
+			visible				1
+			action
+			{
+				play			"sound/interface/button1.wav"
+				uiScript		physClearHighlight
+				hide			usedTab
+				hide			boneTab
+				show			unusedTab
+			}
+		}
+
+		itemDef
+		{
+			name				tabUsed
+			text				"Used"
+			type				ITEM_TYPE_BUTTON
+			style				WINDOW_STYLE_SHADER
+			background			"gfx/menu/w_btn_bg.tga"
+			rect				68 38 56 22
+			font				2
+			textscale			0.7
+			textalign			ITEM_ALIGN_CENTER
+			textalignx			28
+			textaligny			3
+			forecolor			0.89 0.45 0 1
+			visible				1
+			action
+			{
+				play			"sound/interface/button1.wav"
+				uiScript		physClearHighlight
+				hide			unusedTab
+				hide			boneTab
+				show			usedTab
+			}
+		}
+
+		itemDef
+		{
+			name				tabBones
+			text				"Bones"
+			type				ITEM_TYPE_BUTTON
+			style				WINDOW_STYLE_SHADER
+			background			"gfx/menu/w_btn_bg.tga"
+			rect				125 38 56 22
+			font				2
+			textscale			0.7
+			textalign			ITEM_ALIGN_CENTER
+			textalignx			28
+			textaligny			3
+			forecolor			0.89 0.45 0 1
+			visible				1
+			action
+			{
+				play			"sound/interface/button1.wav"
+				uiScript		physClearHighlight
+				hide			unusedTab
+				hide			usedTab
+				show			boneTab
+				uiScript		physBonesOn
+			}
+		}
+
+		// Unused surfaces of the model
+		itemDef
+		{
+			name				listUnused
+			group				unusedTab
+			type				ITEM_TYPE_LISTBOX
+			feeder				48		///FEEDER_PHYS_UNUSED
+			style				WINDOW_STYLE_FILLED
+			rect				11 64 170 330
+			elementheight		16
+			font				2
+			textscale			0.7
+			border				1
+			bordersize			1
+			backcolor			.04 .02 0 .8
+			bordercolor			1 .682 0 .6
+			outlinecolor		1 .682 0 .35
+			forecolor			1 .682 0 1
+			descText			"The surfaces of the model without a group"
+			visible				1
+			action
+			{
+				play			"sound/interface/button1.wav"
+			}
+		}
+
+		itemDef
+		{
+			name				buttonAdd
+			group				unusedTab
+			text				"Add"
+			type				ITEM_TYPE_BUTTON
+			style				WINDOW_STYLE_SHADER
+			background			"gfx/menu/w_btn_bg.tga"
+			rect				11 398 170 26
+			font				2
+			textscale			0.9
+			textalign			ITEM_ALIGN_CENTER
+			textalignx			85
+			textaligny			4
+			forecolor			0.89 0.45 0 1
+			descText			"Makes a group of the selected surface. It appears in Used."
+			visible				1
+			action
+			{
+				play			"sound/interface/button1.wav"
+				uiScript		physAdd
+			}
+		}
+
+		// Groups of the file
+		itemDef
+		{
+			name				listUsed
+			group				usedTab
+			type				ITEM_TYPE_LISTBOX
+			feeder				49		///FEEDER_PHYS_USED
+			style				WINDOW_STYLE_FILLED
+			rect				11 64 170 330
+			elementheight		16
+			font				2
+			textscale			0.7
+			border				1
+			bordersize			1
+			backcolor			.04 .02 0 .8
+			bordercolor			1 .682 0 .6
+			outlinecolor		1 .682 0 .35
+			forecolor			1 .682 0 1
+			descText			"The groups of the .phys file. Select one to edit it."
+			visible				0
+			action
+			{
+				play			"sound/interface/button1.wav"
+			}
+		}
+
+		itemDef
+		{
+			name				buttonRemove
+			group				usedTab
+			text				"Remove"
+			type				ITEM_TYPE_BUTTON
+			style				WINDOW_STYLE_SHADER
+			background			"gfx/menu/w_btn_bg.tga"
+			rect				11 398 170 26
+			font				2
+			textscale			0.9
+			textalign			ITEM_ALIGN_CENTER
+			textalignx			85
+			textaligny			4
+			forecolor			0.89 0.45 0 1
+			descText			"Removes the selected group from the file"
+			visible				0
+			action
+			{
+				play			"sound/interface/button1.wav"
+				uiScript		physRemove
+			}
+		}
+
+		// Bones of the skeleton
+		itemDef
+		{
+			name				listBones
+			group				boneTab
+			type				ITEM_TYPE_LISTBOX
+			feeder				50		///FEEDER_PHYS_BONES
+			style				WINDOW_STYLE_FILLED
+			rect				11 64 170 330
+			elementheight		16
+			font				2
+			textscale			0.7
+			border				1
+			bordersize			1
+			backcolor			.04 .02 0 .8
+			bordercolor			1 .682 0 .6
+			outlinecolor		1 .682 0 .35
+			forecolor			1 .682 0 1
+			descText			"The bones of the skeleton. The indent shows the hierarchy."
+			visible				0
+			action
+			{
+				play			"sound/interface/button1.wav"
+			}
+		}
+
+		itemDef
+		{
+			name				buttonInsertBone
+			group				boneTab
+			text				"Insert"
+			type				ITEM_TYPE_BUTTON
+			style				WINDOW_STYLE_SHADER
+			background			"gfx/menu/w_btn_bg.tga"
+			rect				11 398 170 26
+			font				2
+			textscale			0.9
+			textalign			ITEM_ALIGN_CENTER
+			textalignx			85
+			textaligny			4
+			forecolor			0.89 0.45 0 1
+			descText			"Inserts the name of the selected bone in the text, at the cursor"
+			visible				0
+			action
+			{
+				play			"sound/interface/button1.wav"
+				uiScript		physInsertBone
+			}
+		}
+
+///----------------------------------------------------------------------------------------------
+/// Preview controls
+///----------------------------------------------------------------------------------------------
+		itemDef
+		{
+			name				previewAnim
+			text				"Anim:"
+			type				ITEM_TYPE_MULTI
+			style				WINDOW_STYLE_EMPTY
+			rect				186 410 118 18
+			font				2
+			textscale			0.75
+			textalign			ITEM_ALIGN_LEFT
+			textalignx			0
+			textaligny			0
+			forecolor			1 .682 0 1
+			cvar				"ui_ph_anim"
+			cvarFloatList
+			{
+				"Stand"		0
+				"Walk"		1
+				"Run"		2
+				"Run back"	3
+				"Jump"		4
+			}
+			descText			"Animation of the preview"
+			visible				1
+			action
+			{
+				play			"sound/interface/button1.wav"
+			}
+		}
+
+		itemDef
+		{
+			name				previewSpin
+			text				"Turn:"
+			type				ITEM_TYPE_MULTI
+			style				WINDOW_STYLE_EMPTY
+			rect				306 410 88 18
+			font				2
+			textscale			0.75
+			textalign			ITEM_ALIGN_LEFT
+			textalignx			0
+			textaligny			0
+			forecolor			1 .682 0 1
+			cvar				"ui_ph_spin"
+			cvarFloatList
+			{
+				"Off"		0
+				"Slow"		1
+				"Fast"		2
+			}
+			descText			"The preview turns, to see the cloth follow the turn"
+			visible				1
+			action
+			{
+				play			"sound/interface/button1.wav"
+			}
+		}
+
+		itemDef
+		{
+			name				buttonResetView
+			text				"Reset view"
+			type				ITEM_TYPE_BUTTON
+			style				WINDOW_STYLE_SHADER
+			background			"gfx/menu/w_btn_bg.tga"
+			rect				396 409 56 20
+			font				2
+			textscale			0.5
+			textalign			ITEM_ALIGN_CENTER
+			textalignx			28
+			textaligny			4
+			forecolor			0.89 0.45 0 1
+			descText			"On the preview: left button turns, right button moves, mouse wheel zooms. This button resets the zoom and the move."
+			visible				1
+			action
+			{
+				play			"sound/interface/button1.wav"
+				uiScript		physResetView
+			}
+		}
+
+///----------------------------------------------------------------------------------------------
+/// Right: text of the group, then the Settings, Colliders and Help tabs
+///----------------------------------------------------------------------------------------------
+		itemDef
+		{
+			name				groupText
+			type				ITEM_TYPE_OWNERDRAW
+			ownerdraw			4000
+			rect				458 38 171 118
+			font				2
+			textscale			0.55
+			forecolor			1 .9 .6 1
+			descText			"Text of the group. Click, then type. Refresh applies it to the model."
+			visible				1
+		}
+
+		itemDef
+		{
+			name				buttonRefresh
+			text				"Refresh"
+			type				ITEM_TYPE_BUTTON
+			style				WINDOW_STYLE_SHADER
+			background			"gfx/menu/w_btn_bg.tga"
+			rect				458 160 171 20
+			font				2
+			textscale			0.8
+			textalign			ITEM_ALIGN_CENTER
+			textalignx			85
+			textaligny			2
+			forecolor			0.89 0.45 0 1
+			descText			"Applies the text to the model"
+			visible				1
+			action
+			{
+				play			"sound/interface/button1.wav"
+				uiScript		physRefresh
+			}
+		}
+
+		itemDef
+		{
+			name				tabSettings
+			text				"Settings"
+			type				ITEM_TYPE_BUTTON
+			style				WINDOW_STYLE_SHADER
+			background			"gfx/menu/w_btn_bg.tga"
+			rect				458 184 43 20
+			font				2
+			textscale			0.55
+			textalign			ITEM_ALIGN_CENTER
+			textalignx			21
+			textaligny			3
+			forecolor			0.89 0.45 0 1
+			visible				1
+			action
+			{
+				play			"sound/interface/button1.wav"
+				hide			pinTab
+				hide			colliderTab
+				hide			helpTab
+				show			settingsTab
+			}
+		}
+
+		itemDef
+		{
+			name				tabPins
+			text				"Pins"
+			type				ITEM_TYPE_BUTTON
+			style				WINDOW_STYLE_SHADER
+			background			"gfx/menu/w_btn_bg.tga"
+			rect				501 184 43 20
+			font				2
+			textscale			0.55
+			textalign			ITEM_ALIGN_CENTER
+			textalignx			21
+			textaligny			3
+			forecolor			0.89 0.45 0 1
+			visible				1
+			action
+			{
+				play			"sound/interface/button1.wav"
+				hide			settingsTab
+				hide			colliderTab
+				hide			helpTab
+				show			pinTab
+			}
+		}
+
+		itemDef
+		{
+			name				tabColliders
+			text				"Colliders"
+			type				ITEM_TYPE_BUTTON
+			style				WINDOW_STYLE_SHADER
+			background			"gfx/menu/w_btn_bg.tga"
+			rect				544 184 43 20
+			font				2
+			textscale			0.55
+			textalign			ITEM_ALIGN_CENTER
+			textalignx			21
+			textaligny			3
+			forecolor			0.89 0.45 0 1
+			visible				1
+			action
+			{
+				play			"sound/interface/button1.wav"
+				hide			settingsTab
+				hide			pinTab
+				hide			helpTab
+				show			colliderTab
+			}
+		}
+
+		itemDef
+		{
+			name				tabHelp
+			text				"Help"
+			type				ITEM_TYPE_BUTTON
+			style				WINDOW_STYLE_SHADER
+			background			"gfx/menu/w_btn_bg.tga"
+			rect				587 184 42 20
+			font				2
+			textscale			0.55
+			textalign			ITEM_ALIGN_CENTER
+			textalignx			21
+			textaligny			3
+			forecolor			0.89 0.45 0 1
+			visible				1
+			action
+			{
+				play			"sound/interface/button1.wav"
+				hide			settingsTab
+				hide			pinTab
+				hide			colliderTab
+				show			helpTab
+			}
+		}
+
+		itemDef
+		{
+			name				tabPanelBack
+			style				WINDOW_STYLE_FILLED
+			rect				458 206 171 232
+			backcolor			.04 .02 0 .8
+			border				1
+			bordersize			1
+			bordercolor			1 .682 0 .6
+			visible				1
+			decoration
+		}
+
+		// Settings: one slider per value of the group
+		itemDef
+		{
+			name				settings
+			group				settingsTab
+			type				ITEM_TYPE_OWNERDRAW
+			ownerdraw			4003
+			rect				460 208 167 228
+			font				2
+			textscale			0.5
+			forecolor			1 .682 0 1
+			descText			"Drag a bar or use the mouse wheel. The change applies at once."
+			visible				1
+		}
+
+		// Pins: what the preview shows, the pin rules of the text, and the sliders of the selected rule
+		itemDef
+		{
+			name				showPins
+			group				pinTab
+			text				"Show:"
+			type				ITEM_TYPE_MULTI
+			style				WINDOW_STYLE_EMPTY
+			rect				462 208 165 16
+			font				2
+			textscale			0.65
+			textalign			ITEM_ALIGN_LEFT
+			textalignx			0
+			textaligny			0
+			forecolor			1 .682 0 1
+			cvar				"ui_ph_pins"
+			cvarFloatList
+			{
+				"Off"				0
+				"Pins"				1
+				"Pins + particles"	2
+				"All + reach"		3
+			}
+			descText			"Pins: red ring = fixed, green ring = free. Particles: red fixed to green free. Reach: blue limits."
+			visible				0
+			action
+			{
+				play			"sound/interface/button1.wav"
+			}
+		}
+
+		itemDef
+		{
+			name				listPins
+			group				pinTab
+			type				ITEM_TYPE_LISTBOX
+			feeder				52		///FEEDER_PHYS_PINS
+			style				WINDOW_STYLE_FILLED
+			rect				460 226 167 100
+			elementheight		14
+			font				2
+			textscale			0.55
+			border				1
+			bordersize			1
+			backcolor			0 0 0 .5
+			bordercolor			1 .682 0 .4
+			outlinecolor		1 .682 0 .35
+			forecolor			1 .682 0 1
+			descText			"The pin lines of the text. The selected rule is bright on the preview."
+			visible				0
+			action
+			{
+				play			"sound/interface/button1.wav"
+			}
+		}
+
+		itemDef
+		{
+			name				pinSettings
+			group				pinTab
+			type				ITEM_TYPE_OWNERDRAW
+			ownerdraw			4005
+			rect				460 330 167 106
+			font				2
+			textscale			0.5
+			forecolor			1 .682 0 1
+			descText			"The fixed and the free value of the selected pin rule"
+			visible				0
+		}
+
+		// Colliders
+		itemDef
+		{
+			name				showColliders
+			group				colliderTab
+			text				"Show:"
+			type				ITEM_TYPE_MULTI
+			style				WINDOW_STYLE_EMPTY
+			rect				462 208 165 16
+			font				2
+			textscale			0.65
+			textalign			ITEM_ALIGN_LEFT
+			textalignx			0
+			textaligny			0
+			forecolor			1 .682 0 1
+			cvar				"ui_ph_colliders"
+			cvarFloatList
+			{
+				"Off"		0
+				"On"		1
+			}
+			descText			"Shows the colliders of the selected group on the preview. Orange: body, yellow: fit, green: line, cyan: the selected collider."
+			visible				0
+			action
+			{
+				play			"sound/interface/button1.wav"
+			}
+		}
+
+		itemDef
+		{
+			name				listColliders
+			group				colliderTab
+			type				ITEM_TYPE_LISTBOX
+			feeder				51		///FEEDER_PHYS_COLLIDERS
+			style				WINDOW_STYLE_FILLED
+			rect				460 226 167 68
+			elementheight		14
+			font				2
+			textscale			0.55
+			border				1
+			bordersize			1
+			backcolor			0 0 0 .5
+			bordercolor			1 .682 0 .4
+			outlinecolor		1 .682 0 .35
+			forecolor			1 .682 0 1
+			descText			"body = collide humanoid, fit = collide model, line = a collide line of the text"
+			visible				0
+			action
+			{
+				play			"sound/interface/button1.wav"
+			}
+		}
+
+		itemDef
+		{
+			name				buttonCollToggle
+			group				colliderTab
+			text				"On / Off"
+			type				ITEM_TYPE_BUTTON
+			style				WINDOW_STYLE_SHADER
+			background			"gfx/menu/w_btn_bg.tga"
+			rect				460 296 167 20
+			font				2
+			textscale			0.8
+			textalign			ITEM_ALIGN_CENTER
+			textalignx			83
+			textaligny			2
+			forecolor			0.89 0.45 0 1
+			descText			"Switches the selected collider on or off"
+			visible				0
+			action
+			{
+				play			"sound/interface/button1.wav"
+				uiScript		physCollToggle
+			}
+		}
+
+		itemDef
+		{
+			name				colliderSettings
+			group				colliderTab
+			type				ITEM_TYPE_OWNERDRAW
+			ownerdraw			4004
+			rect				460 320 167 116
+			font				2
+			textscale			0.5
+			forecolor			1 .682 0 1
+			descText			"Radius of the selected collider and the size of every body collider. A box: its sizes, round and offset"
+			visible				0
+		}
+
+		// Help
+		itemDef
+		{
+			name				help
+			group				helpTab
+			type				ITEM_TYPE_OWNERDRAW
+			ownerdraw			4001
+			rect				460 208 167 228
+			font				2
+			textscale			0.5
+			forecolor			.8 .8 .8 1
+			descText			"Mouse wheel scrolls the help"
+			visible				0
+		}
+
+///----------------------------------------------------------------------------------------------
+/// Bottom: status, Back and Apply
+///----------------------------------------------------------------------------------------------
+		itemDef
+		{
+			name				status
+			type				ITEM_TYPE_OWNERDRAW
+			ownerdraw			4002
+			rect				110 452 420 16
+			font				2
+			textscale			0.7
+			forecolor			1 1 1 1
+			visible				1
+			decoration
+		}
+
+		itemDef
+		{
+			name				buttonBack
+			text				"Back"
+			type				ITEM_TYPE_BUTTON
+			style				WINDOW_STYLE_EMPTY
+			rect				11 445 90 29
+			font				3
+			textscale			1
+			textalign			ITEM_ALIGN_CENTER
+			textalignx			45
+			textaligny			1
+			textstyle			3
+			forecolor			1 .682 0 1
+			descText			"Closes and drops the changes"
+			visible				1
+			action
+			{
+				play			"sound/interface/esc.wav"
+				uiScript		physRevert
+				uiScript		physClearHighlight
+				uiScript		physClose
+				close			all
+				uiScript		closeingame
+			}
+			mouseEnter
+			{
+				show			buttonBack_glow
+			}
+			mouseExit
+			{
+				hide			buttonBack_glow
+			}
+		}
+
+		itemDef
+		{
+			name				buttonBack_glow
+			style				WINDOW_STYLE_SHADER
+			rect				11 445 90 29
+			background			"gfx/menus/menu_buttonback"
+			forecolor			1 1 1 1
+			visible				0
+			decoration
+		}
+
+		itemDef
+		{
+			name				buttonApply
+			text				"Apply"
+			type				ITEM_TYPE_BUTTON
+			style				WINDOW_STYLE_EMPTY
+			rect				539 445 90 29
+			font				3
+			textscale			1
+			textalign			ITEM_ALIGN_CENTER
+			textalignx			45
+			textaligny			1
+			textstyle			3
+			forecolor			1 .682 0 1
+			descText			"Writes the .phys file and closes"
+			visible				1
+			action
+			{
+				play			"sound/interface/button1.wav"
+				uiScript		physSave
+				uiScript		physClearHighlight
+				uiScript		physClose
+				close			all
+				uiScript		closeingame
+			}
+			mouseEnter
+			{
+				show			buttonApply_glow
+			}
+			mouseExit
+			{
+				hide			buttonApply_glow
+			}
+		}
+
+		itemDef
+		{
+			name				buttonApply_glow
+			style				WINDOW_STYLE_SHADER
+			rect				539 445 90 29
+			background			"gfx/menus/menu_buttonback"
+			forecolor			1 1 1 1
+			visible				0
+			decoration
+		}
+	}
+}
