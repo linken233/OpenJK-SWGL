@@ -8359,6 +8359,8 @@ static void PM_Footsteps( void )
 				}
 			}
 			else if ( (pm->ps->weapon == WP_SABER
+				// A blade that retracts is off: no saber stance (ATTR_NO_TWIRL has no putaway anim).
+				&&pm->ps->SaberActive()
 				&&pm->ps->SaberLength()>0
 				&&!pm->ps->saberInFlight
 				&&!PM_SaberDrawPutawayAnim( pm->ps->legsAnim )) )
