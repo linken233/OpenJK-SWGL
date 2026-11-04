@@ -2187,6 +2187,8 @@ void R_Init( void ) {
 
 	R_InitWeatherSystem();
 
+	R_PipRendererInit();
+
 #if defined(_DEBUG)
 	GLenum err = qglGetError();
 	if ( err != GL_NO_ERROR )
@@ -2217,6 +2219,8 @@ void RE_Shutdown( qboolean destroyWindow, qboolean restarting ) {
 	qglFlush();
 
 	R_IssuePendingRenderCommands();
+
+	R_PipRendererShutdown();
 
 	R_ShutdownBackEndFrameData();
 

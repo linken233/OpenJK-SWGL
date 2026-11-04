@@ -472,6 +472,26 @@ void RE_BeginScene(const refdef_t *fd)
 	tr.refdef.numPolys = r_numpolys - r_firstScenePoly;
 	tr.refdef.polys = &backEndData->polys[r_firstScenePoly];
 
+#ifdef REND2_SP
+	// SWGL PiP: make the PiP scene a true mirror of the main render.  The main
+	// scene already consumed the frame's entity/dlight/poly lists (each scene
+	// window only covers what was added after the previous scene finished), so
+	// for the PiP scene widen all three windows back to the whole frame, before
+	// the views (and their shadowmaps) are gathered below.  Only the camera
+	// differs from the main render.
+	if (fd->pipRender)
+	{
+		tr.refdef.num_entities = r_numentities;
+		tr.refdef.entities = backEndData->entities;
+
+		tr.refdef.num_dlights = r_numdlights;
+		tr.refdef.dlights = backEndData->dlights;
+
+		tr.refdef.numPolys = r_numpolys;
+		tr.refdef.polys = backEndData->polys;
+	}
+#endif
+
 	tr.refdef.num_pshadows = 0;
 	tr.refdef.pshadows = &backEndData->pshadows[0];
 
@@ -562,6 +582,142 @@ void RE_RenderScene( const refdef_t *fd )
 
 	RE_BeginScene(fd);
 
+#ifdef REND2_SP
+	// SWGL PiP: the second (real first-person) view goes through the normal
+	// pipeline, only its main view lands in the PiP framebuffer.
+	if ( fd->pipRender )
+	{
+		int			i;
+		qboolean	direct;
+		FBO_t	   *postFbo;
+		FBO_t	   *depthSaveRender, *depthSaveResolve;
+
+		if ( !Pip_ShouldRender() ) {
+			RE_EndScene();
+			return;
+		}
+
+		// SWGL PiP perf lever: render the scene only once every r_pip_rate
+		// frames.  On a skipped one the SDL window just keeps showing the last
+		// image it got, so bail out here before any cost at all and leave the
+		// present command alone as well.
+		if ( Pip_RateSkip() ) {
+			Pip_MarkSkipPresent();
+			RE_EndScene();
+			return;
+		}
+
+		// SWGL PiP perf lever: with r_pip_direct the main view renders straight
+		// into the window framebuffer at its native size (quarter the pixels)
+		// and the whole postprocess chain is skipped (its buffers are pinned to
+		// the main resolution).  The global chain and depth buffers are then
+		// never touched, so the chain target, the final blit and the depth
+		// save/restore all fall away; with r_hdr on, skipping the chain means no
+		// tonemap for the pip only - accepted, it is only a guide window.
+		direct = Pip_Direct() ? qtrue : qfalse;
+
+		postFbo = NULL;
+		depthSaveRender = NULL;
+		depthSaveResolve = NULL;
+
+		if ( !direct ) {
+			// the post chain writes its final image here; without it the chain would
+			// draw onto the main window's backbuffer, so keep that scene out entirely
+			postFbo = Pip_PostProcessFbo();
+			if ( !postFbo ) {
+				RE_EndScene();
+				return;
+			}
+
+			// the pip scene overwrites the renderer's global depth buffers with the
+			// FP camera's depth, and depth-based Reshade effects read whatever depth
+			// is visible at frame end. Save the main window camera's depth (still
+			// sitting in those buffers right now) and restore it further below.
+			depthSaveRender = Pip_DepthSaveFbo( 0 );
+			depthSaveResolve = tr.msaaResolveFbo ? Pip_DepthSaveFbo( 1 ) : NULL;
+
+			if ( depthSaveRender ) {
+				FBO_FastBlit( tr.renderFbo, NULL, depthSaveRender, NULL, GL_DEPTH_BUFFER_BIT, GL_NEAREST );
+			}
+			if ( depthSaveResolve ) {
+				FBO_FastBlit( tr.msaaResolveFbo, NULL, depthSaveResolve, NULL, GL_DEPTH_BUFFER_BIT, GL_NEAREST );
+			}
+		}
+
+		// SWGL PiP: the PiP window is only a guide, so its quality is lowered:
+		// the expensive chain steps (bloom pyramid, SMAA/TAA resolve, SSAO) are
+		// switched off for this scene only, using the engine's normal
+		// feature-off code paths.  The cvars are restored right below.
+		int		saveGlow = r_dynamicGlow->integer;
+		int		saveSmaa = r_smaa->integer;
+		int		saveSsao = r_ssao->integer;
+
+		r_dynamicGlow->integer = 0;
+		r_smaa->integer = 0;
+		r_ssao->integer = 0;
+
+		// Only the main view is run here.  The shadow resources (dlight cubemaps,
+		// pshadow maps, sun cascades) and the sky portal are global and the main
+		// scene already built them this frame from the very same lights/entities
+		// lists the PiP scene mirrors, so rendering those views again for the PiP
+		// camera is pure duplicated cost.  The sun cascades stay snapped to the
+		// main camera: a slight shadow alignment difference in the PiP only.
+		for ( i = 0; i < tr.numCachedViewParms; i++ )
+		{
+			if ( tr.cachedViewParms[i].viewParmType != VPT_MAIN )
+			{
+				continue;
+			}
+
+			// gather applied the TAA projection jitter when r_smaa == 2; with
+			// the resolve skipped, undo it so the image is not shifted
+			tr.cachedViewParms[i].projectionMatrix[2] = 0.0f;
+			tr.cachedViewParms[i].projectionMatrix[6] = 0.0f;
+
+			if ( direct ) {
+				// direct mode: the view renders over the whole window framebuffer
+				tr.cachedViewParms[i].targetFbo = Pip_Fbo();
+				tr.cachedViewParms[i].targetFboLayer = 0;
+				tr.cachedViewParms[i].viewportX = 0;
+				tr.cachedViewParms[i].viewportY = 0;
+				tr.cachedViewParms[i].viewportWidth = Pip_Width();
+				tr.cachedViewParms[i].viewportHeight = Pip_Height();
+			}
+
+			tr.refdef.numDrawSurfs = 0;
+			R_RenderView( &tr.cachedViewParms[i] );
+			R_IssuePendingRenderCommands();
+		}
+
+		// then run the postprocess chain over the pip content that now sits in the
+		// global chain buffers (lighter chain, see the cvar overrides above),
+		// sending the final image to the pip postprocess FBO instead of the
+		// backbuffer, and scale it down into the window framebuffer.  In direct
+		// mode the view already landed there at native size, nothing to run.
+		if ( !direct ) {
+			R_AddPostProcessCmd( postFbo );
+			R_IssuePendingRenderCommands();
+			FBO_FastBlit( postFbo, NULL, Pip_Fbo(), NULL, GL_COLOR_BUFFER_BIT, GL_LINEAR );
+		}
+
+		r_dynamicGlow->integer = saveGlow;
+		r_smaa->integer = saveSmaa;
+		r_ssao->integer = saveSsao;
+
+		if ( depthSaveRender ) {
+			FBO_FastBlit( depthSaveRender, NULL, tr.renderFbo, NULL, GL_DEPTH_BUFFER_BIT, GL_NEAREST );
+		}
+		if ( depthSaveResolve ) {
+			FBO_FastBlit( depthSaveResolve, NULL, tr.msaaResolveFbo, NULL, GL_DEPTH_BUFFER_BIT, GL_NEAREST );
+		}
+
+		Pip_MarkContentDirty();
+
+		RE_EndScene();
+		return;
+	}
+#endif
+
 	// Store skyportal info and don't render yet
 	if (tr.refdef.rdflags & RDF_SKYBOXPORTAL)
 	{
@@ -619,7 +775,7 @@ void RE_RenderScene( const refdef_t *fd )
 	{
 		R_PushDebugGroup(AL_VIEW, "Post processing");
 		qhandle_t timer = R_BeginTimedBlockCmd( "Post processing" );
-		R_AddPostProcessCmd();
+		R_AddPostProcessCmd(NULL);
 		R_EndTimedBlockCmd( timer );
 	}
 

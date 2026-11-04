@@ -108,6 +108,8 @@ void CG_PositionRotatedEntityOnTag( refEntity_t *entity, const refEntity_t *pare
 
 
 
+qboolean	cg_pipAddPass;		// see cg_local.h (PiP replay pass guard)
+
 /*
 ==========================================================================
 
@@ -166,8 +168,9 @@ static void CG_EntityEffects( centity_t *cent ) {
 	vec3_t v3Origin;
 	VectorCopy(*CG_SetEntitySoundPosition( cent ),v3Origin);
 
-	// add loop sound
-	if ( cent->currentState.loopSound )
+	// add loop sound (skipped during the PiP replay pass: sounds are a per-frame
+	// cgame accumulator, re-adding them here would double their volume)
+	if ( cent->currentState.loopSound && !cg_pipAddPass )
 	{
 		soundChannel_t chan = CHAN_AUTO;
 

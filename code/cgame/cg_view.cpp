@@ -40,6 +40,18 @@ float cg_zoomFov;
 
 extern cvar_t* static_cam;
 
+// SWGL PiP: the character's real first-person camera (with bob/kick/damage offsets),
+// captured every frame so the PiP window can render exactly what the character sees
+static vec3_t	s_pipFPorg = { 0, 0, 0 };
+static vec3_t	s_pipFPAngles = { 0, 0, 0 };
+
+// SWGL PiP third-person chase camera: pulled back and up from the character's
+// real first-person eye position (the camera keeps the character's look angle)
+static const float s_pipTPBack = 80.0f;
+static const float s_pipTPUp = 14.0f;
+
+static void CG_OffsetFirstPersonView( qboolean firstPersonSaber );	// SWGL PiP forward decl
+
 //#define CG_CAM_ABOVE	2
 extern qboolean CG_OnMovingPlat( playerState_t *ps );
 extern Vehicle_t *G_IsRidingVehicle( gentity_t *ent );
@@ -739,6 +751,18 @@ static void CG_OffsetThirdPersonView( void )
 {
 	vec3_t diff;
 	float deltayaw;
+
+	// SWGL PiP: capture the character's real first-person camera before the
+	// third-person/static camera code overrides it.  CG_OffsetFirstPersonView
+	// works directly on cg.refdef, so snapshot, estimate, capture, then restore.
+	vec3_t	pipPreOrg, pipPreAngles;
+	VectorCopy( cg.refdef.vieworg, pipPreOrg );
+	VectorCopy( cg.refdefViewAngles, pipPreAngles );
+	CG_OffsetFirstPersonView( qfalse );
+	VectorCopy( cg.refdef.vieworg, s_pipFPorg );
+	VectorCopy( cg.refdefViewAngles, s_pipFPAngles );
+	VectorCopy( pipPreOrg, cg.refdef.vieworg );
+	VectorCopy( pipPreAngles, cg.refdefViewAngles );
 
 	camWaterAdjust = 0;
 	cameraStiffFactor = 0.0;
@@ -1721,6 +1745,9 @@ static qboolean CG_CalcViewValues( void ) {
 	{
 		// offset for local bobbing and kicks
 		CG_OffsetFirstPersonView( qfalse );
+		// SWGL PiP: on true first-person frames this is exactly the character's view
+		VectorCopy( cg.refdef.vieworg, s_pipFPorg );
+		VectorCopy( cg.refdefViewAngles, s_pipFPAngles );
 		centity_t	*playerCent = &cg_entities[0];
 		if ( playerCent && playerCent->gent && playerCent->gent->client )
 		{
@@ -2448,6 +2475,59 @@ void CG_DrawActiveFrame( int serverTime, stereoFrame_t stereoView ) {
 		Com_Printf( S_COLOR_GREEN"ang: %s\n", vtos(cg.refdefViewAngles) );
 	}
 	*/
+
+	// SWGL PiP: while the static camera is active, render the real first-person view
+	// at the full main resolution (the post chain runs at full size) and hand it to
+	// the renderer, which scales it down into the PiP window
+	if ( !in_camera && !cg_pano.integer && static_cam && static_cam->value != 0.0f
+		&& gi.Cvar_VariableIntegerValue( "r_pip_window" ) ) {
+		refdef_t	pipRefdef;
+
+		Com_Memcpy( &pipRefdef, &cg.refdef, sizeof( pipRefdef ) );
+
+		pipRefdef.x = 0;
+		pipRefdef.y = 0;
+		pipRefdef.width = cg.refdef.width;
+		pipRefdef.height = cg.refdef.height;
+
+		if ( pipRefdef.width >= 64 && pipRefdef.height >= 64 ) {
+			// SWGL PiP: third-person chase camera behind the character.  Keep the
+			// character's real look angle, pull back and up from the eye position,
+			// then pull in if the wanted spot clips into world geometry (standard
+			// third-person behaviour).  The renderer draws the full character model
+			// on its own from any camera that is not the character's own view, so
+			// no surface-flag tricks are needed anymore.
+			trace_t		pipTrace;
+			vec3_t		pipFwd, pipTpOrg;
+
+			AngleVectors( s_pipFPAngles, pipFwd, NULL, NULL );
+			VectorMA( s_pipFPorg, -s_pipTPBack, pipFwd, pipTpOrg );
+			pipTpOrg[2] += s_pipTPUp;
+
+			CG_Trace( &pipTrace, s_pipFPorg, cameramins, cameramaxs, pipTpOrg, cg.snap->ps.clientNum, MASK_CAMERACLIP );
+			VectorCopy( pipTrace.endpos, pipTpOrg );
+
+			VectorCopy( pipTpOrg, pipRefdef.vieworg );
+			VectorCopy( s_pipFPAngles, pipRefdef.viewangles );
+			AnglesToAxis( s_pipFPAngles, pipRefdef.viewaxis );
+
+			// the copied areamask was snapped for the static camera's origin; re-snap
+			// it for the PiP view origin so the same rooms/walls the character sees
+			// are drawn (otherwise VIS culling drops the geometry in front of us)
+			Com_Memset( pipRefdef.areamask, 0, sizeof( pipRefdef.areamask ) );
+			cgi_CM_SnapPVS( pipRefdef.vieworg, pipRefdef.areamask );
+
+			pipRefdef.viewContents = cgi_CM_PointContents( pipRefdef.vieworg, 0 );
+
+			// the renderer widens the PiP scene's entity/dlight/poly windows to
+			// the whole frame (what the main scene just consumed), so the PiP is a
+			// mirror of the main render with only the camera swapped to this chase
+			// view; no per-module re-add pass is needed anymore
+			pipRefdef.pipRender = 1;
+
+			cgi_R_RenderScene( &pipRefdef );
+		}
+	}
 }
 
 //Checks to see if the current camera position is valid based on the last known safe location.  If it's not safe, place

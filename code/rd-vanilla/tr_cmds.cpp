@@ -193,6 +193,42 @@ void	R_AddDrawSurfCmd( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 
 /*
 =============
+R_AddPipBindCmd
+
+SWGL PiP: queue the command that redirects rendering into the PiP FBO
+=============
+*/
+void	R_AddPipBindCmd( void ) {
+	pipBindCommand_t	*cmd;
+
+	cmd = (pipBindCommand_t *) R_GetCommandBuffer( sizeof( *cmd ) );
+	if ( !cmd ) {
+		return;
+	}
+	cmd->commandId = RC_PIP_BIND;
+}
+
+
+/*
+=============
+R_AddPipPresentCmd
+
+SWGL PiP: queue the command that reads back the PiP FBO and presents the window
+=============
+*/
+void	R_AddPipPresentCmd( void ) {
+	pipPresentCommand_t	*cmd;
+
+	cmd = (pipPresentCommand_t *) R_GetCommandBuffer( sizeof( *cmd ) );
+	if ( !cmd ) {
+		return;
+	}
+	cmd->commandId = RC_PIP_PRESENT;
+}
+
+
+/*
+=============
 RE_SetColor
 
 Passing NULL will set the color to white
@@ -499,6 +535,9 @@ void RE_EndFrame( int *frontEndMsec, int *backEndMsec ) {
 		return;
 	}
 	cmd->commandId = RC_SWAP_BUFFERS;
+
+	// SWGL PiP: refresh the PiP window (black when idle) before the swap
+	R_PipAddFramePresentCmd();
 
 	R_IssueRenderCommands( qtrue );
 

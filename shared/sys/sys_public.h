@@ -203,6 +203,11 @@ qboolean	WIN_GammaInSoftware( void );		// dual mode: no hardware gamma ramp, the
 void *		WIN_GL_GetProcAddress( const char *proc );
 qboolean	WIN_GL_ExtensionSupported( const char *extension );
 
+// SWGL PiP: secondary OS window support (opaque handle, software-blitted)
+void *		WIN_Secondary_Create( const windowDesc_t *desc, int x, int y, int w, int h, qboolean topmost );
+void		WIN_Secondary_Present( void *handle, const byte *rgba, int w, int h, qboolean bottomUp );
+void		WIN_Secondary_Destroy( void *handle );
+
 uint8_t ConvertUTF32ToExpectedCharset( uint32_t utf32 );
 
 // Vulkan

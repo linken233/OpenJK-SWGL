@@ -48,6 +48,12 @@ static qboolean win_dual;
 #define opengl_context	win_contexts[win_slot]
 static float displayAspect;
 
+// SWGL PiP: secondary window state (no second GL context - pure SDL/software blit)
+static SDL_Window *pipWindow = NULL;
+static SDL_Renderer *pipRenderer = NULL;
+static SDL_Texture *pipTexture = NULL;
+static int pipTextureW = 0, pipTextureH = 0;
+
 cvar_t *r_sdlDriver;
 cvar_t *r_allowSoftwareGL;
 
@@ -891,6 +897,20 @@ void WIN_Shutdown( void )
 		opengl_context = NULL;
 	}
 
+	// SWGL PiP: tear down the secondary window if it is still up
+	if (pipWindow) {
+		if (pipTexture) {
+			SDL_DestroyTexture(pipTexture);
+			pipTexture = NULL;
+		}
+		if (pipRenderer) {
+			SDL_DestroyRenderer(pipRenderer);
+			pipRenderer = NULL;
+		}
+		SDL_DestroyWindow(pipWindow);
+		pipWindow = NULL;
+	}
+
 	if (screen) {
 		SDL_DestroyWindow(screen);
 		screen = NULL;
@@ -1106,4 +1126,362 @@ qboolean WIN_VK_IsMinimized( void )
 	flags = SDL_GetWindowFlags( screen );
 
 	return ( ( flags & SDL_WINDOW_MINIMIZED ) || ( flags & SDL_WINDOW_HIDDEN ) ) ? qtrue : qfalse;
+}
+
+/*
+===============
+WIN_Secondary_Create
+
+SWGL PiP: create (or resize) the secondary PiP window. Returns an opaque handle
+(window id) suitable for WIN_Secondary_Present, or NULL on failure. The window is
+pure SDL (no GL context) and blitted with a software renderer + streaming texture.
+===============
+*/
+void *WIN_Secondary_Create( const windowDesc_t *desc, int x, int y, int w, int h, qboolean topmost )
+{
+	Uint32 flags;
+	SDL_Window *prevFocus = NULL;
+
+	if (w < 2 || h < 2) {
+		return NULL;
+	}
+
+	if (!pipWindow)
+	{
+		int resolvedX = 0, resolvedY = 0;
+		int mainX = 0, mainY = 0, mainW = 0, mainH = 0;
+
+		// SWGL PiP: remember who had the keyboard focus so the PiP window does
+		// not steal it from the game (a lost focus would kill console input)
+		prevFocus = SDL_GetKeyboardFocus();
+
+		// SWGL PiP: sentinels on an axis:
+		//   -1 / -3 = corner of the OTHER display (x: right edge, y: bottom
+		//             edge), i.e. the monitor the game window is not on
+		//   -2 = relative to the main game window (x: fully to its left with a
+		//        10px gap, y: aligned with its top)
+		// clamped inside the union of the display bounds so the window always
+		// lands on screen
+		if (x == -2 || y == -2 || x <= -1 || y <= -1)
+		{
+			if (screen)
+			{
+				int		i, count = SDL_GetNumVideoDisplays();
+				int		curDisp = -1, otherDisp = -1;
+				SDL_Rect bounds;
+
+				SDL_GetWindowPosition(screen, &mainX, &mainY);
+				SDL_GetWindowSize(screen, &mainW, &mainH);
+
+				// find which display the game window is on (by its centre point)
+				// so we know which one is "the other"
+				for (i = 0; i < count; i++)
+				{
+					if (SDL_GetDisplayBounds(i, &bounds) == 0)
+					{
+						if (mainX + mainW / 2 >= bounds.x && mainX + mainW / 2 < bounds.x + bounds.w &&
+							mainY + mainH / 2 >= bounds.y && mainY + mainH / 2 < bounds.y + bounds.h)
+						{
+							curDisp = i;
+							break;
+						}
+					}
+				}
+				for (i = 0; i < count; i++)
+				{
+					if (i != curDisp)
+					{
+						otherDisp = i;
+						break;
+					}
+				}
+
+				if (x == -2)
+				{
+					x = mainX - w - 10;	// 10 pixels left of the main window edge
+					resolvedX = 1;
+				}
+				if (y == -2)
+				{
+					y = mainY;
+					resolvedY = 1;
+				}
+				if (x <= -1 || y <= -1)
+				{
+					// corner of the other monitor, falling back to the game's own
+					// monitor when there is no second screen
+					if (SDL_GetDisplayBounds((otherDisp != -1 ? otherDisp : curDisp), &bounds) == 0)
+					{
+						if (x <= -1)
+						{
+							x = bounds.x + bounds.w - w;
+							resolvedX = 1;
+						}
+						if (y <= -1)
+						{
+							y = bounds.y + bounds.h - h;
+							resolvedY = 1;
+						}
+					}
+					if (x <= -1 && !resolvedX) {
+						x = SDL_WINDOWPOS_UNDEFINED;
+					}
+					if (y <= -1 && !resolvedY) {
+						y = SDL_WINDOWPOS_UNDEFINED;
+					}
+					resolvedX = resolvedY = 1;
+				}
+
+				{
+					int i, count = SDL_GetNumVideoDisplays();
+					int ux = 0x7FFFFFFF, uy = 0x7FFFFFFF;
+					int ux2 = -0x7FFFFFFF, uy2 = -0x7FFFFFFF;
+
+					for (i = 0; i < count; i++)
+					{
+						SDL_Rect bounds;
+
+						if (SDL_GetDisplayBounds(i, &bounds) == 0)
+						{
+							if (bounds.x < ux) {
+								ux = bounds.x;
+							}
+							if (bounds.y < uy) {
+								uy = bounds.y;
+							}
+							if (bounds.x + bounds.w > ux2) {
+								ux2 = bounds.x + bounds.w;
+							}
+							if (bounds.y + bounds.h > uy2) {
+								uy2 = bounds.y + bounds.h;
+							}
+						}
+					}
+
+					if (ux2 != -0x7FFFFFFF)
+					{
+						if (x + w > ux2) {
+							x = ux2 - w;
+						}
+						if (x < ux) {
+							x = ux;
+						}
+						if (y + h > uy2) {
+							y = uy2 - h;
+						}
+						if (y < uy) {
+							y = uy;
+						}
+					}
+				}
+			}
+			else
+			{
+				x = SDL_WINDOWPOS_UNDEFINED;
+				y = SDL_WINDOWPOS_UNDEFINED;
+				resolvedX = resolvedY = 1;
+			}
+		}
+
+		if (x < 0 || y < 0)
+		{
+			SDL_Rect bounds;
+
+			// auto place: bottom-right corner of the primary display
+			if (SDL_GetDisplayBounds(0, &bounds) == 0)
+			{
+				if (x < 0 && !resolvedX) {
+					x = bounds.x + bounds.w - w - 16;
+				}
+				if (y < 0 && !resolvedY) {
+					y = bounds.y + bounds.h - h - 48;	// leave room for the taskbar
+				}
+			}
+			else
+			{
+				if (x < 0 && !resolvedX) {
+					x = SDL_WINDOWPOS_UNDEFINED;
+				}
+				if (y < 0 && !resolvedY) {
+					y = SDL_WINDOWPOS_UNDEFINED;
+				}
+			}
+		}
+
+		flags = SDL_WINDOW_SHOWN;
+		if (topmost) {
+			flags |= SDL_WINDOW_ALWAYS_ON_TOP;
+		}
+		if (Cvar_VariableIntegerValue( "r_pip_borderless" )) {
+			// SWGL PiP: borderless also means fixed - no title bar to drag
+			// (registered by the renderers; when absent, keep the title bar)
+			flags |= SDL_WINDOW_BORDERLESS;
+		}
+
+		pipWindow = SDL_CreateWindow("Jedi Academy - PiP", x, y, w, h, flags);
+		if (!pipWindow)
+		{
+			Com_Printf("PiP window: SDL_CreateWindow failed (%s)\n", SDL_GetError());
+			return NULL;
+		}
+
+		// SWGL PiP latency: r_pip_sdlhw opts into the hardware renderer (D3D/OpenGL,
+		// flip-model present, no CPU blit path); software stays the default because it
+		// keeps the pip window out of Reshade's reach - a hardware renderer is another
+		// device Reshade can hook and post-process (which adds its own latency).  Read
+		// through the cvar system like r_pip_borderless; applied at window creation,
+		// so a game restart is what takes it.
+		pipRenderer = SDL_CreateRenderer(pipWindow, -1, Cvar_VariableIntegerValue("r_pip_sdlhw") ? SDL_RENDERER_ACCELERATED : SDL_RENDERER_SOFTWARE);
+		if (!pipRenderer)
+		{
+			Com_Printf("PiP window: SDL_CreateRenderer failed (%s)\n", SDL_GetError());
+			SDL_DestroyWindow(pipWindow);
+			pipWindow = NULL;
+			return NULL;
+		}
+
+		Com_Printf("PiP window: created (%dx%d)\n", w, h);
+
+		// SWGL PiP: give the focus back to the game window.  Keyboard focus is
+		// what drives both console typing and mouse look, so restore that
+		// explicitly (this is the bit mouse look was missing) and hand the mouse
+		// grab/relative mode back to the game if it already had them
+		if (prevFocus && prevFocus != pipWindow)
+		{
+			SDL_bool grabbed = SDL_GetWindowGrab(prevFocus);
+			SDL_bool relative = SDL_GetRelativeMouseMode();
+
+			SDL_RaiseWindow(prevFocus);
+			SDL_SetWindowInputFocus(prevFocus);
+			if (grabbed == SDL_TRUE) {
+				SDL_SetWindowGrab(prevFocus, SDL_TRUE);
+			}
+			if (relative == SDL_TRUE) {
+				SDL_SetRelativeMouseMode(SDL_TRUE);
+			}
+		}
+	}
+	else
+	{
+		// already exists - just keep it sized to the requested resolution
+		SDL_SetWindowSize(pipWindow, w, h);
+	}
+
+	if (pipTextureW != w || pipTextureH != h)
+	{
+		if (pipTexture) {
+			SDL_DestroyTexture(pipTexture);
+			pipTexture = NULL;
+		}
+		pipTexture = SDL_CreateTexture(pipRenderer, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STREAMING, w, h);
+		if (!pipTexture)
+		{
+			Com_Printf("PiP window: SDL_CreateTexture failed (%s)\n", SDL_GetError());
+			return NULL;
+		}
+		pipTextureW = w;
+		pipTextureH = h;
+	}
+
+	return (void *)(intptr_t)SDL_GetWindowID(pipWindow);
+}
+
+/*
+===============
+WIN_Secondary_Present
+
+SWGL PiP: blit a bottom-up RGBA8888 buffer (GL readback) onto the PiP window.
+===============
+*/
+void WIN_Secondary_Present( void *handle, const byte *rgba, int w, int h, qboolean bottomUp )
+{
+	SDL_Window *window;
+	void *pixels;
+	int pitch, rowBytes;
+	const byte *src;
+	byte *dst;
+	int y;
+
+	if (!handle || !rgba || w < 2 || h < 2) {
+		return;
+	}
+
+	window = SDL_GetWindowFromID((Uint32)(intptr_t)handle);
+	if (!window) {
+		return;	// window is gone (closed) - nothing to do, next Create call re-creates it
+	}
+
+	if (!pipRenderer || !pipTexture || w != pipTextureW || h != pipTextureH) {
+		return;
+	}
+
+	rowBytes = w * 4;
+	if (SDL_LockTexture(pipTexture, NULL, &pixels, &pitch) != 0) {
+		return;
+	}
+
+	if (bottomUp) {
+		// GL readback rows come bottom-up - flip them into the texture
+		src = rgba + (h - 1) * rowBytes;
+		dst = (byte *)pixels;
+		for (y = 0; y < h; y++) {
+			Com_Memcpy(dst, src, rowBytes);
+			src -= rowBytes;
+			dst += pitch;
+		}
+	}
+	else {
+		Com_Memcpy(pixels, rgba, (size_t)h * (size_t)rowBytes);
+	}
+
+	SDL_UnlockTexture(pipTexture);
+
+	SDL_RenderClear(pipRenderer);
+	SDL_RenderCopy(pipRenderer, pipTexture, NULL, NULL);
+	SDL_RenderPresent(pipRenderer);
+
+	// SWGL PiP: pin the OS cursor at the centre of the game window while the
+	// game is in look mode (cursor hidden = in game, not menus/UI).  Otherwise
+	// the invisible cursor slowly drifts to the desktop edge, the game thinks
+	// the mouse left the window and drops mouse look (which freezes the PiP)
+	if (screen && SDL_ShowCursor(SDL_QUERY) == SDL_FALSE)
+	{
+		int sw, sh;
+
+		SDL_GetWindowSize(screen, &sw, &sh);
+		if (sw > 1 && sh > 1) {
+			SDL_WarpMouseInWindow(screen, sw / 2, sh / 2);
+		}
+	}
+}
+
+/*
+===============
+WIN_Secondary_Destroy
+
+SWGL PiP: destroy the secondary window (idempotent).
+===============
+*/
+void WIN_Secondary_Destroy( void *handle )
+{
+	if (!handle) {
+		return;
+	}
+
+	if (handle == (void *)(intptr_t)(pipWindow ? SDL_GetWindowID(pipWindow) : 0))
+	{
+		if (pipTexture) {
+			SDL_DestroyTexture(pipTexture);
+			pipTexture = NULL;
+		}
+		if (pipRenderer) {
+			SDL_DestroyRenderer(pipRenderer);
+			pipRenderer = NULL;
+		}
+		if (pipWindow) {
+			SDL_DestroyWindow(pipWindow);
+			pipWindow = NULL;
+		}
+		pipTextureW = pipTextureH = 0;
+	}
 }

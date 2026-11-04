@@ -91,7 +91,7 @@ void RB_ToneMap(FBO_t *hdrFbo, vec4i_t hdrBox, FBO_t *ldrFbo, vec4i_t ldrBox, in
 	if (r_smaa->integer == 1)
 		GL_BindToTMU(tr.smaaBlendImage, 2);
 
-	FBO_Bind(NULL);
+	FBO_Bind(ldrFbo);
 	GL_SetViewportAndScissor(ldrBox[0], ldrBox[1], ldrBox[2], ldrBox[3]);
 	GL_Cull(CT_TWO_SIDED);
 	GL_State(GLS_DEPTHTEST_DISABLE);

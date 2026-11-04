@@ -112,6 +112,11 @@ typedef struct {
 	void			(*WIN_Present)						( window_t *window );
 	void            (*WIN_Shutdown)                     ( void );
 
+	// SWGL PiP: secondary OS window support (opaque handle, software-blitted)
+	void*			(*WIN_Secondary_Create)				( const windowDesc_t *desc, int x, int y, int w, int h, qboolean topmost );
+	void			(*WIN_Secondary_Present)			( void *handle, const byte *rgba, int w, int h, qboolean bottomUp );
+	void			(*WIN_Secondary_Destroy)			( void *handle );
+
 	// OpenGL-specific
 	void *			(*GL_GetProcAddress)				( const char *name );
 	qboolean		(*GL_ExtensionSupported)			( const char *extension );

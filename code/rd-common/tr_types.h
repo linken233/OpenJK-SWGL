@@ -313,6 +313,9 @@ typedef struct {
 
 	// text messages for deform text shaders
 	char		text[MAX_RENDER_STRINGS][MAX_RENDER_STRING_LENGTH];
+
+	// SWGL PiP: nonzero if this scene should be rendered to the secondary PiP window
+	int			pipRender;
 } refdef_t;
 
 

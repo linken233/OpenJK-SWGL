@@ -113,6 +113,7 @@ if(BuildSPRdVanilla)
 		"${SPDir}/rd-vanilla/tr_main.cpp"
 		"${SPDir}/rd-vanilla/tr_marks.cpp"
 		"${SPDir}/rd-vanilla/tr_mesh.cpp"
+		"${SPDir}/rd-vanilla/tr_pip.cpp"
 		"${SPDir}/rd-vanilla/tr_model.cpp"
 		"${SPDir}/rd-vanilla/tr_quicksprite.cpp"
 		"${SPDir}/rd-vanilla/tr_quicksprite.h"

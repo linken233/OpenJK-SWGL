@@ -2128,6 +2128,12 @@ void RB_ExecuteRenderCommands( const void *data ) {
 		case RC_WORLD_EFFECTS:
 			data = RB_WorldEffects( data );
 			break;
+		case RC_PIP_BIND:
+			data = RB_PipBind( data );
+			break;
+		case RC_PIP_PRESENT:
+			data = RB_PipPresent( data );
+			break;
 		case RC_END_OF_LIST:
 		default:
 			// stop rendering

@@ -55,6 +55,7 @@ set(SPRend2Files
 	"${SharedDir}/rd-rend2/tr_mesh.cpp"
 	"${SharedDir}/rd-rend2/tr_model.cpp"
 	"${SharedDir}/rd-rend2/tr_model_iqm.cpp"
+	"${SharedDir}/rd-rend2/tr_pip_rend2.cpp"
 	"${SharedDir}/rd-rend2/tr_postprocess.cpp"
 	"${SharedDir}/rd-rend2/tr_postprocess.h"
 	"${SharedDir}/rd-rend2/tr_scene.cpp"

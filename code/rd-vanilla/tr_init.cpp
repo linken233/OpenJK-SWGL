@@ -1813,6 +1813,9 @@ void R_Init( void ) {
 	R_InitWorldEffects();
 	R_InitFonts();
 
+	// SWGL PiP: bring up the always-on PiP window (black until a pipRender scene arrives)
+	R_PipRendererInit();
+
 	err = qglGetError();
 	if ( err != GL_NO_ERROR )
 		ri.Printf (PRINT_ALL, "glGetError() = 0x%x\n", err);
@@ -1833,6 +1836,9 @@ extern void R_ShutdownWorldEffects(void);
 void RE_Shutdown( qboolean destroyWindow, qboolean restarting ) {
 	for ( size_t i = 0; i < numCommands; i++ )
 		ri.Cmd_RemoveCommand( commands[i].cmd );
+
+	// SWGL PiP: tear down window/FBO (the next R_Init rebuilds them on vid restarts)
+	R_PipRendererShutdown();
 
 	if ( r_DynamicGlow && r_DynamicGlow->integer )
 	{

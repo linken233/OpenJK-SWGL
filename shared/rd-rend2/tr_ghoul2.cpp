@@ -3552,7 +3552,16 @@ void RB_TransformBones(const trRefEntity_t *ent, const trRefdef_t *refdef, int c
 
 		CBoneCache *bc = g2Info.mBoneCache;
 		if (bc->uboGPUFrame == currentFrameNum)
-			return;
+		{
+#ifdef REND2_SP
+			// SWGL PiP: bone blocks are appended into the constants buffer of the
+			// scene being prepared, and every scene of the frame has its own
+			// buffer slot; only the first scene of the frame may skip the
+			// re-upload, a later scene needs its own block at its own offset.
+			if (frame->currentScene == 0)
+#endif
+				return;
+		}
 
 		for (int bone = 0; bone < (int)bc->mBones.size(); bone++)
 		{

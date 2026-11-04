@@ -1186,6 +1186,9 @@ void CL_InitRef( void ) {
 	rit.WIN_SetGamma = WIN_SetGamma;
     rit.WIN_Shutdown = WIN_Shutdown;
     rit.WIN_Present = WIN_Present;
+	rit.WIN_Secondary_Create = WIN_Secondary_Create;
+	rit.WIN_Secondary_Present = WIN_Secondary_Present;
+	rit.WIN_Secondary_Destroy = WIN_Secondary_Destroy;
 	rit.GL_GetProcAddress = WIN_GL_GetProcAddress;
 	rit.GL_ExtensionSupported = WIN_GL_ExtensionSupported;
 

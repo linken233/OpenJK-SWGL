@@ -1791,6 +1791,15 @@ typedef struct {
 	int		commandId;
 } swapBuffersCommand_t;
 
+// SWGL PiP: trivial commands - all state lives in tr_pip.cpp
+typedef struct {
+	int		commandId;
+} pipBindCommand_t;
+
+typedef struct {
+	int		commandId;
+} pipPresentCommand_t;
+
 typedef struct {
 	int		commandId;
 	int		buffer;
@@ -1846,6 +1855,8 @@ typedef enum {
 	RC_DRAW_BUFFER,
 	RC_SWAP_BUFFERS,
 	RC_WORLD_EFFECTS,
+	RC_PIP_BIND,
+	RC_PIP_PRESENT,
 } renderCommand_t;
 
 
@@ -1873,6 +1884,17 @@ void RB_ExecuteRenderCommands( const void *data );
 void R_IssuePendingRenderCommands( void );
 
 void R_AddDrawSurfCmd( drawSurf_t *drawSurfs, int numDrawSurfs );
+
+// SWGL PiP (implemented in tr_pip.cpp / tr_cmds.cpp)
+void R_AddPipBindCmd( void );
+void R_AddPipPresentCmd( void );
+const void *RB_PipBind( const void *data );
+const void *RB_PipPresent( const void *data );
+cvar_t *R_PipCvar( void );
+void R_PipRendererInit( void );
+void R_PipRendererShutdown( void );
+void R_PipAddFramePresentCmd( void );
+qboolean Pip_ShouldRender( void );
 
 void RE_SetColor( const float *rgba );
 void RE_StretchPic ( float x, float y, float w, float h,

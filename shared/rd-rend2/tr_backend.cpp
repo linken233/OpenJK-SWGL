@@ -3199,7 +3199,10 @@ const void *RB_PostProcess(const void *data)
 			GLSL_SetUniformVec4(&tr.smaaResolveShader, UNIFORM_COLOR, colorWhite);
 			qglDrawArrays(GL_TRIANGLES, 0, 3);
 
-			FBO_FastBlitFromTexture(tr.renderImage, tr.historyFbo, dstBox, NULL, 0);
+			// the pip chain may read main's history (minor edge blend while moving)
+			// but must not overwrite it, so only write it for the main chain
+			if ( !cmd->destFbo )
+				FBO_FastBlitFromTexture(tr.renderImage, tr.historyFbo, dstBox, NULL, 0);
 		}
 	}
 
@@ -3210,11 +3213,11 @@ const void *RB_PostProcess(const void *data)
 		if (r_hdr->integer && (r_toneMap->integer || r_forceToneMap->integer))
 		{
 			autoExposure = (qboolean)(r_autoExposure->integer || r_forceAutoExposure->integer);
-			RB_ToneMap(srcFbo, srcBox, NULL, dstBox, autoExposure);
+			RB_ToneMap(srcFbo, srcBox, cmd->destFbo, dstBox, autoExposure);
 		}
 		else if (r_smaa->integer == 1)
 		{
-			FBO_Bind(NULL);
+			FBO_Bind(cmd->destFbo);
 			GL_SetViewportAndScissor(0, 0, srcFbo->width, srcFbo->height);
 			GLSL_BindProgram(&tr.smaaResolveShader);
 			GL_BindToTMU(tr.renderImage, 0);
@@ -3237,7 +3240,7 @@ const void *RB_PostProcess(const void *data)
 		}
 		else if (exposure == 0.0f)
 		{
-			FBO_FastBlit(srcFbo, srcBox, NULL, dstBox, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+			FBO_FastBlit(srcFbo, srcBox, cmd->destFbo, dstBox, GL_COLOR_BUFFER_BIT, GL_NEAREST);
 		}
 		else
 		{
@@ -3252,10 +3255,12 @@ const void *RB_PostProcess(const void *data)
 		}
 
 		// Copy depth buffer to the backbuffer for depth culling refractive surfaces
-		FBO_FastBlit(srcFbo, srcBox, NULL, dstBox, GL_DEPTH_BUFFER_BIT, GL_NEAREST);
+		// (skipped for the pip chain: its postprocess target has no depth buffer)
+		if ( !cmd->destFbo )
+			FBO_FastBlit(srcFbo, srcBox, NULL, dstBox, GL_DEPTH_BUFFER_BIT, GL_NEAREST);
 	}
 
-	if (r_drawSunRays->integer)
+	if (r_drawSunRays->integer && !cmd->destFbo)	// sunrays draw to the backbuffer: main chain only
 		RB_SunRays(NULL, srcBox, NULL, dstBox);
 
 #if 0
@@ -3263,12 +3268,12 @@ const void *RB_PostProcess(const void *data)
 		RB_BokehBlur(NULL, srcBox, NULL, dstBox, backEnd.refdef.blurFactor);
 #endif
 
-	if (r_debugWeather->integer == 2)
+	if (r_debugWeather->integer == 2 && !cmd->destFbo)
 	{
 		FBO_BlitFromTexture(tr.weatherDepthImage, NULL, NULL, NULL, nullptr, NULL, NULL, 0);
 	}
 
-	if (r_ssao->integer == 2)
+	if (r_ssao->integer == 2 && !cmd->destFbo)
 	{
 		vec4i_t dstBox;
 		VectorSet4(dstBox, 0, glConfig.vidHeight, 512, -512);
@@ -3331,12 +3336,15 @@ const void *RB_PostProcess(const void *data)
 	}
 
 	backEnd.framePostProcessed = qtrue;
-	FBO_Bind(NULL);
-	backEnd.refractionFill = qtrue;
-	RB_RenderDrawSurfList(
-		backEnd.refdef.drawSurfs + backEnd.refdef.fistDrawSurf,
-		backEnd.refdef.numDrawSurfs - tr.refdef.fistDrawSurf);
-	backEnd.refractionFill = qfalse;
+	if ( !cmd->destFbo )
+	{
+		FBO_Bind(NULL);
+		backEnd.refractionFill = qtrue;
+		RB_RenderDrawSurfList(
+			backEnd.refdef.drawSurfs + backEnd.refdef.fistDrawSurf,
+			backEnd.refdef.numDrawSurfs - tr.refdef.fistDrawSurf);
+		backEnd.refractionFill = qfalse;
+	}
 
 	return (const void *)(cmd + 1);
 }
@@ -3482,6 +3490,11 @@ void RB_ExecuteRenderCommands( const void *data ) {
 		case RC_END_TIMED_BLOCK:
 			data = RB_EndTimedBlock(data);
 			break;
+#ifdef REND2_SP
+		case RC_PIP_PRESENT:
+			data = RB_PipPresent(data);
+			break;
+#endif
 		case RC_END_OF_LIST:
 		default:
 			// finish any 2D drawing if needed

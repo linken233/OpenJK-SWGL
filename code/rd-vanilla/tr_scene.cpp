@@ -312,10 +312,17 @@ void RE_RenderScene( const refdef_t *fd ) {
 	viewParms_t		parms;
 	int				startTime;
 	static int		lastTime = 0;
+	qboolean		pipScene = qfalse;
 
 	if ( !tr.registered ) {
 		return;
 	}
+
+	// SWGL PiP: skip a PiP scene entirely when the PiP window layer is not alive
+	if ( fd->pipRender && !Pip_ShouldRender() ) {
+		return;
+	}
+
 	GLimp_LogComment( "====== RE_RenderScene =====\n" );
 
 	if ( r_norefresh->integer ) {
@@ -443,6 +450,13 @@ void RE_RenderScene( const refdef_t *fd ) {
 	VectorCopy( fd->vieworg, parms.pvsOrigin );
 
 	recursivePortalCount = 0;
+
+	// SWGL PiP: redirect this scene's rendering into the PiP framebuffer
+	pipScene = (qboolean)( fd->pipRender && Pip_ShouldRender() );
+	if ( pipScene ) {
+		R_AddPipBindCmd();
+	}
+
 	R_RenderView( &parms );
 
 	// the next scene rendered in this frame will tack on after this one

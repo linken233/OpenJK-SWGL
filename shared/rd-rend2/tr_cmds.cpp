@@ -265,7 +265,7 @@ R_PostProcessingCmd
 
 =============
 */
-void	R_AddPostProcessCmd( ) {
+void	R_AddPostProcessCmd( FBO_t *destFbo ) {
 	postProcessCommand_t	*cmd;
 
 	if (!tr.registered) {
@@ -279,6 +279,7 @@ void	R_AddPostProcessCmd( ) {
 
 	cmd->refdef = tr.refdef;
 	cmd->viewParms = tr.viewParms;
+	cmd->destFbo = destFbo;
 }
 
 qhandle_t R_BeginTimedBlockCmd( const char *name )
@@ -827,6 +828,10 @@ void RE_EndFrame( int *frontEndMsec, int *backEndMsec ) {
 		return;
 	}
 	cmd->commandId = RC_SWAP_BUFFERS;
+
+#ifdef REND2_SP
+	R_PipAddFramePresentCmd();
+#endif
 
 	R_IssueRenderCommands( qtrue );
 

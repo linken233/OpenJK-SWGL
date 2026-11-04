@@ -832,6 +832,11 @@ void CG_EntityEvent( centity_t *cent, vec3_t position );
 //
 vec3_t *CG_SetEntitySoundPosition( centity_t *cent );
 void CG_AddPacketEntities( qboolean isPortal );
+
+// Set by the PiP gate in cg_view.cpp while it re-runs the add phase for the
+// first-person view: renderer adds are fine to repeat, but cgame-side per-frame
+// accumulators (looping sounds) must only run once, on the main pass.
+extern qboolean cg_pipAddPass;
 void CG_Beam( centity_t *cent, int color );
 void CG_AdjustPositionForMover( const vec3_t in, int moverNum, int atTime, vec3_t out );
 

@@ -3737,6 +3737,7 @@ typedef struct postProcessCommand_s {
 	int		commandId;
 	trRefdef_t	refdef;
 	viewParms_t	viewParms;
+	FBO_t	   *destFbo;		// SWGL PiP: final output target (NULL = backbuffer)
 } postProcessCommand_t;
 
 typedef struct beginTimedBlockCommand_s {
@@ -3749,6 +3750,10 @@ typedef struct endTimedBlockCommand_s {
 	int commandId;
 	qhandle_t timerHandle;
 } endTimedBlockCommand_t;
+
+typedef struct pipPresentCommand_s {
+	int commandId;
+} pipPresentCommand_t;
 
 typedef enum {
 	RC_END_OF_LIST,
@@ -3767,7 +3772,8 @@ typedef enum {
 	RC_CONVOLVECUBEMAP,
 	RC_POSTPROCESS,
 	RC_BEGIN_TIMED_BLOCK,
-	RC_END_TIMED_BLOCK
+	RC_END_TIMED_BLOCK,
+	RC_PIP_PRESENT
 } renderCommand_t;
 
 struct gpuTimer_t
@@ -3895,13 +3901,32 @@ extern	backEndData_t	*backEndData;
 
 
 void *R_GetCommandBuffer( int bytes );
+
+#ifdef REND2_SP
+// SWGL PiP (implemented in tr_pip_rend2.cpp, SP target only)
+void R_PipRendererInit( void );
+void R_PipRendererShutdown( void );
+void R_PipAddFramePresentCmd( void );
+void Pip_MarkContentDirty( void );
+const void *RB_PipPresent( const void *data );
+qboolean Pip_ShouldRender( void );
+FBO_t *Pip_Fbo( void );
+int Pip_Width( void );
+int Pip_Height( void );
+FBO_t *Pip_PostProcessFbo( void );	// main-resolution RGBA8 target for the pip postprocess chain
+FBO_t *Pip_DepthSaveFbo( int which );	// main-resolution D24S8 save slots (0 = renderFbo depth,
+										// 1 = msaa resolve depth) holding the main camera's depth
+qboolean Pip_RateSkip( void );			// true when this pip scene should not render (window keeps last image)
+void Pip_MarkSkipPresent( void );		// rate-skipped frame: RB_PipPresent does nothing that frame
+qboolean Pip_Direct( void );			// render the pip main view straight into the window framebuffer
+#endif
 void RB_ExecuteRenderCommands( const void *data );
 
 void R_IssuePendingRenderCommands( void );
 
 void R_AddDrawSurfCmd( drawSurf_t *drawSurfs, int numDrawSurfs );
 void R_AddConvolveCubemapCmd(cubemap_t *cubemap, int cubemapId);
-void R_AddPostProcessCmd (void);
+void R_AddPostProcessCmd (FBO_t *destFbo);
 qhandle_t R_BeginTimedBlockCmd( const char *name );
 void R_EndTimedBlockCmd( qhandle_t timerHandle );
 
