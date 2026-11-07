@@ -741,7 +741,8 @@ Ghoul2 Insert End
 #error overflow: (CS_MAX) > MAX_CONFIGSTRINGS
 #endif
 
-#define	MAX_GAMESTATE_CHARS	16000
+// The gamestate message must fit in MAX_MSGLEN (string + 4 bytes per configstring).
+#define	MAX_GAMESTATE_CHARS	32000
 typedef struct {
 	int			stringOffsets[MAX_CONFIGSTRINGS];
 	char		stringData[MAX_GAMESTATE_CHARS];

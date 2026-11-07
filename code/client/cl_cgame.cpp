@@ -318,7 +318,7 @@ void CL_ConfigstringModified( void ) {
 		len = strlen( dup );
 
 		if ( len + 1 + cl.gameState.dataCount > MAX_GAMESTATE_CHARS ) {
-			Com_Error( ERR_DROP, "MAX_GAMESTATE_CHARS exceeded" );
+			Com_Error( ERR_DROP, "MAX_GAMESTATE_CHARS exceeded (%d) at configstring %d: %s", MAX_GAMESTATE_CHARS, i, dup );
 		}
 
 		// append it to the gameState string buffer

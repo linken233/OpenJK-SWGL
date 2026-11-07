@@ -2169,7 +2169,14 @@ void G_SetG2PlayerModel( gentity_t * const ent, const char *modelName, const cha
 	else
 	{
 		//NOTE: attempting to load a special SP glm for models with their own animations
-		ent->playerModel = gi.G2API_InitGhoul2Model(ent->ghoul2, va("models/players/%s/model_sp.glm", modelName), G_ModelIndex(va("models/players/%s/model_sp.glm", modelName)), G_SkinIndex(skinName), NULL_HANDLE, 0, 0);
+		// Register model_sp.glm only if it exists: each configstring uses gamestate space.
+		char spModelPath[MAX_QPATH];
+		Com_sprintf(spModelPath, sizeof(spModelPath), "models/players/%s/model_sp.glm", modelName);
+		ent->playerModel = -1;
+		if (gi.FS_ReadFile(spModelPath, NULL) > 0)
+		{
+			ent->playerModel = gi.G2API_InitGhoul2Model(ent->ghoul2, spModelPath, G_ModelIndex(spModelPath), G_SkinIndex(skinName), NULL_HANDLE, 0, 0);
+		}
 
 		if (ent->playerModel == -1)
 		{
