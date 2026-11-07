@@ -645,7 +645,8 @@ static void IN_InitJoystick(void)
 	if (in_joystickNo->integer < 0 || in_joystickNo->integer >= total)
 		Cvar_Set("in_joystickNo", "0");
 
-	in_joystickUseAnalog = Cvar_Get("in_joystickUseAnalog", "0", CVAR_ARCHIVE_ND);
+	// 0: the sticks send PAD0_*STICK_* keys, which have no default bind
+	in_joystickUseAnalog = Cvar_Get("in_joystickUseAnalog", "1", CVAR_ARCHIVE_ND);
 
 	// dead zones: the stick that moves and the stick that looks
 	in_joystickThreshold = Cvar_Get("joy_threshold", "0.10", CVAR_ARCHIVE_ND);
