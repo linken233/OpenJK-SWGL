@@ -246,6 +246,7 @@ void ATK_BounceWall(const char** holdBuf);
 void ATK_BounceCount(const char** holdBuf);
 void ATK_MissileMass(const char** holdBuf);
 void ATK_MissileDFlags(const char** holdBuf);
+void ATK_ForcePushable(const char** holdBuf);
 void ATK_NpcDamage(const char** holdBuf);
 void ATK_NpcSpread(const char** holdBuf);
 void ATK_NpcVelocity(const char** holdBuf);
@@ -293,6 +294,7 @@ wpnParms_t AttackDataParms[] =
 	{ "missileHitSound",	ATK_MissileHitSound },
 	{ "missileMass",		ATK_MissileMass },
 	{ "missileDFlags",		ATK_MissileDFlags},
+	{ "forcePushable",		ATK_ForcePushable},
 	{ "beamShader",			ATK_BeamShader},
 	{ "beamColor",			ATK_BeamColor },
 	{ "fullBeamShader",		ATK_FullBeamShader },

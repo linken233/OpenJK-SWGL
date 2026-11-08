@@ -616,6 +616,7 @@ void PrintWeaponAttackData(const weaponAttackData_t* attack)
 	gi.Printf("\t\t^6'missileSize'^7 : ^5%d^7 (int)\n", attack->missileSize);
 	gi.Printf("\t\t^6'missileMass'^7 : ^5%d^7 (int)\n", attack->missileMass);
 	gi.Printf("\t\t^6'missileDFlags'^7 : ^5%d^7 (int)\n", attack->missileDFlags);
+	gi.Printf("\t\t^6'forcePushable'^7 : ^5%s^7 (qboolean)\n", getStringValueForqboolean(attack->forcePushable));
 	gi.Printf("\t\t^6'missileDlightColor'^7 : ^5%s^7 (vec3_t)\n", getStringValueForvec3(&attack->missileDlightColor));
 
 	gi.Printf("\t\t^6'firingSnd'^7 : ^5\"%s\"^7 (char[64])\n", attack->firingSnd);

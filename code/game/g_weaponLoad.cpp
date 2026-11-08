@@ -36,6 +36,29 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 weaponAttackData_t* currentAttackData = NULL;
 
+// Default of forcePushable when no weapon data sets it: the missiles with mass of the base game
+static qboolean WPN_DefaultForcePushable(int baseWeapon, int attackIndex)
+{
+	// The odd attacks are alt and scoped_alt
+	const qboolean alt = (attackIndex & 1) ? qtrue : qfalse;
+	switch (baseWeapon)
+	{
+	case WP_FLECHETTE:
+	case WP_ROCKET_LAUNCHER:
+	case WP_CONCUSSION:
+	case WP_THERMAL:
+	case WP_TRIP_MINE:
+	case WP_DET_PACK:
+		return qtrue;
+	case WP_REPEATER:
+	case WP_CLONECOMMANDO:
+	case WP_ATST_SIDE:
+		return alt;
+	default:
+		return qfalse;
+	}
+}
+
 // Unset values (-1) become 0 once the inheritance is done
 static void WPN_ClearUnset(weaponData_t* wpn)
 {
@@ -994,6 +1017,20 @@ void ATK_BounceWall(const char** holdBuf)
 }
 
 //--------------------------------------------
+void ATK_ForcePushable(const char** holdBuf)
+{
+	int tokenInt;
+
+	if (COM_ParseInt(holdBuf, &tokenInt))
+	{
+		SkipRestOfLine(holdBuf);
+		return;
+	}
+
+	weaponData[wpnParms.weaponNum].attackData[wpnParms.atkNum].forcePushable = tokenInt ? qtrue : qfalse;
+}
+
+//--------------------------------------------
 void ATK_BounceCount(const char** holdBuf)
 {
 	ParseInt(holdBuf, &weaponData[wpnParms.weaponNum].attackData[wpnParms.atkNum].bounceCount);
@@ -1632,6 +1669,7 @@ void WP_LoadWeaponParms(void)
 			weaponData[i].attackData[k].pushForce = -1;
 			weaponData[i].attackData[k].knockdownForce = -1;
 			weaponData[i].attackData[k].bounceWall = qunset;
+			weaponData[i].attackData[k].forcePushable = qunset;
 			weaponData[i].attackData[k].missileDFlags = -1;
 			weaponData[i].attackData[k].missileSize = -1;
 			weaponData[i].attackData[k].npcDamage[0] = -1;
@@ -1739,6 +1777,7 @@ void WP_LoadWeaponParms(void)
 					weaponData[i].attackData[k].bounceCount = weaponData[i].attackData[k].bounceCount == -1 ? weaponData[j].attackData[k].bounceCount : weaponData[i].attackData[k].bounceCount;
 					weaponData[i].attackData[k].chargeMuzzleScale = weaponData[i].attackData[k].chargeMuzzleScale == -1 ? weaponData[j].attackData[k].chargeMuzzleScale : weaponData[i].attackData[k].chargeMuzzleScale;
 					weaponData[i].attackData[k].bounceWall = weaponData[i].attackData[k].bounceWall == qunset ? weaponData[j].attackData[k].bounceWall : weaponData[i].attackData[k].bounceWall;
+					weaponData[i].attackData[k].forcePushable = weaponData[i].attackData[k].forcePushable == qunset ? weaponData[j].attackData[k].forcePushable : weaponData[i].attackData[k].forcePushable;
 					weaponData[i].attackData[k].missileDFlags = weaponData[i].attackData[k].missileDFlags == -1 ? weaponData[j].attackData[k].missileDFlags : weaponData[i].attackData[k].missileDFlags;
 					weaponData[i].attackData[k].missileSize = weaponData[i].attackData[k].missileSize == -1 ? weaponData[j].attackData[k].missileSize : weaponData[i].attackData[k].missileSize;
 					weaponData[i].attackData[k].chargeUnitTime = weaponData[i].attackData[k].chargeUnitTime == 0 ? weaponData[j].attackData[k].chargeUnitTime : weaponData[i].attackData[k].chargeUnitTime;
@@ -1924,6 +1963,11 @@ void WP_LoadWeaponParms(void)
 
 			weaponData[i].attackData[k].methodOfDeath = weaponData[i].attackData[k].methodOfDeath == MOD_UNSET ? MOD_UNKNOWN: weaponData[i].attackData[k].methodOfDeath;
 			weaponData[i].attackData[k].splashMethodOfDeath = weaponData[i].attackData[k].splashMethodOfDeath == MOD_UNSET ? MOD_UNKNOWN : weaponData[i].attackData[k].splashMethodOfDeath;
+			if (weaponData[i].attackData[k].forcePushable == qunset)
+			{
+				const int baseWeapon = weaponData[i].baseWeaponNum ? weaponData[i].baseWeaponNum : i;
+				weaponData[i].attackData[k].forcePushable = WPN_DefaultForcePushable(baseWeapon, k);
+			}
 
 			//For blockability, if easy is unset then set it to DEFLECTABLE; For higher difficulty, copy the easier difficulty if unset.
 			weaponData[i].attackData[k].blockability[0] = weaponData[i].attackData[k].blockability[0] == B_UNSET ? B_DEFLECTABLE : weaponData[i].attackData[k].blockability[0];

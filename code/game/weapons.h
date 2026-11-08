@@ -379,6 +379,7 @@ typedef struct weaponAttackData_s
 	int		missileSize;		// Physical "size" of the missile (max & min)
 	int		missileMass;		// Physical "mass" of the missile
 	int		missileDFlags;		// Overwrite the default flags for some weapons.
+	qboolean forcePushable;		// Force push/pull can move the missile
 	vec3_t 	missileDlightColor;	// ditto
 	char	firingSnd[64];		// Sound made when fired
 	char	startSnd[64];		// Sound made when first started

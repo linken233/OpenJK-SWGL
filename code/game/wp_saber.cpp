@@ -9022,44 +9022,17 @@ qboolean WP_ForceThrowable(gentity_t* ent, gentity_t* forwardEnt, gentity_t* sel
 	}
 	else
 	{
-		switch (ent->s.weapon)
-		{//only missiles with mass are force-pushable
-		case WP_SABER:
-		case WP_FLECHETTE:
-			break;
-		case WP_ROCKET_LAUNCHER:
+		if (ent->s.weapon != WP_SABER)
+		{//the attack data of the missile tells if force push/pull can move it
 			if (ent->s.powerups & (1 << PW_FORCE_PROJECTILE))
-				return qfalse;
-			else
-				break;
-		case WP_CONCUSSION:
-		case WP_THERMAL:
-		case WP_TRIP_MINE:
-		case WP_DET_PACK:
-			break;
-			//only alt-fire of this weapon is force-pushable
-		case WP_REPEATER:
-			if (ent->methodOfDeath != MOD_REPEATER_ALT)
-			{//not an alt-fire missile
-				return qfalse;
-			}
-			break;
-		case WP_CLONECOMMANDO:
-			if (ent->methodOfDeath != MOD_CLONECOMMANDO_ALT)
 			{
 				return qfalse;
 			}
-			break;
-			//everything else cannot be pushed
-		case WP_ATST_SIDE:
-			if (ent->methodOfDeath != MOD_EXPLOSIVE)
-			{//not a rocket
+			if (ent->attack_index < 0 || ent->attack_index >= MAX_WEAPON_ATTACKS
+				|| !weaponData[ent->s.weapon].attackData[ent->attack_index].forcePushable)
+			{
 				return qfalse;
 			}
-			break;
-		default:
-			return qfalse;
-			break;
 		}
 
 		if (ent->s.pos.trType == TR_STATIONARY && (ent->s.eFlags & EF_MISSILE_STICK))
@@ -9864,7 +9837,7 @@ void ForceThrow(gentity_t* self, qboolean pull, qboolean fake)
 						//push_list[x]->forcePushTime = level.time + 600; // let the push effect last for 600 ms
 					}
 					if (push_list[x]->s.eType == ET_MISSILE
-						&& push_list[x]->s.weapon == WP_ROCKET_LAUNCHER
+						&& (push_list[x]->s.weapon == WP_ROCKET_LAUNCHER || weaponData[push_list[x]->s.weapon].baseWeaponNum == WP_ROCKET_LAUNCHER)
 						&& push_list[x]->damage < 60)
 					{//pushing away a rocket raises it's damage to the max for NPCs
 						push_list[x]->damage = 60;

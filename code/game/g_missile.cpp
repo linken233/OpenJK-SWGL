@@ -324,7 +324,7 @@ void G_ReflectMissile( gentity_t *ent, gentity_t *missile, vec3_t forward )
 		}
 		missile->owner = owner;
 	}
-	if ( missile->s.weapon == WP_ROCKET_LAUNCHER )
+	if ( missile->e_ThinkFunc == thinkF_WP_RocketThink )
 	{//stop homing
 		missile->e_ThinkFunc = thinkF_NULL;
 	}
