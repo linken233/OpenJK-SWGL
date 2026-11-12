@@ -217,17 +217,17 @@ jobs:
             apt-get -qq update
             apt-get -y --no-install-recommends install build-essential cmake ninja-build libjpeg-dev libpng-dev zlib1g-dev libsdl2-dev
           fi
-          cmake -E make_directory ${{ github.workspace }}/build
+          cmake -E make_directory $GITHUB_WORKSPACE/build
 
       - name: Configure CMake
         shell: bash
         working-directory: ${{ github.workspace }}/build
         run: |
-          OPTIONS="-G Ninja -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/install"
+          OPTIONS="-G Ninja -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -DCMAKE_INSTALL_PREFIX=$GITHUB_WORKSPACE/install"
           OPTIONS+=" -DUseInternalLibs=OFF -DBuildPortableVersion=OFF"
           OPTIONS+=" $CI_SP_TARGETS $CI_MP_TARGETS"
           if [ ${{ matrix.arch }} == "x86" ]; then
-            OPTIONS+=" -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/cmake/Toolchains/linux-i686.cmake"
+            OPTIONS+=" -DCMAKE_TOOLCHAIN_FILE=$GITHUB_WORKSPACE/cmake/Toolchains/linux-i686.cmake"
           fi
           cmake $GITHUB_WORKSPACE $OPTIONS
 
