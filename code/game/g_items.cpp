@@ -2173,6 +2173,14 @@ void G_WristFlamerOff( gentity_t *ent )
 	}
 	client->ps.torsoAnimTimer = 0;
 	G_SoundOnEnt( ent, CHAN_WEAPON, "sound/null.wav" );
+
+	// Stop the loop sound here: the item can be removed next, and then G_FuelItemsLoopSound cannot find the sound.
+	const gitem_t				*item = G_FuelItem( &client->ps, INV_WRIST_FLAMER );
+	const weaponAttackData_t	*attack = item ? G_WristFlamerAttack( item ) : NULL;
+	if ( attack && attack->firingSnd[0] && ent->s.loopSound == G_SoundIndex( attack->firingSnd ) )
+	{
+		ent->s.loopSound = 0;
+	}
 }
 
 void G_WristFlamerRemoveModel( gentity_t *ent )
