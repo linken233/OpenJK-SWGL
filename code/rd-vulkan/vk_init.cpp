@@ -27,6 +27,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "../rd-common/tr_common.h"
 #include "tr_WorldEffects.h"
 #include "qcommon/MiniHeap.h"
+#include "vk_fsr.h"
 
 int vkSamples = VK_SAMPLE_COUNT_1_BIT;
 int vkMaxSamples = VK_SAMPLE_COUNT_1_BIT;
@@ -66,7 +67,7 @@ static void vk_set_render_scale( void )
 		vk.windowAdjusted = qtrue;
 	}
 
-	if (r_fbo->integer && r_ext_supersample->integer && !r_renderScale->integer)
+	if (r_fbo->integer && r_ext_supersample->integer && !r_renderScale->integer && !vk_fsr_raster_forced())
 	{
 		vk.blitFilter = GL_LINEAR;
 	}
@@ -148,6 +149,20 @@ void get_scissor_rect( VkRect2D *r ) {
 		r->offset.y = glConfig.vidHeight - backEnd.viewParms.scissorY - backEnd.viewParms.scissorHeight;
 		r->extent.width = backEnd.viewParms.scissorWidth;
 		r->extent.height = backEnd.viewParms.scissorHeight;
+
+		// FSR scene images: the scissor is in display pixels, the pass in render pixels.
+		if ( vk.fsrScene && vk.renderPassIndex != RENDER_PASS_SCREENMAP && !backEnd.projection2D )
+		{
+			const int x0 = MAX( (int)floorf( (float)r->offset.x * vk.renderScaleX ), 0 );
+			const int y0 = MAX( (int)floorf( (float)r->offset.y * vk.renderScaleY ), 0 );
+			const int x1 = MIN( (int)ceilf( (float)( r->offset.x + (int)r->extent.width ) * vk.renderScaleX ), (int)vk.renderWidth );
+			const int y1 = MIN( (int)ceilf( (float)( r->offset.y + (int)r->extent.height ) * vk.renderScaleY ), (int)vk.renderHeight );
+
+			r->offset.x = x0;
+			r->offset.y = y0;
+			r->extent.width = (uint32_t)MAX( x1 - x0, 0 );
+			r->extent.height = (uint32_t)MAX( y1 - y0, 0 );
+		}
 	}
 	else
 	{
@@ -269,6 +284,7 @@ static void vk_render_splash( void )
 	present_info.pSwapchains = &vk.swapchain;
 	present_info.pImageIndices = &vk.cmd->swapchain_image_index;
 	present_info.pResults = NULL;
+	vk_fsr_framegen_before_present();
 	qvkQueuePresentKHR( vk.queue, &present_info );
 	//VK_CHECK( qvkResetFences( vk.device, 1, &vk.cmd->rendering_finished_fence ) );
 	return;
@@ -312,6 +328,17 @@ void vk_set_clearcolor( void ) {
 	Com_Memcpy( tr.clearColor, clr, sizeof( vec4_t ) );
 }
 
+// FSR upscaling sets the render size on both paths, so r_renderScale and r_ext_supersample are off.
+// vk is not initialized yet: the RTX test uses r_rtx.
+static qboolean vk_fsr_ignores_render_scale( void )
+{
+	if ( vk_fsr_raster_forced() )
+		return qtrue;
+	if ( r_fsr == NULL || !r_fsr->integer || r_rtx == NULL || !r_rtx->integer )
+		return qfalse;
+	return vk_fsr_load_library();
+}
+
 void vk_create_window( void ) {
 	//R_Set2DRatio();
 
@@ -333,19 +360,21 @@ void vk_create_window( void ) {
 
 		//ri.CL_SetScaling(1.0, glConfig.vidWidth, glConfig.vidHeight);	// consolefont and avi capture
 
-		if (r_fbo->integer)
+		// FSR sets the scene size, so no render scale and no supersampling.
+		const qboolean fsrScale = vk_fsr_ignores_render_scale();
+		if (r_fbo->integer || vk_fsr_raster_forced())
 		{
-			if (r_renderScale->integer){
+			if (r_renderScale->integer && !fsrScale){
 				glConfig.vidWidth = r_renderWidth->integer;
 				glConfig.vidHeight = r_renderHeight->integer;
 			}
 
 			gls.captureWidth = glConfig.vidWidth;
 			gls.captureHeight = glConfig.vidHeight;
-		
+
 			//ri.CL_SetScaling(1.0, gls.captureWidth, gls.captureHeight);	// consolefont and avi capture
 
-			if (r_ext_supersample->integer){
+			if (r_ext_supersample->integer && !fsrScale){
 				glConfig.vidWidth *= 2;
 				glConfig.vidHeight *= 2;
 
@@ -396,6 +425,13 @@ void vk_initialize( void )
 	vk_init_library();
 
 	qvkGetDeviceQueue( vk.device, vk.queue_family_index, 0, &vk.queue );
+
+	// FSR frame generation: the queues vk_create_device added (none with r_fsrFrameGen 0).
+	for ( i = 0; i < ARRAY_LEN( vk.fsrFgQueue ); i++ ) {
+		vk.fsrFgQueue[i] = VK_NULL_HANDLE;
+		if ( vk.fsrFgQueueFamily[i] != ~0U )
+			qvkGetDeviceQueue( vk.device, vk.fsrFgQueueFamily[i], vk.fsrFgQueueIndex[i], &vk.fsrFgQueue[i] );
+	}
 #ifdef USE_RTX
 	// Upstream selects a separate transfer queue family for the tracer. Sharing the
 	// graphics queue is correct, just less parallel, and avoids rebuilding device
@@ -517,8 +553,8 @@ void vk_initialize( void )
 
 	vk_set_render_scale();
 
-	if ( r_fbo->integer )
-		vk.fboActive = qtrue;		
+	if ( r_fbo->integer || vk_fsr_raster_forced() )
+		vk.fboActive = qtrue;
 
 #ifdef USE_VBO
 	if ( r_vbo->integer )
@@ -531,7 +567,7 @@ void vk_initialize( void )
 #endif
 
 	//if (r_ext_multisample->integer && !r_ext_supersample->integer)
-	if ( r_ext_multisample->integer )
+	if ( r_ext_multisample->integer && !vk_fsr_raster_forced() )
 		vk.msaaActive = qtrue;
 
 #ifdef USE_RTX
@@ -588,7 +624,7 @@ void vk_initialize( void )
 #endif
 
 	// depth+normal G-buffer extraction pass, foundation for later screen-space techniques
-	if ( vk.fboActive && r_depthPrepass->integer )
+	if ( vk.fboActive && ( r_depthPrepass->integer || vk_fsr_raster_forced() ) )
 		vk.gbufferActive = qtrue;
 	else if ( r_depthPrepass->integer )
 		ri.Printf( PRINT_WARNING, "...ignoring r_depthPrepass: requires \\r_fbo 1\n" );
@@ -599,7 +635,7 @@ void vk_initialize( void )
 	// minimum, so this also requires the device to actually support that size -
 	// virtually all desktop GPUs do (commonly 256 bytes), but this stays off rather
 	// than assume it.
-	if ( vk.gbufferActive && r_velocityBuffer->integer ) {
+	if ( vk.gbufferActive && ( r_velocityBuffer->integer || vk_fsr_raster_forced() ) ) {
 		if ( props.limits.maxPushConstantsSize >= sizeof( vkGBufferVelocityPushConstants_t ) )
 			vk.velocityActive = qtrue;
 		else
@@ -630,6 +666,9 @@ void vk_initialize( void )
 			vk.ssaoActive ? ( vk.ssaoMode == 1 ? " + SSAO" : " + GTAO" ) : "",
 			vk.gbufferDepthSampled ? "" : "NOT " );
 	}
+
+	// FSR on the raster path: the context and the render size, before the attachments use it.
+	vk_fsr_raster_init();
 
 	// Screenmap
 	vk.screenMapSamples = MIN(vkMaxSamples, VK_SAMPLE_COUNT_4_BIT);
@@ -719,6 +758,12 @@ void vk_shutdown( void )
 		goto __cleanup;
 	}
 
+	// FSR frame generation: its threads can still present with the images freed below.
+	if ( vk.fsrFgSwapchain ) {
+		vk_fsr_framegen_wait_presents();
+		qvkDeviceWaitIdle( vk.device );
+	}
+
 	vk_destroy_framebuffers();
 	vk_destroy_pipelines( qtrue ); // reset counter
 	vk_destroy_render_passes();
@@ -793,6 +838,9 @@ void vk_shutdown( void )
 
 
 __cleanup:
+	// The FSR frame generation DLL keeps objects of this device: unload it before the device goes.
+	vk_fsr_release_device();
+
 	if (vk.device != VK_NULL_HANDLE) {
 #ifdef USE_VK_OBJECT_TRACKER
 		vk_dump_tracked_objects();

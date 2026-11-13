@@ -374,7 +374,7 @@ VkSampler vk_find_sampler( const Vk_Sampler_Def *def ) {
 	desc.addressModeU = address_mode;
 	desc.addressModeV = address_mode;
 	desc.addressModeW = address_mode;
-	desc.mipLodBias = 0.0f;
+	desc.mipLodBias = def->fsrLodBias ? vk.fsrMipBias : 0.0f;
 
 	if ( def->noAnisotropy || mipmap_mode == VK_SAMPLER_MIPMAP_MODE_NEAREST || mag_filter == VK_FILTER_NEAREST ) {
 		desc.anisotropyEnable = VK_FALSE;
@@ -1321,6 +1321,8 @@ void vk_update_descriptor_set( image_t *image, qboolean mipmap ) {
 	if (mipmap) {
 		sampler_def.gl_mag_filter = gl_filter_max;
 		sampler_def.gl_min_filter = gl_filter_min;
+		// FSR raster: the world and model textures sample the mips of the display size.
+		sampler_def.fsrLodBias = vk.fsrRaster;
 	}
 	else {
 		sampler_def.gl_mag_filter = GL_LINEAR;

@@ -590,10 +590,23 @@ void		vk_rtx_interleave( VkCommandBuffer cmd_buf );
 void		vk_rtx_create_taa_pipeline( void );
 void		vk_rtx_destroy_taa_pipeline( void );
 void		vk_rtx_taa_invalidate_history( void );
+qboolean	vk_rtx_taa_history_valid( void );
 void		vk_rtx_taa_prepare_ubo( vkUniformRTX_t *ubo );
-void		vk_rtx_taa_end_frame( qboolean denoiser_active );
-void		vk_rtx_taa_evaluate_settings( qboolean denoiser_active );
+void		vk_rtx_taa_end_frame( qboolean history_written );
+void		vk_rtx_taa_evaluate_settings( qboolean denoiser_active, qboolean accumulation );
 void		vk_rtx_taa( VkCommandBuffer cmd_buf );
+
+// vk_rtx_fsr.cpp - AMD FSR upscaling in place of asvgf_taau (r_fsr 1)
+qboolean	vk_rtx_fsr_update( uint32_t displayW, uint32_t displayH, VkExtent2D *render );
+void		vk_rtx_fsr_set_frame( qboolean on );
+qboolean	vk_rtx_fsr_frame_active( void );
+void		vk_rtx_fsr_invalidate_history( void );
+void		vk_rtx_fsr_prepare_ubo( vkUniformRTX_t *ubo, const trRefdef_t *refdef );
+void		vk_rtx_fsr_record( VkCommandBuffer cmd );
+void		vk_rtx_fsr_framegen( VkCommandBuffer cmd, const vkUniformRTX_t *ubo, const trRefdef_t *refdef );
+void		vk_rtx_fsr_create_pipelines( void );
+void		vk_rtx_fsr_destroy_pipelines( void );
+void		vk_rtx_fsr_shutdown( void );
 
 // vk_rtx_distortion.cpp
 void		vk_rtx_create_distortion_pipeline( void );

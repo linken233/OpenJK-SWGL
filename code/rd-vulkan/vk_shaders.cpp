@@ -248,6 +248,13 @@ void vk_create_shader_modules( void )
             VK_SET_OBJECT_NAME(vk.shaders.ssao_apply_fs, "ssao apply fragment module", VK_DEBUG_REPORT_OBJECT_TYPE_SHADER_MODULE_EXT);
         }
 
+        // FSR raster: the reactive mask
+        if ( vk.fsrRaster )
+        {
+            vk.shaders.fsr_reactive_fs = SHADER_MODULE(fsr_reactive_frag_spv);
+            VK_SET_OBJECT_NAME(vk.shaders.fsr_reactive_fs, "fsr reactive mask fragment module", VK_DEBUG_REPORT_OBJECT_TYPE_SHADER_MODULE_EXT);
+        }
+
         if ( vk.velocityActive )
         {
             vk.shaders.gbuffer_velocity_vs = SHADER_MODULE(gbuffer_worldvel_vert_spv);
@@ -408,6 +415,7 @@ void vk_destroy_shader_modules( void )
     qvkDestroyShaderModule(vk.device, vk.shaders.gbuffer_debug_fs, NULL);
     qvkDestroyShaderModule(vk.device, vk.shaders.ssao_fs, NULL);
     qvkDestroyShaderModule(vk.device, vk.shaders.ssao_apply_fs, NULL);
+    qvkDestroyShaderModule(vk.device, vk.shaders.fsr_reactive_fs, NULL);
     qvkDestroyShaderModule(vk.device, vk.shaders.shadow_volume_self_fs, NULL);
     qvkDestroyShaderModule(vk.device, vk.shaders.gbuffer_at_vs, NULL);
     qvkDestroyShaderModule(vk.device, vk.shaders.gbuffer_at_fs, NULL);

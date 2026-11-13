@@ -145,6 +145,9 @@ static VkExtent2D vk_rtx_get_render_extent()
 
 	result.width = (result.width + 1) & ~1;
 
+	// With r_fsr 1 the tracer renders at the size of the FSR quality mode.
+	vk_rtx_fsr_update( vk.extent_unscaled.width, vk.extent_unscaled.height, &result );
+
 	return result;
 }
 
@@ -232,7 +235,14 @@ void vk_rtx_begin_frame( void )
 {
 	VK_BeginRenderClear();
 
+	const VkExtent2D extent_render_last = vk.extent_render;
+
 	vk.extent_render = vk_rtx_get_render_extent();
+
+	// The FSR render size starts or stops: the histories have the other size.
+	if ( !extents_equal( vk.extent_render, extent_render_last ) )
+		temporal_cvar_changed();
+
 	vk.gpu_slice_width = (vk.extent_render.width + vk.device_count - 1) / vk.device_count;
 	
 	VkExtent2D extent_screen_images = vk_rtx_get_screen_image_extent();
@@ -341,6 +351,7 @@ void vk_rtx_shutdown( void )
 	vk_rtx_destroy_buffers();
 	vk_rtx_destroy_model_vbo_ibo_descriptor();
 	vk_rtx_destroy_primary_rays_resources();
+	vk_rtx_fsr_shutdown();
 
 	destroy_transparency();
 

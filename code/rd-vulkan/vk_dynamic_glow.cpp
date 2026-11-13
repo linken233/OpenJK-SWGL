@@ -68,6 +68,52 @@ qboolean vk_begin_dglow_blur( void )
 			0, 0 );
 	}
 
+	// FSR raster: the blend waits for the upscaled image. The scene pass opens again with a
+	// clear depth, as the blend pass gives it today.
+	if ( vk.fsrScene ) {
+		VkClearAttachment attachment;
+		VkClearRect rect;
+
+		vk_begin_main_render_pass( qfalse );
+
+		Com_Memset( &attachment, 0, sizeof( attachment ) );
+		attachment.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+		if ( glConfig.stencilBits > 0 )
+			attachment.aspectMask |= VK_IMAGE_ASPECT_STENCIL_BIT;
+		attachment.clearValue.depthStencil.depth = 1.0f;
+		Com_Memset( &rect, 0, sizeof( rect ) );
+		rect.rect.extent.width = vk.renderWidth;
+		rect.rect.extent.height = vk.renderHeight;
+		rect.layerCount = 1;
+		qvkCmdClearAttachments( vk.cmd->command_buffer, 1, &attachment, 1, &rect );
+
+		for ( i = 0; i < VK_DESC_COUNT; i++ )
+			vk_reset_descriptor( i );
+		vk.cmd->descriptor_set.end = 0;
+		vk.cmd->descriptor_set.start = ~0U;
+		vk.cmd->last_pipeline = VK_NULL_HANDLE;
+		vk.cmd->depth_range = DEPTH_RANGE_COUNT;
+
+		vk_fsr_raster_set_glow_pending();
+		return qtrue;
+	}
+
+	vk_dglow_blend();
+
+	return qtrue;
+}
+
+/*
+===============
+vk_dglow_blend
+
+Adds the blurred glow to the colour image. Opens the blend pass, which clears the depth.
+===============
+*/
+void vk_dglow_blend( void )
+{
+	uint32_t i;
+
 	vk_begin_post_blend_render_pass( vk.render_pass.dglow.blend, qtrue );
 	{
 		VkDescriptorSet dset[VK_NUM_BLUR_PASSES];
@@ -116,6 +162,4 @@ qboolean vk_begin_dglow_blur( void )
 			}
 		}
 	}
-
-	return qtrue;
 }

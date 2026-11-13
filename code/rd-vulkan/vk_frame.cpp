@@ -22,6 +22,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 */
 
 #include "tr_local.h"
+#include "vk_fsr.h"
 
 void vk_create_sync_primitives( void )
 {
@@ -139,7 +140,7 @@ void vk_create_render_passes()
     depth_format = vk.depth_format;
     device = vk.device;
 
-    if (r_fbo->integer == 0)
+    if (r_fbo->integer == 0 && !vk_fsr_raster_forced())
     {
         // presentation
         attachments[0].flags = 0;
@@ -275,7 +276,7 @@ void vk_create_render_passes()
     deps[2].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT; // What access scopes are waiting on the dependency
     deps[2].dependencyFlags = 0;
 
-     if (r_fbo->integer == 0)
+     if (r_fbo->integer == 0 && !vk_fsr_raster_forced())
     {
         desc.dependencyCount = 1;
         desc.pDependencies = &deps[2];
@@ -534,7 +535,9 @@ void vk_create_render_passes()
     attachments[0].storeOp = VK_ATTACHMENT_STORE_OP_STORE; // needed for presentation
     attachments[0].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     attachments[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    attachments[0].initialLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    // The frame generation swapchain does not tell the layout of an image after its present.
+    // The pass writes all pixels, so the old contents are not needed.
+    attachments[0].initialLayout = vk.fsrFgSwapchain ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
     attachments[0].finalLayout = vk.initSwapchainLayout;
 
     desc.dependencyCount = 1;
@@ -542,6 +545,18 @@ void vk_create_render_passes()
 
     VK_CHECK(qvkCreateRenderPass(device, &desc, NULL, &vk.render_pass.gamma));
     VK_SET_OBJECT_NAME(vk.render_pass.gamma, "render pass - gamma", VK_DEBUG_REPORT_OBJECT_TYPE_RENDER_PASS_EXT);
+
+    // FSR frame generation: the gamma pass into the HUD-less image. Only the layouts and the
+    // load operation differ from the gamma pass, so the gamma pipeline is compatible.
+    if ( vk.fsrFgSwapchain )
+    {
+        attachments[0].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        attachments[0].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        attachments[0].finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+        VK_CHECK(qvkCreateRenderPass(device, &desc, NULL, &vk.render_pass.fsr_hudless));
+        VK_SET_OBJECT_NAME(vk.render_pass.fsr_hudless, "render pass - fsr hudless", VK_DEBUG_REPORT_OBJECT_TYPE_RENDER_PASS_EXT);
+    }
 
 #ifdef USE_RTX
     // rtx blit: a full-screen pass into the fbo colour image. Upstream derives this
@@ -800,6 +815,40 @@ void vk_create_render_passes()
         VK_CHECK( qvkCreateRenderPass( device, &desc, NULL, &vk.render_pass.ssao ) );
         VK_SET_OBJECT_NAME( vk.render_pass.ssao, "render pass - ssao", VK_DEBUG_REPORT_OBJECT_TYPE_RENDER_PASS_EXT );
     }
+
+    // FSR raster: the reactive mask, one R8 target at render size. The caller records the barriers.
+    if ( vk.fsrRaster )
+    {
+        VkAttachmentReference reactive_ref;
+
+        attachments[0].flags = 0;
+        attachments[0].format = VK_FORMAT_R8_UNORM;
+        attachments[0].samples = VK_SAMPLE_COUNT_1_BIT;
+        attachments[0].loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;   // every pixel is written
+        attachments[0].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        attachments[0].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        attachments[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        attachments[0].initialLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        attachments[0].finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+        reactive_ref.attachment = 0;
+        reactive_ref.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+        Com_Memset( &subpass, 0, sizeof(subpass) );
+        subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+        subpass.colorAttachmentCount = 1;
+        subpass.pColorAttachments = &reactive_ref;
+
+        Com_Memset( &desc, 0, sizeof(desc) );
+        desc.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+        desc.pAttachments = attachments;
+        desc.attachmentCount = 1;
+        desc.subpassCount = 1;
+        desc.pSubpasses = &subpass;
+
+        VK_CHECK( qvkCreateRenderPass( device, &desc, NULL, &vk.render_pass.fsr_reactive ) );
+        VK_SET_OBJECT_NAME( vk.render_pass.fsr_reactive, "render pass - fsr reactive mask", VK_DEBUG_REPORT_OBJECT_TYPE_RENDER_PASS_EXT );
+    }
 }
 
 void vk_create_framebuffers()
@@ -821,7 +870,7 @@ void vk_create_framebuffers()
         desc.renderPass = vk.render_pass.main;
         desc.attachmentCount = 2;
 
-        if (r_fbo->integer == 0) {
+        if (r_fbo->integer == 0 && !vk_fsr_raster_forced()) {
             desc.width = gls.windowWidth;
             desc.height = gls.windowHeight;
             attachments[0] = vk.swapchain_image_views[i];
@@ -906,13 +955,47 @@ void vk_create_framebuffers()
             VK_SET_OBJECT_NAME(vk.framebuffers.refraction.extract, "framebuffer - refraction extract", VK_DEBUG_REPORT_OBJECT_TYPE_FRAMEBUFFER_EXT);
         }
 
+        // FSR raster: the world view at render size. The main, resume and refraction passes use it.
+        if ( vk.fsrRaster )
+        {
+            desc.renderPass = vk.render_pass.main;
+            desc.attachmentCount = 2;
+            desc.width = vk.fsrRenderWidth;
+            desc.height = vk.fsrRenderHeight;
+            attachments[0] = vk.fsr_scene_image_view;
+            attachments[1] = vk.fsr_scene_depth_image_view;
+
+            VK_CHECK( qvkCreateFramebuffer( vk.device, &desc, NULL, &vk.framebuffers.fsr_scene ) );
+            VK_SET_OBJECT_NAME( vk.framebuffers.fsr_scene, "framebuffer - fsr scene", VK_DEBUG_REPORT_OBJECT_TYPE_FRAMEBUFFER_EXT );
+
+            desc.renderPass = vk.render_pass.fsr_reactive;
+            desc.attachmentCount = 1;
+            attachments[0] = vk.fsr_reactive_image_view;
+
+            VK_CHECK( qvkCreateFramebuffer( vk.device, &desc, NULL, &vk.framebuffers.fsr_reactive ) );
+            VK_SET_OBJECT_NAME( vk.framebuffers.fsr_reactive, "framebuffer - fsr reactive mask", VK_DEBUG_REPORT_OBJECT_TYPE_FRAMEBUFFER_EXT );
+        }
+
+        // FSR frame generation: the HUD-less image, at the back buffer size.
+        if ( vk.fsrFgSwapchain && vk.fsr_hudless_image_view != VK_NULL_HANDLE )
+        {
+            desc.renderPass = vk.render_pass.fsr_hudless;
+            desc.attachmentCount = 1;
+            desc.width = vk.fsrFgExtent.width;
+            desc.height = vk.fsrFgExtent.height;
+            attachments[0] = vk.fsr_hudless_image_view;
+
+            VK_CHECK( qvkCreateFramebuffer( vk.device, &desc, NULL, &vk.framebuffers.fsr_hudless ) );
+            VK_SET_OBJECT_NAME( vk.framebuffers.fsr_hudless, "framebuffer - fsr hudless", VK_DEBUG_REPORT_OBJECT_TYPE_FRAMEBUFFER_EXT );
+        }
+
         // depth+normal G-buffer extraction pass (r_depthPrepass)
         if ( vk.gbufferActive )
         {
             desc.renderPass = vk.render_pass.gbuffer.extract;
             desc.attachmentCount = 2;
-            desc.width = glConfig.vidWidth;
-            desc.height = glConfig.vidHeight;
+            desc.width = vk_scene_width();
+            desc.height = vk_scene_height();
 
             attachments[0] = vk.gbuffer_normal_image_view;
             attachments[1] = vk.gbuffer_depth_image_view;
@@ -972,8 +1055,8 @@ void vk_create_framebuffers()
 
         if( vk.dglowActive )
         {
-            uint32_t width = gls.captureWidth;
-            uint32_t height = gls.captureHeight;
+            uint32_t width = vk_dglow_width();
+            uint32_t height = vk_dglow_height();
 
             desc.renderPass = vk.render_pass.dglow.extract;
             desc.width = width;
@@ -981,7 +1064,8 @@ void vk_create_framebuffers()
 
             desc.attachmentCount = 2;
             attachments[0] = vk.dglow_image_view[0];
-            attachments[1] = vk.depth_image_view;
+            // FSR raster: the glow surfaces test against the depth of the scene at render size.
+            attachments[1] = vk.fsrRaster ? vk.fsr_scene_depth_image_view : vk.depth_image_view;
 
             if ( vk.msaaActive ) {
                 desc.attachmentCount = 3;
@@ -1143,6 +1227,15 @@ void vk_destroy_render_passes( void )
         vk.render_pass.ssao = VK_NULL_HANDLE;
     }
 
+    if ( vk.render_pass.fsr_hudless != VK_NULL_HANDLE ) {
+        qvkDestroyRenderPass( vk.device, vk.render_pass.fsr_hudless, NULL );
+        vk.render_pass.fsr_hudless = VK_NULL_HANDLE;
+    }
+    if ( vk.render_pass.fsr_reactive != VK_NULL_HANDLE ) {
+        qvkDestroyRenderPass( vk.device, vk.render_pass.fsr_reactive, NULL );
+        vk.render_pass.fsr_reactive = VK_NULL_HANDLE;
+    }
+
     if ( vk.render_pass.gbuffer.extract != VK_NULL_HANDLE ) {
         qvkDestroyRenderPass( vk.device, vk.render_pass.gbuffer.extract, NULL );
         vk.render_pass.gbuffer.extract = VK_NULL_HANDLE;
@@ -1218,6 +1311,20 @@ void vk_destroy_framebuffers( void )
     if ( vk.framebuffers.gbuffer.extract != VK_NULL_HANDLE ) {
         qvkDestroyFramebuffer( vk.device, vk.framebuffers.gbuffer.extract, NULL );
         vk.framebuffers.gbuffer.extract = VK_NULL_HANDLE;
+    }
+
+    if ( vk.framebuffers.fsr_scene != VK_NULL_HANDLE ) {
+        qvkDestroyFramebuffer( vk.device, vk.framebuffers.fsr_scene, NULL );
+        vk.framebuffers.fsr_scene = VK_NULL_HANDLE;
+    }
+
+    if ( vk.framebuffers.fsr_hudless != VK_NULL_HANDLE ) {
+        qvkDestroyFramebuffer( vk.device, vk.framebuffers.fsr_hudless, NULL );
+        vk.framebuffers.fsr_hudless = VK_NULL_HANDLE;
+    }
+    if ( vk.framebuffers.fsr_reactive != VK_NULL_HANDLE ) {
+        qvkDestroyFramebuffer( vk.device, vk.framebuffers.fsr_reactive, NULL );
+        vk.framebuffers.fsr_reactive = VK_NULL_HANDLE;
     }
 }
 
@@ -1379,6 +1486,15 @@ void vk_begin_main_render_pass( qboolean clearValues )
     vk.renderHeight = glConfig.vidHeight;
     vk.renderScaleX = vk.renderScaleY = 1.0f;
 
+    // FSR raster: until the split, the main pass draws the world view into the scene images.
+    if ( vk.fsrScene ) {
+        frameBuffer = vk.framebuffers.fsr_scene;
+        vk.renderWidth = vk.fsrRenderWidth;
+        vk.renderHeight = vk.fsrRenderHeight;
+        vk.renderScaleX = (float)vk.renderWidth / (float)glConfig.vidWidth;
+        vk.renderScaleY = (float)vk.renderHeight / (float)glConfig.vidHeight;
+    }
+
     vk_begin_render_pass(renderPass, frameBuffer, clearValues, vk.renderWidth, vk.renderHeight);
 }
 
@@ -1423,8 +1539,8 @@ void vk_begin_dglow_blur_render_pass( uint32_t index )
 {
     VkFramebuffer frameBuffer = vk.framebuffers.dglow.blur[index];
 
-    vk.renderWidth = gls.captureWidth / (2 << (index / 2));
-    vk.renderHeight = gls.captureHeight / (2 << (index / 2));
+    vk.renderWidth = vk_dglow_width() / (2 << (index / 2));
+    vk.renderHeight = vk_dglow_height() / (2 << (index / 2));
     vk.renderScaleX = vk.renderScaleY = 1.0f;
 
     vk_begin_render_pass( vk.render_pass.dglow.blur[index], frameBuffer, qfalse, vk.renderWidth, vk.renderHeight );
@@ -1436,9 +1552,15 @@ void vk_begin_dglow_extract_render_pass( void )
 
     vk.renderPassIndex = RENDER_PASS_DGLOW;
 
-    vk.renderWidth = gls.captureWidth;
-    vk.renderHeight = gls.captureHeight;
+    vk.renderWidth = vk_dglow_width();
+    vk.renderHeight = vk_dglow_height();
     vk.renderScaleX = vk.renderScaleY = 1.0f;
+
+    // FSR raster: the 3D viewport is in display pixels, the pass at render size.
+    if ( vk.fsrRaster ) {
+        vk.renderScaleX = (float)vk.renderWidth / (float)glConfig.vidWidth;
+        vk.renderScaleY = (float)vk.renderHeight / (float)glConfig.vidHeight;
+    }
 
     vk_begin_render_pass( vk.render_pass.dglow.extract, frameBuffer, qtrue, vk.renderWidth, vk.renderHeight );
 }
@@ -1449,7 +1571,8 @@ void vk_refraction_extract( void ) {
 	VkImageLayout srcImageLayout;
 
 	srcImageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-	srcImage = vk.color_image;
+	// FSR raster: the world view is in the scene image, at render size.
+	srcImage = vk.fsrScene ? vk.fsr_scene_image : vk.color_image;
 	dstImage = vk.refraction_extract_image;
 
     vk_record_image_layout_transition( vk.cmd->command_buffer, srcImage, VK_IMAGE_ASPECT_COLOR_BIT,
@@ -1472,8 +1595,8 @@ void vk_refraction_extract( void ) {
 		region.srcOffsets[0].x = 0;
 		region.srcOffsets[0].y = 0;
 		region.srcOffsets[0].z = 0;
-		region.srcOffsets[1].x = glConfig.vidWidth;
-		region.srcOffsets[1].y = glConfig.vidHeight;
+		region.srcOffsets[1].x = vk.fsrScene ? vk.fsrRenderWidth : glConfig.vidWidth;
+		region.srcOffsets[1].y = vk.fsrScene ? vk.fsrRenderHeight : glConfig.vidHeight;
 		region.srcOffsets[1].z = 1;
 		region.dstSubresource = region.srcSubresource;
 		region.dstOffsets[0] = { 0, 0, 0 };
@@ -1528,6 +1651,15 @@ void vk_begin_post_refraction_extract_render_pass( void )
     vk.renderHeight = glConfig.vidHeight;
     vk.renderScaleX = vk.renderScaleY = 1.0;
 
+    // FSR raster: same attachment shape as the main pass, so the scene framebuffer fits.
+    if ( vk.fsrScene ) {
+        frameBuffer = vk.framebuffers.fsr_scene;
+        vk.renderWidth = vk.fsrRenderWidth;
+        vk.renderHeight = vk.fsrRenderHeight;
+        vk.renderScaleX = (float)vk.renderWidth / (float)glConfig.vidWidth;
+        vk.renderScaleY = (float)vk.renderHeight / (float)glConfig.vidHeight;
+    }
+
     vk_begin_render_pass( vk.render_pass.refraction.extract, frameBuffer, qfalse, vk.renderWidth, vk.renderHeight );
 }
 
@@ -1547,9 +1679,14 @@ void vk_begin_gbuffer_extract_render_pass( void )
 
     vk.renderPassIndex = RENDER_PASS_GBUFFER;
 
-    vk.renderWidth = glConfig.vidWidth;
-    vk.renderHeight = glConfig.vidHeight;
+    // At render size with FSR on the raster path: the 3D viewport is scaled to it.
+    vk.renderWidth = vk_scene_width();
+    vk.renderHeight = vk_scene_height();
     vk.renderScaleX = vk.renderScaleY = 1.0;
+    if ( vk.fsrRaster ) {
+        vk.renderScaleX = (float)vk.renderWidth / (float)glConfig.vidWidth;
+        vk.renderScaleY = (float)vk.renderHeight / (float)glConfig.vidHeight;
+    }
 
     Com_Memset( clear_values, 0, sizeof( clear_values ) );
 #ifndef USE_REVERSED_DEPTH
@@ -1584,8 +1721,8 @@ void vk_render_ssao( const void *viewParms_ )
     vkSSAOPushConstants_t push;
 
     vk.renderPassIndex = RENDER_PASS_GBUFFER;
-    vk.renderWidth = glConfig.vidWidth;
-    vk.renderHeight = glConfig.vidHeight;
+    vk.renderWidth = vk_scene_width();
+    vk.renderHeight = vk_scene_height();
     vk.renderScaleX = vk.renderScaleY = 1.0f;
 
     begin_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
@@ -1867,6 +2004,9 @@ _retry:
         VK_BeginRenderClear();
 #endif
 
+    // FSR raster: a frame with a world view starts in the scene images.
+    vk_fsr_raster_begin_frame();
+
     if (vk_find_screenmap_drawsurfs()) {
         vk_begin_screenmap_render_pass();
     }
@@ -1972,6 +2112,8 @@ static void vk_resize_geometry_buffer( void )
 void vk_wait_idle( void )
 {
     R_SyncRenderThread();
+    // The frame generation present thread must not use its queue during vkDeviceWaitIdle.
+    vk_fsr_framegen_wait_presents();
     VK_CHECK(qvkDeviceWaitIdle(vk.device));
 }
 
@@ -2076,6 +2218,10 @@ void vk_end_frame( void )
 
     if ( vk.fboActive ) {
         {
+            // FSR raster: a frame that ends in the scene images still gets its split.
+            if ( vk.fsrScene )
+                vk_fsr_raster_after_world_view();
+
             vk.cmd->last_pipeline = VK_NULL_HANDLE; // do not restore clobbered descriptors in vk_bloom()
 
             if ( vk.bloomActive && !rb_portraitReady )
@@ -2223,6 +2369,10 @@ void vk_present_frame( void )
 {
 	VkPresentInfoKHR present_info;
 	VkResult res;
+
+	// FSR frame generation: closes the frame, also when it is not presented. A frame with
+	// no world view gets no generated frame.
+	vk_fsr_framegen_before_present();
 
 	if ( ri.VK_IsMinimized() || !vk.cmd->swapchain_image_acquired )
 		return;

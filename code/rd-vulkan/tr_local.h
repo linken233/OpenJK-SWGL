@@ -2352,6 +2352,11 @@ extern cvar_t	*r_nomip;				// apply picmip only on worldspawn textures
 extern cvar_t	*r_vbo;
 extern cvar_t	*r_vbo_models;
 #endif
+extern cvar_t	*r_fsr;
+extern cvar_t	*r_fsrQuality;
+extern cvar_t	*r_fsrSharpness;
+extern cvar_t	*r_fsrFrameGen;
+extern cvar_t	*r_fsrFrameGenDebug;
 
 /*
 Ghoul2 Insert Start

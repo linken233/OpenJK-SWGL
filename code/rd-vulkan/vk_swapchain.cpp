@@ -22,6 +22,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 */
 
 #include "tr_local.h"
+#include "vk_fsr.h"
 
 void vk_restart_swapchain( const char *funcname )
 {
@@ -30,6 +31,7 @@ void vk_restart_swapchain( const char *funcname )
     vk_debug( "Restarting swapchain \n" );
 
     vk_wait_idle();
+    vk_fsr_framegen_wait_presents();
 
     for ( i = 0; i < NUM_COMMAND_BUFFERS; i++ ) {
         qvkResetCommandBuffer( vk.tess[i].command_buffer, 0 );
@@ -215,7 +217,9 @@ void vk_create_swapchain( VkPhysicalDevice physical_device, VkDevice device,
     desc.clipped = VK_TRUE;
     desc.oldSwapchain = VK_NULL_HANDLE;
 
-    VK_CHECK( qvkCreateSwapchainKHR( device, &desc, NULL, swapchain ) );
+    // FSR frame generation replaces the swapchain and the qvk swapchain functions.
+    if ( !vk_fsr_framegen_create_swapchain( &desc, swapchain ) )
+        VK_CHECK( qvkCreateSwapchainKHR( device, &desc, NULL, swapchain ) );
 
     VK_CHECK( qvkGetSwapchainImagesKHR( vk.device, vk.swapchain, &vk.swapchain_image_count, NULL ) );
     vk.swapchain_image_count = MIN(vk.swapchain_image_count, MAX_SWAPCHAIN_IMAGES );
@@ -281,6 +285,9 @@ void vk_create_swapchain( VkPhysicalDevice physical_device, VkDevice device,
 void vk_destroy_swapchain ( void ) {
     uint32_t i;
 
+    // The frame generation swapchain can still present from its own threads.
+    vk_fsr_framegen_wait_presents();
+
     for ( i = 0; i < vk.swapchain_image_count; i++ ) {
         if ( vk.swapchain_image_views[i] != VK_NULL_HANDLE ) {
             qvkDestroyImageView( vk.device, vk.swapchain_image_views[i], NULL );
@@ -292,5 +299,8 @@ void vk_destroy_swapchain ( void ) {
 		}
     }
 
-    qvkDestroySwapchainKHR( vk.device, vk.swapchain, NULL );
+    if ( vk.fsrFgSwapchain )
+        vk_fsr_framegen_destroy_swapchain();
+    else
+        qvkDestroySwapchainKHR( vk.device, vk.swapchain, NULL );
 }

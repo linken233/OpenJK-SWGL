@@ -41,6 +41,8 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 	SHADER_MODULE_DO( SHADER_NRD_PREPARE_COMP,					nrd_prepare_comp			 ) \
 	SHADER_MODULE_DO( SHADER_NRD_COMPOSITE_COMP,				nrd_composite_comp			 ) \
 	SHADER_MODULE_DO( SHADER_DISTORTION_COMP,					distortion_comp				 ) \
+	SHADER_MODULE_DO( SHADER_FSR_PREPARE_COMP,					fsr_prepare_comp			 ) \
+	SHADER_MODULE_DO( SHADER_FSR_FX_COMP,						fsr_fx_comp					 ) \
 
 // shaders
 enum {

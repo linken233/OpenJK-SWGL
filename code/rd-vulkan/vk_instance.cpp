@@ -26,6 +26,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 #include "tr_local.h"
 #include "rd-common/tr_public.h"
+#include "vk_fsr.h"
 
 unsigned char s_intensitytable[256];
 unsigned char s_gammatable[256];
@@ -233,6 +234,79 @@ static qboolean vk_used_instance_extension( const char *ext )
 
 }
 
+// The user wants FSR upscaling or frame generation. Both cvars are latched.
+static qboolean vk_fsr_cvars_on( void )
+{
+#ifdef _WIN32
+	if ( r_fsr != NULL && r_fsr->integer )
+		return qtrue;
+	if ( vk_fsr_framegen_wanted() )
+		return qtrue;
+#endif
+	return qfalse;
+}
+
+/*
+===============
+vk_select_fsr_fg_queues
+
+Frame generation needs a present queue (graphics or compute, with present support) and an image
+acquire queue (any), both other than the game queue, and optionally an async compute queue.
+Uses the free queues of the graphics family first. counts[] receives the queues per family.
+===============
+*/
+static void vk_select_fsr_fg_queues( VkPhysicalDevice physical_device, const VkQueueFamilyProperties *families,
+	uint32_t family_count, uint32_t *counts )
+{
+	const uint32_t gfx = vk.queue_family_index;
+	uint32_t i, role;
+
+	vk.fsrFgQueues = qfalse;
+	for ( role = 0; role < 3; role++ ) {
+		vk.fsrFgQueueFamily[role] = ~0U;
+		vk.fsrFgQueueIndex[role] = 0;
+		vk.fsrFgQueue[role] = VK_NULL_HANDLE;
+	}
+
+	counts[gfx] = 1;	// the game queue
+	if ( !vk_fsr_framegen_wanted() )
+		return;
+
+	for ( role = 0; role < 3; role++ ) {
+		uint32_t found = ~0U;
+
+		if ( counts[gfx] < families[gfx].queueCount ) {
+			found = gfx;
+		} else {
+			for ( i = 0; i < family_count && found == ~0U; i++ ) {
+				VkBool32 present = VK_FALSE;
+
+				if ( i == gfx || counts[i] >= families[i].queueCount )
+					continue;
+				if ( role == 0 ) {
+					// Composition and present: a compute capable family with present support.
+					if ( !( families[i].queueFlags & VK_QUEUE_COMPUTE_BIT ) )
+						continue;
+					if ( qvkGetPhysicalDeviceSurfaceSupportKHR( physical_device, i, vk.surface, &present ) < 0 || !present )
+						continue;
+				} else if ( role == 2 && !( families[i].queueFlags & VK_QUEUE_COMPUTE_BIT ) ) {
+					continue;
+				}
+				found = i;
+			}
+		}
+
+		if ( found == ~0U )
+			continue;
+
+		vk.fsrFgQueueFamily[role] = found;
+		vk.fsrFgQueueIndex[role] = counts[found];
+		counts[found]++;
+	}
+
+	vk.fsrFgQueues = ( vk.fsrFgQueueFamily[0] != ~0U && vk.fsrFgQueueFamily[1] != ~0U ) ? qtrue : qfalse;
+}
+
 static void vk_create_instance( void )
 {
 #ifdef USE_VK_VALIDATION
@@ -267,8 +341,12 @@ static void vk_create_instance( void )
 #ifdef _DEBUG
 	appInfo.apiVersion = VK_API_VERSION_1_1;
 #else
-	appInfo.apiVersion = VK_API_VERSION_1_0;
+	// FSR needs vkGetPhysicalDeviceFeatures2, which is core in 1.1.
+	appInfo.apiVersion = vk_fsr_cvars_on() ? VK_API_VERSION_1_1 : VK_API_VERSION_1_0;
 #endif
+	// The frame generation DLL calls vkWaitSemaphores and vkGetSemaphoreCounterValue, which are core in 1.2.
+	if ( vk_fsr_framegen_wanted() && appInfo.apiVersion < VK_API_VERSION_1_2 )
+		appInfo.apiVersion = VK_API_VERSION_1_2;
 	flags = 0;
     count = 0;
     extension_count = 0;
@@ -404,7 +482,7 @@ static void vk_create_instance( void )
 // blends with shader-side blending first, not changing this format.
 static VkFormat get_hdr_format( VkFormat base_format )
 {
-    if (r_fbo->integer == 0) {
+    if (r_fbo->integer == 0 && !vk_fsr_raster_forced()) {
         return base_format;
     }
 
@@ -552,7 +630,7 @@ qboolean vk_select_surface_format( VkPhysicalDevice physical_device, VkSurfaceKH
 
 	get_present_format(24, &base_bgr, &base_rgb);
 
-	if (r_fbo->integer) {
+	if (r_fbo->integer || vk_fsr_raster_forced()) {
 		get_present_format(r_presentBits->integer, &ext_bgr, &ext_rgb);
 	}
 	else {
@@ -597,7 +675,7 @@ qboolean vk_select_surface_format( VkPhysicalDevice physical_device, VkSurfaceKH
 	vk.rtx_surf_is_hdr = qfalse;
 #endif
 
-	if (!r_fbo->integer) {
+	if (!r_fbo->integer && !vk_fsr_raster_forced()) {
 		vk.present_format = vk.base_format;
 	}
 
@@ -645,6 +723,11 @@ static qboolean vk_create_device( VkPhysicalDevice physical_device, int device_i
 
 	vk_setup_surface_formats(physical_device);
 
+	// One create info per family. Only the graphics family unless frame generation adds queues.
+	VkDeviceQueueCreateInfo queue_descs[4];
+	uint32_t queue_desc_count = 0;
+	static const float queue_priorities[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+
 	// select queue family
 	{
 		VkQueueFamilyProperties* queue_families;
@@ -670,24 +753,43 @@ static qboolean vk_create_device( VkPhysicalDevice physical_device, int device_i
 			}
 		}
 
-		free(queue_families);
-
 		if (vk.queue_family_index == ~0U) {
+			free(queue_families);
 			ri.Printf(PRINT_ERROR, "...failed to find graphics queue family\n");
 
 			return qfalse;
 		}
+
+		// FSR frame generation: the extra queues. With r_fsrFrameGen 0 only the game queue.
+		{
+			uint32_t *counts = (uint32_t*)calloc(queue_family_count, sizeof(uint32_t));
+
+			vk_select_fsr_fg_queues(physical_device, queue_families, queue_family_count, counts);
+
+			for (i = 0; i < queue_family_count && queue_desc_count < ARRAY_LEN(queue_descs); i++) {
+				if (counts[i] == 0)
+					continue;
+				Com_Memset(&queue_descs[queue_desc_count], 0, sizeof(queue_descs[0]));
+				queue_descs[queue_desc_count].sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+				queue_descs[queue_desc_count].queueFamilyIndex = i;
+				queue_descs[queue_desc_count].queueCount = MIN(counts[i], (uint32_t)ARRAY_LEN(queue_priorities));
+				queue_descs[queue_desc_count].pQueuePriorities = queue_priorities;
+				queue_desc_count++;
+			}
+
+			free(counts);
+		}
+
+		free(queue_families);
 	}
 
 	// create VkDevice
 	{
 		char *str;
-		const char *device_extension_list[20];	// ray tracing alone asks for seven of these
+		const char *device_extension_list[24];	// ray tracing alone asks for seven of these
 		uint32_t device_extension_count;
 		const char *ext, *end;
-		const float priority = 1.0;
 		VkExtensionProperties *extension_properties;
-		VkDeviceQueueCreateInfo queue_desc;
 		VkPhysicalDeviceFeatures device_features;
 		VkPhysicalDeviceFeatures features;
 		VkDeviceCreateInfo device_desc;
@@ -697,6 +799,14 @@ static qboolean vk_create_device( VkPhysicalDevice physical_device, int device_i
 		qboolean memoryRequirements2 = qfalse;
 		qboolean debugMarker = qfalse;
 		qboolean toolingInfo = qfalse;
+		qboolean fsrWanted = vk_fsr_cvars_on();
+		qboolean fsrDerivsKHR = qfalse;		// VK_KHR_compute_shader_derivatives is supported
+		qboolean fsrDerivsNV = qfalse;		// VK_NV_compute_shader_derivatives is supported
+		qboolean fsrDerivsChain = qfalse;	// fsr_derivs_features goes into the pNext chain
+		VkPhysicalDeviceComputeShaderDerivativesFeaturesKHR fsr_derivs_features;
+		qboolean fsrTimelineExt = qfalse;	// VK_KHR_timeline_semaphore is supported
+		qboolean fsrTimelineChain = qfalse;	// fsr_timeline_features goes into the pNext chain
+		VkPhysicalDeviceTimelineSemaphoreFeatures fsr_timeline_features;
 #ifdef USE_RTX
 		qboolean raytracing = qfalse;
 		qboolean descIndexing = qfalse;
@@ -737,6 +847,13 @@ static qboolean vk_create_device( VkPhysicalDevice physical_device, int device_i
 
 		for (i = 0; i < count; i++) {
 			ext = extension_properties[i].extensionName;
+			if ( strcmp( ext, VK_KHR_COMPUTE_SHADER_DERIVATIVES_EXTENSION_NAME ) == 0 )
+				fsrDerivsKHR = qtrue;
+			else if ( strcmp( ext, VK_NV_COMPUTE_SHADER_DERIVATIVES_EXTENSION_NAME ) == 0 )
+				fsrDerivsNV = qtrue;
+			else if ( strcmp( ext, VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME ) == 0 )
+				fsrTimelineExt = qtrue;
+
 			if ( strcmp( ext, VK_KHR_SWAPCHAIN_EXTENSION_NAME ) == 0 ) {
 				swapchainSupported = qtrue;
 			}
@@ -944,13 +1061,6 @@ static qboolean vk_create_device( VkPhysicalDevice physical_device, int device_i
 			return qfalse;
 		}
 
-		queue_desc.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-		queue_desc.pNext = NULL;
-		queue_desc.flags = 0;
-		queue_desc.queueFamilyIndex = vk.queue_family_index;
-		queue_desc.queueCount = 1;
-		queue_desc.pQueuePriorities = &priority;
-
 		Com_Memset(&features, 0, sizeof(features));
 		features.fillModeNonSolid = VK_TRUE;
 
@@ -997,11 +1107,81 @@ static qboolean vk_create_device( VkPhysicalDevice physical_device, int device_i
 			vk.geometryShader = qtrue;
 		}
 
+		// The AMD FSR shaders use Int16 and ComputeDerivativeGroupLinear. Without them, FSR stays off.
+		vk.fsrDeviceFeatures = qfalse;
+		if ( fsrWanted ) {
+			PFN_vkGetPhysicalDeviceFeatures2 getFeatures2;
+			VkPhysicalDeviceFeatures2 features2;
+
+			Com_Memset( &fsr_derivs_features, 0, sizeof( fsr_derivs_features ) );
+			fsr_derivs_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COMPUTE_SHADER_DERIVATIVES_FEATURES_KHR;
+
+			getFeatures2 = (PFN_vkGetPhysicalDeviceFeatures2)qvkGetInstanceProcAddr( vk.instance, "vkGetPhysicalDeviceFeatures2" );
+			if ( getFeatures2 == NULL )
+				getFeatures2 = (PFN_vkGetPhysicalDeviceFeatures2)qvkGetInstanceProcAddr( vk.instance, "vkGetPhysicalDeviceFeatures2KHR" );
+
+			// The KHR and NV structures are the same, with the same sType.
+			if ( getFeatures2 != NULL && ( fsrDerivsKHR || fsrDerivsNV ) ) {
+				Com_Memset( &features2, 0, sizeof( features2 ) );
+				features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+				features2.pNext = &fsr_derivs_features;
+				getFeatures2( physical_device, &features2 );
+			}
+
+			if ( device_features.shaderInt16 && fsr_derivs_features.computeDerivativeGroupLinear ) {
+				features.shaderInt16 = VK_TRUE;
+				vk.fsrDeviceFeatures = qtrue;
+
+				// When ray tracing enabled the KHR extension, its feature structure gets the bit.
+				fsrDerivsChain = qtrue;
+#ifdef USE_RTX
+				if ( vk.computeDerivatives )
+					fsrDerivsChain = qfalse;
+#endif
+				if ( fsrDerivsChain )
+					device_extension_list[device_extension_count++] = fsrDerivsKHR ?
+						VK_KHR_COMPUTE_SHADER_DERIVATIVES_EXTENSION_NAME : VK_NV_COMPUTE_SHADER_DERIVATIVES_EXTENSION_NAME;
+
+				Com_Memset( &fsr_derivs_features, 0, sizeof( fsr_derivs_features ) );
+				fsr_derivs_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COMPUTE_SHADER_DERIVATIVES_FEATURES_KHR;
+				fsr_derivs_features.computeDerivativeGroupLinear = VK_TRUE;
+			} else {
+				ri.Printf( PRINT_WARNING, "FSR: the device has no shaderInt16 or computeDerivativeGroupLinear. FSR is off.\n" );
+			}
+
+			// The frame generation swapchain creates timeline semaphores.
+			vk.fsrFgTimeline = qfalse;
+			if ( vk_fsr_framegen_wanted() && getFeatures2 != NULL && fsrTimelineExt ) {
+				Com_Memset( &fsr_timeline_features, 0, sizeof( fsr_timeline_features ) );
+				fsr_timeline_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES;
+				Com_Memset( &features2, 0, sizeof( features2 ) );
+				features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+				features2.pNext = &fsr_timeline_features;
+				getFeatures2( physical_device, &features2 );
+
+				if ( fsr_timeline_features.timelineSemaphore ) {
+					vk.fsrFgTimeline = qtrue;
+					// The Vulkan12Features of ray tracing and the debug chain already enable it.
+					fsrTimelineChain = qtrue;
+#ifdef USE_RTX
+					if ( vk.rtxActive )
+						fsrTimelineChain = qfalse;
+#endif
+#ifdef _DEBUG
+					fsrTimelineChain = qfalse;
+#endif
+					if ( fsrTimelineChain )
+						device_extension_list[device_extension_count++] = VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME;
+					fsr_timeline_features.pNext = NULL;
+				}
+			}
+		}
+
 		device_desc.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
 		device_desc.pNext = NULL;
 		device_desc.flags = 0;
-		device_desc.queueCreateInfoCount = 1;
-		device_desc.pQueueCreateInfos = &queue_desc;
+		device_desc.queueCreateInfoCount = queue_desc_count;
+		device_desc.pQueueCreateInfos = queue_descs;
 		device_desc.enabledLayerCount = 0;
 		device_desc.ppEnabledLayerNames = NULL;
 		device_desc.enabledExtensionCount = device_extension_count;
@@ -1030,6 +1210,7 @@ static qboolean vk_create_device( VkPhysicalDevice physical_device, int device_i
 				Com_Memset( &rtx_derivs_features, 0, sizeof( rtx_derivs_features ) );
 				rtx_derivs_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COMPUTE_SHADER_DERIVATIVES_FEATURES_KHR;
 				rtx_derivs_features.computeDerivativeGroupQuads = VK_TRUE;
+				rtx_derivs_features.computeDerivativeGroupLinear = vk.fsrDeviceFeatures ? VK_TRUE : VK_FALSE;
 				rtx_as_features.pNext = &rtx_derivs_features;
 			}
 
@@ -1109,6 +1290,15 @@ static qboolean vk_create_device( VkPhysicalDevice physical_device, int device_i
 		}
 		}
 #endif
+
+		if ( fsrDerivsChain ) {
+			fsr_derivs_features.pNext = (void *)device_desc.pNext;
+			device_desc.pNext = &fsr_derivs_features;
+		}
+		if ( fsrTimelineChain ) {
+			fsr_timeline_features.pNext = (void *)device_desc.pNext;
+			device_desc.pNext = &fsr_timeline_features;
+		}
 
 		result = qvkCreateDevice(physical_device, &device_desc, NULL, &vk.device);
 		if (result < 0) {

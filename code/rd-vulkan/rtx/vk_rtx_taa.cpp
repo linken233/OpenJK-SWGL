@@ -22,6 +22,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 */
 
 #include "tr_local.h"
+#include "vk_fsr.h"
 
 static vkpipeline_t	taa_pipeline;
 static qboolean		taa_history_valid = qfalse;
@@ -41,6 +42,12 @@ void vk_rtx_taa_invalidate_history( void )
 	taa_history_valid = qfalse;
 }
 
+// FSR resets its history when this is qfalse.
+qboolean vk_rtx_taa_history_valid( void )
+{
+	return taa_history_valid;
+}
+
 // TAA stays off for the first frame after the denoiser was off.
 void vk_rtx_taa_prepare_ubo( vkUniformRTX_t *ubo )
 {
@@ -48,15 +55,26 @@ void vk_rtx_taa_prepare_ubo( vkUniformRTX_t *ubo )
 		ubo->flt_taa = 0;
 }
 
-void vk_rtx_taa_end_frame( qboolean denoiser_active )
+void vk_rtx_taa_end_frame( qboolean history_written )
 {
-	taa_history_valid = denoiser_active;
+	taa_history_valid = history_written;
 }
 
-void vk_rtx_taa_evaluate_settings( qboolean denoiser_active )
+void vk_rtx_taa_evaluate_settings( qboolean denoiser_active, qboolean accumulation )
 {
 	vk.effective_aa_mode = AA_MODE_OFF;
 	vk.extent_taa_output = vk.extent_render;
+	vk_rtx_fsr_set_frame( qfalse );
+
+	// FSR replaces asvgf_taau, also with no denoiser. The accumulation mode does not use it:
+	// the final blit stretches the render image.
+	if ( !accumulation && vk_fsr_upscale_active() )
+	{
+		vk.effective_aa_mode = AA_MODE_UPSCALE;
+		vk.extent_taa_output = vk.extent_unscaled;
+		vk_rtx_fsr_set_frame( qtrue );
+		return;
+	}
 
 	if ( !denoiser_active )
 		return;

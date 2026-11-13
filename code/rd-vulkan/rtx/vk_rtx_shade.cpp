@@ -22,6 +22,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 */
 
 #include "tr_local.h"
+#include "vk_fsr.h"
 #include "conversion.h"
 #include "rtx_light_edit.h"
 #include "rtx_light_style.h"
@@ -78,6 +79,7 @@ void temporal_cvar_changed( void )
 	vk_rtx_restir_gi_invalidate();
 	vk_rtx_invalidate_denoiser_history();
 	vk_rtx_taa_invalidate_history();
+	vk_rtx_fsr_invalidate_history();
 	num_accumulated_frames = 0;
 }
 
@@ -2117,7 +2119,12 @@ static void vk_rtx_prepare_ubo( trRefdef_t *refdef, world_t *world, mnode_t *vie
 	// Reservoirs of another resolution do not fit the pixels.
 	ubo->restir_gi_history_valid = ( restir_gi_history_valid && ubo->prev_width == ubo->width && ubo->prev_height == ubo->height ) ? 1 : 0;
 
-	if ( vk.effective_aa_mode == AA_MODE_UPSCALE )
+	if ( vk_rtx_fsr_frame_active() )
+	{
+		// The FSR jitter sequence and the FSR texture LOD bias.
+		vk_rtx_fsr_prepare_ubo( ubo, refdef );
+	}
+	else if ( vk.effective_aa_mode == AA_MODE_UPSCALE )
 	{
 		int taa_index = (int)(vk.frame_counter % NUM_TAA_SAMPLES);
 		ubo->sub_pixel_jitter[0] = vk.taa_samples[taa_index][0];
@@ -2909,7 +2916,13 @@ static void vk_begin_trace_rays( world_t &worldData, trRefdef_t *refdef, referen
 
 		vk_rtx_interleave( post_cmd_buf );
 
-		vk_rtx_taa( post_cmd_buf );
+		if ( vk_rtx_fsr_frame_active() )
+			vk_rtx_fsr_record( post_cmd_buf );
+		else
+			vk_rtx_taa( post_cmd_buf );
+
+		// FSR frame generation: configure and prepare from the depth and motion of this frame.
+		vk_rtx_fsr_framegen( post_cmd_buf, ubo, refdef );
 
 		BEGIN_PERF_MARKER(post_cmd_buf, PROFILER_BLOOM);
 		if ( cvar_bloom_enable->integer != 0 )
@@ -2997,7 +3010,7 @@ void vk_rtx_begin_scene( trRefdef_t *refdef, drawSurf_t *drawSurfs, int numDrawS
 	}
 	
 	evaluate_reference_mode( &ref_mode, refdef );
-	vk_rtx_taa_evaluate_settings( ref_mode.denoiser != DENOISER_NONE ? qtrue : qfalse );
+	vk_rtx_taa_evaluate_settings( ref_mode.denoiser != DENOISER_NONE ? qtrue : qfalse, ref_mode.enable_accumulation );
 
 	num_model_lights = 0;
 	EntityUploadInfo upload_info;
@@ -3105,7 +3118,7 @@ void vk_rtx_begin_scene( trRefdef_t *refdef, drawSurf_t *drawSurfs, int numDrawS
 	restir_gi_history_valid = ( ubo->pt_restir_gi != 0.f && ubo->pt_num_bounce_rays >= 1.f ) ? qtrue : qfalse;
 
 	vk_rtx_denoisers_end_frame( ref_mode.denoiser );
-	vk_rtx_taa_end_frame( ref_mode.denoiser != DENOISER_NONE ? qtrue : qfalse );
+	vk_rtx_taa_end_frame( ( ref_mode.denoiser != DENOISER_NONE || vk_rtx_fsr_frame_active() ) ? qtrue : qfalse );
 
 	frame_ready = qtrue;
 
@@ -3144,6 +3157,10 @@ void vk_rtx_begin_blit( void )
 	}
 
 	frame_ready = qfalse;
+
+	// FSR frame generation: the tone-mapped scene before the 2D, through the gamma pass.
+	if ( vk_fsr_framegen_hudless_pending() )
+		vk_fsr_framegen_hudless_copy( vk.cmd->command_buffer );
 
 	vk_begin_post_blend_render_pass( vk.render_pass.rtx_final_blit.blend, qfalse );
 }

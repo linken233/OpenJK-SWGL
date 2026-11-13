@@ -602,6 +602,18 @@ void vk_update_attachment_descriptors( void ) {
 			}
 		}
 
+		// FSR raster: the reactive mask reads them with texelFetch, so the sampler does not matter
+		if ( vk.fsrRaster )
+		{
+			info.imageView = vk.fsr_opaque_image_view;
+			desc.dstSet = vk.fsr_opaque_descriptor;
+			qvkUpdateDescriptorSets( vk.device, 1, &desc, 0, NULL );
+
+			info.imageView = vk.fsr_scene_image_view;
+			desc.dstSet = vk.fsr_scene_descriptor;
+			qvkUpdateDescriptorSets( vk.device, 1, &desc, 0, NULL );
+		}
+
 		// screenmap
 		sd.gl_mag_filter = sd.gl_min_filter = GL_LINEAR;
 		sd.max_lod_1_0 = qfalse;
@@ -722,6 +734,12 @@ void vk_init_descriptors( void ) {
 		if ( vk.dglowActive ) {
 			for ( i = 0; i < ARRAY_LEN( vk.dglow_image_descriptor ); i++ )
 				VK_CHECK( qvkAllocateDescriptorSets( vk.device, &alloc, &vk.dglow_image_descriptor[i] ) );
+		}
+
+		// FSR raster: the inputs of the reactive mask
+		if ( vk.fsrRaster ) {
+			VK_CHECK( qvkAllocateDescriptorSets( vk.device, &alloc, &vk.fsr_opaque_descriptor ) );
+			VK_CHECK( qvkAllocateDescriptorSets( vk.device, &alloc, &vk.fsr_scene_descriptor ) );
 		}
 
 		alloc.descriptorSetCount = 1;

@@ -1,0 +1,91 @@
+/*
+===========================================================================
+Copyright (C) 2013 - 2015, OpenJK contributors
+
+This file is part of the OpenJK source code.
+
+OpenJK is free software; you can redistribute it and/or modify it
+under the terms of the GNU General Public License version 2 as
+published by the Free Software Foundation.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program; if not, see <http://www.gnu.org/licenses/>.
+===========================================================================
+*/
+
+// The inputs of AMD FSR that the tracer does not have, at render size, in the flat layout:
+// - the device depth (inverted, infinite far plane) from the distance in PT_VIEW_DEPTH,
+// - the reactive mask from the alpha of the blended layers in PT_TRANSPARENT.
+
+#version 460
+#extension GL_GOOGLE_include_directive    : enable
+#extension GL_EXT_nonuniform_qualifier    : enable
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+#include "../utils.glsl"
+
+#define GLOBAL_UBO_DESC_SET_IDX 3
+#include "../global_ubo.h"
+
+#define GLOBAL_TEXTURES_DESC_SET_IDX 1
+#include "../global_textures.h"
+
+#define VERTEX_BUFFER_DESC_SET_IDX 0
+#define VERTEX_READONLY 1
+#include "../vertex_buffer.h"
+
+#include "../projection.glsl"
+
+layout(set = 4, binding = 0, r32f) uniform writeonly image2D IMG_FSR_DEPTH;
+layout(set = 4, binding = 1, r32f) uniform writeonly image2D IMG_FSR_REACTIVE;
+
+// The position of a flat pixel in the two checkerboard fields, as checkerboard_interleave reads it.
+ivec2 flat_to_field(ivec2 pos)
+{
+	bool is_even_checkerboard = (pos.x & 1) == (pos.y & 1);
+	if (global_ubo.pt_swap_checkerboard != 0)
+		is_even_checkerboard = !is_even_checkerboard;
+
+	ivec2 field = ivec2(pos.x / 2, pos.y);
+	if (!is_even_checkerboard)
+		field.x += global_ubo.width / 2;
+
+	return field;
+}
+
+void main()
+{
+	const ivec2 ipos = ivec2(gl_GlobalInvocationID.xy);
+
+	if (ipos.x >= global_ubo.width || ipos.y >= global_ubo.height)
+		return;
+
+	const ivec2 field = flat_to_field(ipos);
+	// Reflected and refracted pixels store a negative distance.
+	const float view_distance = abs(texelFetch(TEX_PT_VIEW_DEPTH_A, field, 0).r);
+
+	float depth = 0.0;
+	float reactive = 0.0;
+
+	// The sky stays at depth 0 (infinitely far) and is not reactive: its alpha is always 1.
+	if (view_distance < PRIMARY_RAY_T_MAX)
+	{
+		// The primary ray went through the jittered position of the pixel.
+		const vec2 uv = (vec2(ipos) + vec2(0.5) + global_ubo.sub_pixel_jitter) / vec2(global_ubo.width, global_ubo.height);
+		const vec3 view_pos = projection_screen_to_view(uv, view_distance, false);
+
+		depth = float(FSR_DEPTH_NEAR) / max(view_pos.z, float(FSR_DEPTH_NEAR));
+
+		const float alpha = texelFetch(TEX_PT_TRANSPARENT, field, 0).a;
+		reactive = clamp(alpha, 0.0, float(FSR_REACTIVE_MAX));
+	}
+
+	imageStore(IMG_FSR_DEPTH, ipos, vec4(depth));
+	imageStore(IMG_FSR_REACTIVE, ipos, vec4(reactive));
+}

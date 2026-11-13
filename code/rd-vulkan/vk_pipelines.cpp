@@ -105,6 +105,8 @@ void vk_create_descriptor_layout( void )
 #ifdef VK_CUBEMAP
         pool_size[0].descriptorCount += 1 + MAX_CUBEMAPS; // capture, prefiltered probes
 #endif
+        if ( vk.fsrRaster )
+            pool_size[0].descriptorCount += 2; // FSR raster: opaque copy, scene colour
 
         pool_size[1].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
         pool_size[1].descriptorCount = VK_DESC_UNIFORM_COUNT * NUM_COMMAND_BUFFERS;
@@ -2753,6 +2755,15 @@ static void vk_create_post_process_pipeline( int program_index, uint32_t width, 
             pipeline_name = "dglow blend pipeline";
             blend = qtrue;
             break;
+        case 7: // FSR raster reactive mask
+            pipeline = &vk.fsr_reactive_pipeline;
+            fs_module = vk.shaders.fsr_reactive_fs;
+            renderpass = vk.render_pass.fsr_reactive;
+            layout = vk.pipeline_layout_blend;
+            samples = VK_SAMPLE_COUNT_1_BIT;
+            pipeline_name = "fsr reactive mask pipeline";
+            blend = qfalse;
+            break;
 #ifdef USE_RTX
         case 6: // rtx final blit lanczos
             pipeline = &vk.pipeline_final_blit;
@@ -3606,8 +3617,9 @@ static void vk_create_dglow_pipelines( void )
     if ( !vk.dglowActive )
         return;
 
-    uint32_t width = gls.captureWidth;
-    uint32_t height = gls.captureHeight;
+    // FSR raster: the blur chain starts at the render size.
+    uint32_t width = vk_dglow_width();
+    uint32_t height = vk_dglow_height();
     uint32_t i;
 
     for ( i = 0; i < ARRAY_LEN( vk.dglow_blur_pipeline ); i += 2 ) {
@@ -3634,6 +3646,9 @@ void vk_update_post_process_pipelines( void )
         vk_create_bloom_pipelines();
         vk_create_dglow_pipelines();
         vk_create_gbuffer_pipelines();
+
+        if ( vk.fsrRaster )
+            vk_create_post_process_pipeline( 7, vk.fsrRenderWidth, vk.fsrRenderHeight ); // FSR reactive mask
     }
 }
 
@@ -3687,6 +3702,11 @@ void vk_destroy_pipelines( qboolean resetCounter )
     if ( vk.ssao_apply_pipeline ) {
         qvkDestroyPipeline( vk.device, vk.ssao_apply_pipeline, NULL );
         vk.ssao_apply_pipeline = VK_NULL_HANDLE;
+    }
+
+    if ( vk.fsr_reactive_pipeline ) {
+        qvkDestroyPipeline( vk.device, vk.fsr_reactive_pipeline, NULL );
+        vk.fsr_reactive_pipeline = VK_NULL_HANDLE;
     }
 
     for ( i = 3; i < 5; i++ ) {

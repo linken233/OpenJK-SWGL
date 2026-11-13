@@ -32,6 +32,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "tr_WorldEffects.h"
 #include "qcommon/MiniHeap.h"
 #include "tr_cache.h"
+#include "vk_fsr.h"
 #include "rtx/rtx_light_edit.h"
 #include "rtx/rtx_light_emissive.h"
 #include "rtx/rtx_light_sky.h"
@@ -330,6 +331,11 @@ cvar_t	*r_nomip;
 cvar_t	*r_vbo;
 cvar_t	*r_vbo_models;
 #endif
+cvar_t	*r_fsr;
+cvar_t	*r_fsrQuality;
+cvar_t	*r_fsrSharpness;
+cvar_t	*r_fsrFrameGen;
+cvar_t	*r_fsrFrameGenDebug;
 
 // the limits apply to the sum of all scenes in a frame --
 // the main view, all the 3D icons, etc
@@ -935,6 +941,7 @@ static consoleCommand_t	commands[] = {
 	{ "pt_sky_set",			RTX_LightSky_Set_f },
 	{ "pt_sky_reset",		RTX_LightSky_Reset_f },
 #endif
+	{ "fsrinfo",			vk_fsr_info_f },
 	{ "vkinfo",				vk_info_f }
 };
 
@@ -1309,6 +1316,16 @@ void R_Register( void )
 	r_vbo								= Cvar_Get("r_vbo",								"1",						CVAR_ARCHIVE | CVAR_LATCH, "Cache static world surfaces");
 	r_vbo_models						= Cvar_Get("r_vbo_models",						"1",						CVAR_ARCHIVE | CVAR_LATCH, "Cache ghoul2 and md3 model surfaces");
 #endif
+	r_fsr								= Cvar_Get("r_fsr",								"0",						CVAR_ARCHIVE_ND | CVAR_LATCH, "AMD FSR upscaling");
+	ri.Cvar_CheckRange(r_fsr, 0, 1, qtrue);
+	r_fsrQuality						= Cvar_Get("r_fsrQuality",						"2",						CVAR_ARCHIVE_ND | CVAR_LATCH, "FSR quality: 0 native AA, 1 quality, 2 balanced, 3 performance, 4 ultra performance");
+	ri.Cvar_CheckRange(r_fsrQuality, 0, 4, qtrue);
+	r_fsrSharpness						= Cvar_Get("r_fsrSharpness",					"0.5",						CVAR_ARCHIVE_ND, "FSR sharpening, 0.0 to 1.0");
+	ri.Cvar_CheckRange(r_fsrSharpness, 0, 1, qfalse);
+	r_fsrFrameGen						= Cvar_Get("r_fsrFrameGen",						"0",						CVAR_ARCHIVE_ND | CVAR_LATCH, "AMD FSR frame generation");
+	ri.Cvar_CheckRange(r_fsrFrameGen, 0, 1, qtrue);
+	r_fsrFrameGenDebug					= Cvar_Get("r_fsrFrameGenDebug",				"0",						CVAR_TEMP, "FSR frame generation debug bits: 1 tear lines, 2 reset marks, 4 debug view, 8 only generated frames, 16 pacing lines");
+	ri.Cvar_CheckRange(r_fsrFrameGenDebug, 0, 31, qtrue);
 	r_renderWidth						= Cvar_Get("r_renderWidth",						"800",						CVAR_ARCHIVE_ND | CVAR_LATCH, "");
 	r_renderHeight						= Cvar_Get("r_renderHeight",						"600",						CVAR_ARCHIVE_ND | CVAR_LATCH, "");
 	r_renderScale						= Cvar_Get("r_renderScale",						"0",						CVAR_ARCHIVE_ND | CVAR_LATCH, "Scaling mode to be used with custom render resolution:\n"
@@ -1547,6 +1564,9 @@ void RE_Shutdown( qboolean destroyWindow, qboolean restarting ) {
 
 	// The thread stops first. The frame in flight uses the resources freed below.
 	R_RenderThreadShutdown();
+
+	// The FSR contexts use the device, so they go before it.
+	vk_fsr_shutdown();
 
 	for (size_t i = 0; i < numCommands; i++)
 		ri.Cmd_RemoveCommand(commands[i].cmd);

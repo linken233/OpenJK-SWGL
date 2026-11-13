@@ -732,7 +732,7 @@ void vkpt_vertex_buffer_ensure_primbuf_size(uint32_t prim_count)
 	if (prim_count <= current_primbuf_size)
 		return;
 	
-	qvkDeviceWaitIdle(vk.device);
+	vk_device_wait_idle();
 
 	destroy_primbuf();
 

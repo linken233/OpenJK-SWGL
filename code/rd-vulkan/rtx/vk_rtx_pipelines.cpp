@@ -184,6 +184,7 @@ void vk_rtx_create_compute_pipelines( void )
 	vk_rtx_create_denoiser_pipelines();
 	vk_rtx_create_interleave_pipeline();
 	vk_rtx_create_taa_pipeline();
+	vk_rtx_fsr_create_pipelines();
 	vk_rtx_create_distortion_pipeline();
 	vk_create_tonemap_pipelines();
 	vk_create_physical_sky_pipelines();
@@ -206,6 +207,7 @@ void vk_rtx_destroy_compute_pipelines( void )
 	vk_rtx_destroy_denoiser_pipelines();
 	vk_rtx_destroy_interleave_pipeline();
 	vk_rtx_destroy_taa_pipeline();
+	vk_rtx_fsr_destroy_pipelines();
 	vk_rtx_destroy_distortion_pipeline();
 	vk_destroy_tonemap_pipelines();
 	vk_destroy_physical_sky_pipelines();

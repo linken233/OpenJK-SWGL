@@ -82,6 +82,9 @@ set(SPVulkanRendererFiles
 	"${SPDir}/rd-vulkan/vk_dynamic_glow.cpp"
 	"${SPDir}/rd-vulkan/vk_flares.cpp"
 	"${SPDir}/rd-vulkan/vk_frame.cpp"
+	"${SPDir}/rd-vulkan/vk_fsr.cpp"
+	"${SPDir}/rd-vulkan/vk_fsr.h"
+	"${SPDir}/rd-vulkan/vk_fsr_raster.cpp"
 	"${SPDir}/rd-vulkan/vk_image.cpp"
 	"${SPDir}/rd-vulkan/vk_normalmap.cpp"
 	"${SPDir}/rd-vulkan/vk_perf.cpp"
@@ -220,6 +223,12 @@ list(APPEND SPVulkanRendererIncludeDirectories "${SPDir}/rd-common")
 
 set(SPVulkanRendererIncludeDirectories ${SPVulkanRendererIncludeDirectories} ${OpenJKLibDir})
 
+# AMD FSR SDK headers (lib/fsr/README.md). The DLLs load at run time, so nothing links.
+list(APPEND SPVulkanRendererIncludeDirectories
+	"${OpenJKLibDir}/fsr/api/include"
+	"${OpenJKLibDir}/fsr/upscalers/include"
+	"${OpenJKLibDir}/fsr/framegeneration/include")
+
 set(SPVulkanDefines ${SharedDefines} "Q_MATH_INLINE" "RENDERER")
 
 # NVIDIA NRD v4.17.3, compiled into the renderer DLL (see nrd/README.md).
@@ -305,3 +314,10 @@ set_property(TARGET ${SPVulkan} APPEND PROPERTY COMPILE_OPTIONS ${OPENJK_VISIBIL
 set_target_properties(${SPVulkan} PROPERTIES INCLUDE_DIRECTORIES "${SPVulkanRendererIncludeDirectories}")
 set_target_properties(${SPVulkan} PROPERTIES PROJECT_LABEL "SP Vulkan Renderer")
 target_link_libraries(${SPVulkan} ${SPVulkanRendererLibraries})
+
+# Copy the FSR DLLs next to the executable when lib/fsr/bin exists (the folder is not in git).
+file(GLOB SPVulkanFsrDlls CONFIGURE_DEPENDS "${OpenJKLibDir}/fsr/bin/*.dll")
+if(WIN32 AND SPVulkanFsrDlls)
+	add_custom_command(TARGET ${SPVulkan} POST_BUILD
+		COMMAND ${CMAKE_COMMAND} -E copy_if_different ${SPVulkanFsrDlls} "$<TARGET_FILE_DIR:${SPVulkan}>")
+endif()

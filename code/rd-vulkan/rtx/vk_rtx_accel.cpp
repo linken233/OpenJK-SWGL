@@ -715,7 +715,7 @@ static VkResult vkpt_vertex_buffer_upload_bsp_subnmodel_mesh( VkCommandBuffer cm
 
 static VkResult vk_rtx_vertex_buffer_upload_bsp_mesh_geom( VkCommandBuffer cmd_buf, vk_geometry_data_t *geom )
 {
-	qvkDeviceWaitIdle( vk.device );
+	vk_device_wait_idle();
 
 	bool is_sky_static = (geom == &tr.world->geometry.sky_static);
 
@@ -871,7 +871,7 @@ void vkpt_vertex_buffer_upload_bsp_mesh( world_t &worldData )
 	
 	vkpt_submit_command_buffer(cmd_buf, vk.queue_graphics, (1 << vk.device_count) - 1, 0, NULL, NULL, NULL, 0, NULL, NULL, NULL);
 
-	qvkDeviceWaitIdle( vk.device );
+	vk_device_wait_idle();
 
 	vk_rtx_buffer_destroy( &sky_static->staging_buffer );
 	vk_rtx_buffer_destroy( &world_static->staging_buffer );

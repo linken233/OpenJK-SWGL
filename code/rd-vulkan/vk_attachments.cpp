@@ -318,8 +318,9 @@ void vk_create_attachments( void )
         }
 
         if( vk.dglowActive ){
-            uint32_t width = gls.captureWidth;
-            uint32_t height = gls.captureHeight;
+            // FSR raster: the glow surfaces render with the scene, at render size.
+            uint32_t width = vk_dglow_width();
+            uint32_t height = vk_dglow_height();
 
             create_color_attachment( width, height, VK_SAMPLE_COUNT_1_BIT, vk.color_format,
                 usage, &vk.dglow_image[0], &vk.dglow_image_view[0], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, qfalse );
@@ -345,12 +346,45 @@ void vk_create_attachments( void )
         // vkpt_final_blit_simple blits the tracer's output INTO this image, so it needs
         // TRANSFER_DST as well. Upstream swaps SRC for DST; keeping both leaves the
         // capture and screenshot paths, which read from it, working.
+        // FSR raster: FSR writes this image as a storage image when the SDK can use its format.
         create_color_attachment( glConfig.vidWidth, glConfig.vidHeight, VK_SAMPLE_COUNT_1_BIT, vk.color_format,
-           usage | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, &vk.color_image, &vk.color_image_view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, qfalse );
+           usage | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | ( vk.fsrUpscaleRaster && vk.fsrColorDirect ? VK_IMAGE_USAGE_STORAGE_BIT : 0 ),
+           &vk.color_image, &vk.color_image_view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, qfalse );
 #else
         create_color_attachment( glConfig.vidWidth, glConfig.vidHeight, VK_SAMPLE_COUNT_1_BIT, vk.color_format,
-           usage | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, &vk.color_image, &vk.color_image_view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, qfalse );
+           usage | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | ( vk.fsrRaster ? VK_IMAGE_USAGE_TRANSFER_DST_BIT : 0 ) | ( vk.fsrUpscaleRaster && vk.fsrColorDirect ? VK_IMAGE_USAGE_STORAGE_BIT : 0 ),
+           &vk.color_image, &vk.color_image_view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, qfalse );
 #endif
+
+        // FSR raster: the images of the world view, at render size.
+        if ( vk.fsrRaster )
+        {
+            create_color_attachment( vk.fsrRenderWidth, vk.fsrRenderHeight, VK_SAMPLE_COUNT_1_BIT, vk.color_format,
+                usage | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, &vk.fsr_scene_image, &vk.fsr_scene_image_view,
+                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, qfalse );
+
+            create_depth_attachment( vk.fsrRenderWidth, vk.fsrRenderHeight, VK_SAMPLE_COUNT_1_BIT,
+                &vk.fsr_scene_depth_image, &vk.fsr_scene_depth_image_view, qfalse );
+
+            create_color_attachment( vk.fsrRenderWidth, vk.fsrRenderHeight, VK_SAMPLE_COUNT_1_BIT, vk.color_format,
+                VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, &vk.fsr_opaque_image, &vk.fsr_opaque_image_view,
+                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, qfalse );
+
+            // The SDK cannot use the colour format: FSR reads and writes copies in fsrColorFormat.
+            if ( vk.fsrUpscaleRaster && !vk.fsrColorDirect ) {
+                create_color_attachment( vk.fsrRenderWidth, vk.fsrRenderHeight, VK_SAMPLE_COUNT_1_BIT, vk.fsrColorFormat,
+                    VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, &vk.fsr_input_image, &vk.fsr_input_image_view,
+                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, qfalse );
+
+                create_color_attachment( glConfig.vidWidth, glConfig.vidHeight, VK_SAMPLE_COUNT_1_BIT, vk.fsrColorFormat,
+                    VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+                    &vk.fsr_output_image, &vk.fsr_output_image_view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, qfalse );
+            }
+
+            create_color_attachment( vk.fsrRenderWidth, vk.fsrRenderHeight, VK_SAMPLE_COUNT_1_BIT, VK_FORMAT_R8_UNORM,
+                VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, &vk.fsr_reactive_image, &vk.fsr_reactive_image_view,
+                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, qfalse );
+        }
 
         // screenmap-msaa
         if ( vk.screenMapSamples > VK_SAMPLE_COUNT_1_BIT ) {
@@ -384,25 +418,26 @@ void vk_create_attachments( void )
         {
             usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
 
-            create_color_attachment( glConfig.vidWidth, glConfig.vidHeight, VK_SAMPLE_COUNT_1_BIT, vk.normal_format,
+            // At render size with FSR on the raster path, like the world view.
+            create_color_attachment( vk_scene_width(), vk_scene_height(), VK_SAMPLE_COUNT_1_BIT, vk.normal_format,
                 usage, &vk.gbuffer_normal_image, &vk.gbuffer_normal_image_view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, qfalse );
 
             // Left in a shader-readable layout so a consumer (GTAO, contact shadows, the
             // r_showGBuffer debug view) can sample it straight after the pass; the render
             // pass still transitions it to ATTACHMENT_OPTIMAL for its own subpass.
-            create_depth_attachment( glConfig.vidWidth, glConfig.vidHeight, VK_SAMPLE_COUNT_1_BIT,
+            create_depth_attachment( vk_scene_width(), vk_scene_height(), VK_SAMPLE_COUNT_1_BIT,
                 &vk.gbuffer_depth_image, &vk.gbuffer_depth_image_view, qfalse, qtrue,
                 vk.gbuffer_depth_format,
                 vk.gbufferDepthSampled ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL
                                        : VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL );
 
             if ( vk.velocityActive ) {
-                create_color_attachment( glConfig.vidWidth, glConfig.vidHeight, VK_SAMPLE_COUNT_1_BIT, vk.velocity_format,
+                create_color_attachment( vk_scene_width(), vk_scene_height(), VK_SAMPLE_COUNT_1_BIT, vk.velocity_format,
                     usage, &vk.gbuffer_velocity_image, &vk.gbuffer_velocity_image_view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, qfalse );
             }
 
             if ( vk.ssaoActive ) {
-                create_color_attachment( glConfig.vidWidth, glConfig.vidHeight, VK_SAMPLE_COUNT_1_BIT, vk.ssao_format,
+                create_color_attachment( vk_scene_width(), vk_scene_height(), VK_SAMPLE_COUNT_1_BIT, vk.ssao_format,
                     usage, &vk.ssao_image, &vk.ssao_image_view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, qfalse );
             }
         }
@@ -420,6 +455,14 @@ void vk_create_attachments( void )
             usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
             create_color_attachment( gls.captureWidth, gls.captureHeight, VK_SAMPLE_COUNT_1_BIT, vk.capture_format,
                 usage, &vk.capture.image, &vk.capture.image_view , VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, qfalse );
+        }
+
+        // FSR frame generation: the 3D scene after the gamma pass, in the back buffer format and size.
+        if ( vk.fsrFgSwapchain )
+        {
+            usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+            create_color_attachment( vk.fsrFgExtent.width, vk.fsrFgExtent.height, VK_SAMPLE_COUNT_1_BIT, vk.present_format.format,
+                usage, &vk.fsr_hudless_image, &vk.fsr_hudless_image_view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, qfalse );
         }
     }
     else {
@@ -458,6 +501,20 @@ void vk_create_attachments( void )
     VK_SET_OBJECT_NAME( vk.gbuffer_depth_image_view, "gbuffer depth attachment", VK_DEBUG_REPORT_OBJECT_TYPE_IMAGE_VIEW_EXT );
     VK_SET_OBJECT_NAME( vk.gbuffer_velocity_image, "gbuffer velocity attachment", VK_DEBUG_REPORT_OBJECT_TYPE_IMAGE_EXT );
     VK_SET_OBJECT_NAME( vk.gbuffer_velocity_image_view, "gbuffer velocity attachment", VK_DEBUG_REPORT_OBJECT_TYPE_IMAGE_VIEW_EXT );
+
+    if ( vk.fsrRaster ) {
+        VK_SET_OBJECT_NAME( vk.fsr_scene_image, "fsr scene colour", VK_DEBUG_REPORT_OBJECT_TYPE_IMAGE_EXT );
+        VK_SET_OBJECT_NAME( vk.fsr_scene_depth_image, "fsr scene depth", VK_DEBUG_REPORT_OBJECT_TYPE_IMAGE_EXT );
+        VK_SET_OBJECT_NAME( vk.fsr_opaque_image, "fsr opaque colour", VK_DEBUG_REPORT_OBJECT_TYPE_IMAGE_EXT );
+        VK_SET_OBJECT_NAME( vk.fsr_reactive_image, "fsr reactive mask", VK_DEBUG_REPORT_OBJECT_TYPE_IMAGE_EXT );
+        if ( vk.fsrUpscaleRaster && !vk.fsrColorDirect ) {
+            VK_SET_OBJECT_NAME( vk.fsr_input_image, "fsr input colour", VK_DEBUG_REPORT_OBJECT_TYPE_IMAGE_EXT );
+            VK_SET_OBJECT_NAME( vk.fsr_output_image, "fsr output colour", VK_DEBUG_REPORT_OBJECT_TYPE_IMAGE_EXT );
+        }
+    }
+
+    if ( vk.fsr_hudless_image != VK_NULL_HANDLE )
+        VK_SET_OBJECT_NAME( vk.fsr_hudless_image, "fsr hudless colour", VK_DEBUG_REPORT_OBJECT_TYPE_IMAGE_EXT );
 
     VK_SET_OBJECT_NAME( vk.capture.image, "capture image", VK_DEBUG_REPORT_OBJECT_TYPE_IMAGE_EXT );
     VK_SET_OBJECT_NAME( vk.capture.image_view, "capture image view", VK_DEBUG_REPORT_OBJECT_TYPE_IMAGE_VIEW_EXT );
@@ -595,6 +652,23 @@ void vk_destroy_attachments( void )
         qvkDestroyImageView(vk.device, vk.gbuffer_velocity_image_view, NULL);
         vk.gbuffer_velocity_image = VK_NULL_HANDLE;
         vk.gbuffer_velocity_image_view = VK_NULL_HANDLE;
+    }
+
+    // FSR raster scene images
+    {
+        VkImage *images[] = { &vk.fsr_scene_image, &vk.fsr_scene_depth_image, &vk.fsr_opaque_image, &vk.fsr_reactive_image,
+            &vk.fsr_input_image, &vk.fsr_output_image, &vk.fsr_hudless_image };
+        VkImageView *views[] = { &vk.fsr_scene_image_view, &vk.fsr_scene_depth_image_view, &vk.fsr_opaque_image_view, &vk.fsr_reactive_image_view,
+            &vk.fsr_input_image_view, &vk.fsr_output_image_view, &vk.fsr_hudless_image_view };
+
+        for ( i = 0; i < ARRAY_LEN( images ); i++ ) {
+            if ( *images[i] != VK_NULL_HANDLE ) {
+                qvkDestroyImage( vk.device, *images[i], NULL );
+                qvkDestroyImageView( vk.device, *views[i], NULL );
+                *images[i] = VK_NULL_HANDLE;
+                *views[i] = VK_NULL_HANDLE;
+            }
+        }
     }
 
     // bloom

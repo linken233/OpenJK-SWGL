@@ -95,7 +95,10 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 // and the ambient occlusion target (r_ssao). They are allocated from this same pool, and
 // leaving the count at its pre-G-buffer value overflowed it as soon as bloom was also on.
 // The last + 1 is the capture buffer, which the FBO always has now.
-#define MAX_ATTACHMENTS_IN_POOL			( 6 + ( ( 1 + VK_NUM_BLUR_PASSES * 2 ) * 2 ) + 1 + 4 + 1 )
+// The + 6 is FSR on the raster path: scene colour and depth, opaque copy, reactive mask,
+// and the input and output copies when the SDK cannot use the colour format.
+// The last + 1 is the HUD-less image of FSR frame generation.
+#define MAX_ATTACHMENTS_IN_POOL			( 6 + ( ( 1 + VK_NUM_BLUR_PASSES * 2 ) * 2 ) + 1 + 4 + 1 + 6 + 1 )
 
 #define VK_DESC_STORAGE					0
 #define VK_DESC_UNIFORM					0
@@ -765,6 +768,7 @@ typedef struct {
 
 	qboolean max_lod_1_0; // fixed 1.0 lod
 	qboolean noAnisotropy;
+	qboolean fsrLodBias; // FSR on the raster path: vk.fsrMipBias as mipLodBias
 } Vk_Sampler_Def;
 
 struct ImageChunk_t {
@@ -969,6 +973,13 @@ typedef struct {
 	uint32_t		queue_family_index;
 	VkDevice		device;
 	VkQueue			queue;
+
+	// FSR frame generation: present, image acquire and async compute queues (vk_fsr.cpp).
+	qboolean		fsrFgQueues;			// the device has the present and image acquire queues
+	qboolean		fsrFgTimeline;			// the device has the timelineSemaphore feature on
+	uint32_t		fsrFgQueueFamily[3];
+	uint32_t		fsrFgQueueIndex[3];
+	VkQueue			fsrFgQueue[3];			// VK_NULL_HANDLE when the device has no such queue
 
 	VkPhysicalDeviceMemoryProperties devMemProperties;
 
@@ -1199,6 +1210,22 @@ typedef struct {
 	VkImage			dglow_msaa_image;
 	VkImageView		dglow_msaa_image_view;
 
+	// FSR on the raster path (vk_fsr_raster.cpp): the images of the world view, at render size.
+	VkImage			fsr_scene_image;		// colour, input of FSR
+	VkImageView		fsr_scene_image_view;
+	VkImage			fsr_scene_depth_image;	// depth/stencil of the scene passes
+	VkImageView		fsr_scene_depth_image_view;
+	VkImage			fsr_opaque_image;		// copy of the colour before the blended surfaces
+	VkImageView		fsr_opaque_image_view;
+	VkImage			fsr_reactive_image;		// R8 reactive mask, written by fsr_reactive.frag
+	VkImageView		fsr_reactive_image_view;
+	VkImage			fsr_input_image;		// the scene colour in fsrColorFormat, when it is not color_format
+	VkImageView		fsr_input_image_view;
+	VkImage			fsr_output_image;		// the FSR output at display size, when it is not color_format
+	VkImageView		fsr_output_image_view;
+	VkImage			fsr_hudless_image;		// frame generation: the 3D scene after the gamma pass, no 2D
+	VkImageView		fsr_hudless_image_view;
+
 	// screenmap
 	struct {
 		VkImage			depth_image;
@@ -1250,6 +1277,9 @@ typedef struct {
 		// Consumes the gbuffer rather than belonging to it, so it sits alongside the other
 		// top-level passes instead of inside the gbuffer group.
 		VkRenderPass ssao; // ambient occlusion over the gbuffer (r_ssao 2)
+
+		VkRenderPass fsr_reactive; // FSR raster: R8 reactive mask at render size
+		VkRenderPass fsr_hudless; // frame generation: gamma pass into the HUD-less image, same shape as gamma
 	} render_pass;
 
 	struct {
@@ -1288,6 +1318,10 @@ typedef struct {
 		} gbuffer;
 
 		VkFramebuffer ssao; // ambient occlusion over the gbuffer (r_ssao 2)
+
+		VkFramebuffer fsr_scene; // FSR raster: scene colour + scene depth, for the main pass shape
+		VkFramebuffer fsr_reactive; // FSR raster: reactive mask
+		VkFramebuffer fsr_hudless; // frame generation: HUD-less image
 	} framebuffers;
 
 #ifdef USE_UPLOAD_QUEUE
@@ -1424,6 +1458,9 @@ typedef struct {
 	// Multiplies the AO into the scene from inside the main render pass, so its sample
 	// count has to match the main pass's - unlike ssao_pipeline, which owns its own.
 	VkPipeline ssao_apply_pipeline;
+	VkPipeline fsr_reactive_pipeline;	// FSR raster: reactive mask (fsr_reactive.frag)
+	VkDescriptorSet fsr_opaque_descriptor;	// FSR raster: samplers of the opaque copy and the scene colour
+	VkDescriptorSet fsr_scene_descriptor;
 
 	VkPipeline gamma_pipeline;
 	VkPipeline bloom_extract_pipeline;
@@ -1547,6 +1584,7 @@ typedef struct {
 		VkShaderModule gbuffer_debug_fs;	// r_showGBuffer; see gbuffer_debug.frag
 		VkShaderModule ssao_fs;				// r_ssao 2; see ssao.frag
 		VkShaderModule ssao_apply_fs;		// r_ssao 2; see ssao_apply.frag
+		VkShaderModule fsr_reactive_fs;		// FSR raster reactive mask; see fsr_reactive.frag
 		VkShaderModule shadow_volume_self_fs;	// self-shadow exclusion; see shadow_volume_self.frag
 
 		// Alpha-tested gbuffer variants; see gbuffer_at.vert / gbuffer_atvel.vert.
@@ -1561,6 +1599,17 @@ typedef struct {
 	qboolean samplerAnisotropy;
 	qboolean fragmentStores;
 	qboolean geometryShader;		// enables GPU-side stencil shadow volume silhouette extrusion; CPU fallback otherwise
+	qboolean fsrDeviceFeatures;		// the device has the features of the AMD FSR shaders enabled
+	qboolean fsrRaster;				// FSR upscales the world view of the raster path (vk_fsr_raster.cpp)
+	qboolean fsrScene;				// the main pass draws into the scene images at render size now
+	uint32_t fsrRenderWidth;		// render size of the world view while fsrRaster
+	uint32_t fsrRenderHeight;
+	float	 fsrMipBias;			// texture LOD bias of the world and model samplers while fsrRaster
+	qboolean fsrUpscaleRaster;		// fsrRaster with the upscaler; qfalse for frame generation only (native size)
+	qboolean fsrFgSwapchain;		// the swapchain is the FSR frame generation swapchain
+	VkExtent2D fsrFgExtent;			// back buffer size of that swapchain, also the HUD-less image size
+	qboolean fsrColorDirect;		// FSR reads and writes color_format, with no copies
+	VkFormat fsrColorFormat;		// colour format of the FSR input and output
 	qboolean dedicatedAllocation;
 	qboolean debugMarkers;
 	qboolean wideLines;
@@ -1749,6 +1798,28 @@ void		vk_create_framebuffers( void );
 void		vk_destroy_framebuffers( void );
 void		vk_create_sync_primitives( void );
 void		vk_destroy_sync_primitives( void );
+
+// Waits for the frame generation presents, then for the device (vk_fsr.cpp).
+void		vk_device_wait_idle( void );
+
+// FSR upscaling on the raster path (vk_fsr_raster.cpp)
+qboolean	vk_fsr_raster_forced( void );
+void		vk_fsr_raster_init( void );
+uint32_t	vk_scene_width( void );
+uint32_t	vk_scene_height( void );
+uint32_t	vk_dglow_width( void );
+uint32_t	vk_dglow_height( void );
+void		vk_fsr_raster_begin_frame( void );
+void		vk_fsr_raster_begin_view( void );
+qboolean	vk_fsr_raster_primary_view( void );
+void		vk_fsr_raster_end_primary_view( void );
+void		vk_fsr_raster_jitter_projection( float *proj );
+void		vk_fsr_raster_unjittered_projection( float *proj );
+void		vk_fsr_raster_copy_opaque( void );
+void		vk_fsr_raster_set_glow_pending( void );
+qboolean	vk_fsr_raster_split_pending( void );
+void		vk_fsr_raster_after_world_view( void );
+void		vk_dglow_blend( void );
 
 // GPU frame timing with timestamp queries (vk_perf.cpp), shown by com_perflog.
 typedef enum {

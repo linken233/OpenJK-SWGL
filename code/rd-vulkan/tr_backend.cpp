@@ -492,6 +492,7 @@ static void RB_RenderGBufferSurfList( const drawSurf_t *drawSurfs, int numDrawSu
 					float prevModelView[16];
 
 					Com_Memcpy( prevProj, vk_world.prevProjection, 64 );
+					vk_fsr_raster_jitter_projection( prevProj );	// FSR raster: no jitter in the motion vectors
 					prevProj[5] = -prevProj[5];
 
 					if ( isSky ) {
@@ -799,7 +800,9 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 #ifdef VK_CUBEMAP
 							&& !backEnd.viewParms.targetCube
 #endif
-							&& !( backEnd.refdef.rdflags & RDF_NOWORLDMODEL ) );
+							&& !( backEnd.refdef.rdflags & RDF_NOWORLDMODEL )
+							// FSR raster: only the upscaled view has an AO buffer of its own.
+							&& ( !vk.fsrRaster || vk_fsr_raster_primary_view() ) );
 #ifdef VK_CUBEMAP
 	int				oldCubemapIndex = -1;
 #endif
@@ -920,6 +923,10 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 				vk_apply_ssao();
 				didGtaoPass = qtrue;
 			}
+
+			// FSR raster: the colour before the blended surfaces, for the reactive mask.
+			if ( vk.fsrScene && shader && shader->sort > SS_BANNER )
+				vk_fsr_raster_copy_opaque();
 
 			RB_BeginSurface(shader, fogNum);
 			oldShader = shader;
@@ -1544,6 +1551,7 @@ static void vk_update_camera_constants( const trRefdef_t *refdef, const viewParm
 
 		if ( vk_world.prevViewValid ) {
 			Com_Memcpy( proj, vk_world.prevProjection, 64 );
+			vk_fsr_raster_jitter_projection( proj );	// FSR raster: no jitter in the motion vectors
 			proj[5] = -proj[5];
 			myGlMultMatrix( vk_world.prevWorldModelView, proj, uniform.prevViewProjection );
 		} else {
@@ -2071,6 +2079,9 @@ const void	*RB_DrawSurfs( const void *data ) {
 	backEnd.refdef = cmd->refdef;
 	backEnd.viewParms = cmd->viewParms;
 
+	// FSR raster: the jitter of the world views, and the view that FSR upscales.
+	vk_fsr_raster_begin_view();
+
 	RB_PortraitMark();
 
 	backEnd.hasGlowSurfaces = qfalse;
@@ -2132,7 +2143,9 @@ const void	*RB_DrawSurfs( const void *data ) {
 	// opened the main pass before this runs, and any portal/mirror sub-view queued
 	// ahead of the primary one has already drawn into it (see RB_BeginDrawingView's
 	// comment), so resuming main afterward must NOT clear it.
-	if ( vk.gbufferActive && backEnd.viewParms.portalView == PV_NONE && !( backEnd.refdef.rdflags & RDF_NOWORLDMODEL ) ) {
+	// FSR raster: only the upscaled view owns the render-size G-buffer (not the sky portal, not a later world view).
+	if ( vk.gbufferActive && backEnd.viewParms.portalView == PV_NONE && !( backEnd.refdef.rdflags & RDF_NOWORLDMODEL )
+		&& ( !vk.fsrRaster || vk_fsr_raster_primary_view() ) ) {
 		vk_end_render_pass();
 		vk_begin_gbuffer_extract_render_pass();
 		RB_RenderGBufferSurfList( cmd->drawSurfs, cmd->numDrawSurfs );
@@ -2151,7 +2164,7 @@ const void	*RB_DrawSurfs( const void *data ) {
 			// reading the OLD vk_world.prevWorldModelView/prevProjection. Exactly
 			// once per real displayed frame, matching this whole block's guard.
 			Com_Memcpy( vk_world.prevWorldModelView, backEnd.viewParms.world.modelViewMatrix, 64 );
-			Com_Memcpy( vk_world.prevProjection, backEnd.viewParms.projectionMatrix, 64 );
+			vk_fsr_raster_unjittered_projection( vk_world.prevProjection );
 			VectorCopy( backEnd.viewParms.ori.origin, vk_world.prevViewOrigin );
 			vk_world.prevViewValid = qtrue;
 		}
@@ -2204,7 +2217,9 @@ const void	*RB_DrawSurfs( const void *data ) {
 	}
 
 	// checked in previous RB_RenderDrawSurfList() if there is at least one glowing surface
-	if ( vk.dglowActive && !( backEnd.refdef.rdflags & RDF_NOWORLDMODEL ) && backEnd.hasGlowSurfaces )
+	// FSR raster: the glow images are at render size and blend after FSR, so only the upscaled view has glow.
+	if ( vk.dglowActive && !( backEnd.refdef.rdflags & RDF_NOWORLDMODEL ) && backEnd.hasGlowSurfaces
+		&& ( !vk.fsrRaster || vk_fsr_raster_primary_view() ) )
 	{
 		vk_end_render_pass();
 
@@ -2220,6 +2235,9 @@ const void	*RB_DrawSurfs( const void *data ) {
 	// Menu and HUD model scenes do not start the bloom: it would blur the blade of the saber menu over the whole screen.
 	if ( !( backEnd.refdef.rdflags & RDF_NOWORLDMODEL ) )
 		backEnd.doneSurfaces = qtrue; // for bloom
+
+	// FSR raster: the split comes at the next command that is not part of this view.
+	vk_fsr_raster_end_primary_view();
 
 	return (const void*)(cmd + 1);
 }
@@ -2459,6 +2477,14 @@ void RB_ExecuteRenderCommands( const void *data ) {
 
 	while ( 1 ) {
 		data = PADP(data, sizeof(void *));
+
+		// FSR raster: the split comes before the first command that is not part of the world view.
+		if ( vk_fsr_raster_split_pending() ) {
+			const int id = *(const int *)data;
+
+			if ( id != RC_SET_COLOR && id != RC_WORLD_EFFECTS && id != RC_AUTO_MAP )
+				vk_fsr_raster_after_world_view();
+		}
 
 		switch ( *(const int *)data ) {
 		case RC_SET_COLOR:

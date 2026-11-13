@@ -55,6 +55,11 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 #define AA_MODE_TAA 1
 #define AA_MODE_UPSCALE 2
 
+// The FSR depth is inverted and infinite: depth = FSR_DEPTH_NEAR / view z. The C code
+// gives the same value to FSR as the near plane. The tracer has no far plane.
+#define FSR_DEPTH_NEAR 1.0
+#define FSR_REACTIVE_MAX 0.9	// AMD advises to keep the reactive mask below about 0.9
+
 // Scaling factors for lighting components when they are stored in textures.
 // FP16 and RGBE textures have very limited range, and these factors help bring the signal within that range.
 #define STORAGE_SCALE_LF 1024

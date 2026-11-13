@@ -581,7 +581,7 @@ static void RecreateLightStats( world_t &w )
 		qvkCmdFillBuffer( cmd_buf, vk.buf_light_stats[frame].buffer, 0, vk.buf_light_stats[frame].size, 0 );
 
 	vkpt_submit_command_buffer( cmd_buf, vk.queue_graphics, (1 << vk.device_count) - 1, 0, NULL, NULL, NULL, 0, NULL, NULL, NULL );
-	qvkDeviceWaitIdle( vk.device );
+	vk_device_wait_idle();
 
 	// Patch the light stats binding of each set in place.
 	for ( uint32_t i = 0; i < vk.swapchain_image_count; i++ )
@@ -642,7 +642,7 @@ qboolean RTX_LightEdit_GrowSlots( int count )
 		return qfalse;
 	}
 
-	qvkDeviceWaitIdle( vk.device );
+	vk_device_wait_idle();
 
 	light_poly_t *polys = (light_poly_t *)realloc( w.light_polys, newNum * sizeof(light_poly_t) );
 
