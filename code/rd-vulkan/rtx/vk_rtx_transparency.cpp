@@ -1618,9 +1618,36 @@ done:
 	}
 }
 
+// A NaN or an infinity in a BLAS input can hang the GPU. A NaN X makes the triangle inactive (Vulkan spec).
+// The test reads the exponent bits: /fp:fast can remove an isfinite() test.
+static void make_bad_quads_inactive( vec3_t *positions, size_t num_quads )
+{
+	for ( size_t q = 0; q < num_quads; q++, positions += 4 )
+	{
+		const uint32_t *bits = (const uint32_t *)positions;
+		bool finite = true;
+		for ( int i = 0; i < 12; i++ )
+			finite = finite && ( bits[i] & 0x7f800000u ) != 0x7f800000u;
+
+		if ( finite )
+			continue;
+
+		uint32_t *out = (uint32_t *)positions;
+		for ( int v = 0; v < 4; v++ )
+		{
+			out[v * 3 + 0] = 0x7fc00000u;
+			out[v * 3 + 1] = 0;
+			out[v * 3 + 2] = 0;
+		}
+	}
+}
+
 static void upload_geometry(VkCommandBuffer command_buffer)
 {
 	transparency.sprite_vertex_device_offset = transparency.particle_num * 4 * TR_POSITION_SIZE;
+
+	make_bad_quads_inactive( (vec3_t *)( transparency.host_buffer_shadow + transparency.vertex_position_host_offset ),
+		transparency.particle_num + transparency.sprite_num );
 
     const size_t host_buffer_offset = transparency.host_frame_index * transparency.host_frame_size;
 

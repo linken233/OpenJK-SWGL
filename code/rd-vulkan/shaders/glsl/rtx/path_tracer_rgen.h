@@ -272,6 +272,16 @@ correct_emissive(uint material_id, vec3 emissive)
 	return max(vec3(0), emissive.rgb + vec3(EMISSIVE_TRANSFORM_BIAS));
 }
 
+// A ray with a NaN, an infinity, a zero direction or t_max <= t_min can hang the GPU. Do not trace it.
+bool
+ray_ok(Ray ray)
+{
+	const vec3 o = ray.origin;
+	const vec3 d = ray.direction;
+	return !any(isnan(o)) && !any(isinf(o)) && !any(isnan(d)) && !any(isinf(d)) && dot(d, d) > 0.0
+		&& !isnan(ray.t_min) && !isinf(ray.t_min) && ray.t_min >= 0.0 && !isnan(ray.t_max) && ray.t_max > ray.t_min;
+}
+
 #ifndef NO_TRACE_EXT
 void trace_geometry_ray( Ray ray, bool cull_back_faces, uint cullMask )
 {
@@ -284,6 +294,9 @@ void trace_geometry_ray( Ray ray, bool cull_back_faces, uint cullMask )
 	ray_payload_geometry.primitive_id = ~0u;
 	ray_payload_geometry.buffer_and_instance_idx = 0;
 	ray_payload_geometry.hit_distance = 0;
+
+	if (!ray_ok(ray))
+		return;
 
 	traceRayEXT( topLevelAS[TLAS_INDEX_GEOMETRY], rayFlags, cullMask,
 			SBT_RCHIT_GEOMETRY /*sbtRecordOffset*/, 0 /*sbtRecordStride*/, SBT_RMISS_EMPTY /*missIndex*/,
@@ -386,12 +399,15 @@ trace_effects_ray(Ray ray, bool skip_procedural, bool display_fog)
 	ray_payload_effects.fog2 = uvec4(0);
 	ray_payload_effects.rayTmax = ray.t_max;
 
-	if (!skip_procedural)
-		find_fog_volumes(ray_payload_effects, ray, !display_fog);
+	if (ray_ok(ray))
+	{
+		if (!skip_procedural)
+			find_fog_volumes(ray_payload_effects, ray, !display_fog);
 
-	traceRayEXT( topLevelAS[TLAS_INDEX_EFFECTS], rayFlags, instance_mask,
-			SBT_RCHIT_EFFECTS /*sbtRecordOffset*/, 0 /*sbtRecordStride*/, SBT_RMISS_EMPTY /*missIndex*/,
-			ray.origin, ray.t_min, ray.direction, ray.t_max, RT_PAYLOAD_EFFECTS);
+		traceRayEXT( topLevelAS[TLAS_INDEX_EFFECTS], rayFlags, instance_mask,
+				SBT_RCHIT_EFFECTS /*sbtRecordOffset*/, 0 /*sbtRecordStride*/, SBT_RMISS_EMPTY /*missIndex*/,
+				ray.origin, ray.t_min, ray.direction, ray.t_max, RT_PAYLOAD_EFFECTS);
+	}
 
 	if (skip_procedural)
 	{
@@ -438,6 +454,10 @@ trace_shadow_ray(Ray ray, int cull_mask)
 	ray_payload_geometry.buffer_and_instance_idx = 0;
 	ray_payload_geometry.hit_distance = -1;
 
+	// The light is seen: nothing is in the way of a ray that is not traced.
+	if (!ray_ok(ray))
+		return 1.0;
+
 	traceRayEXT( topLevelAS[TLAS_INDEX_GEOMETRY], rayFlags, cull_mask,
 			SBT_RCHIT_GEOMETRY /*sbtRecordOffset*/, 0 /*sbtRecordStride*/, SBT_RMISS_EMPTY /*missIndex*/,
 			ray.origin, ray.t_min, ray.direction, ray.t_max, RT_PAYLOAD_GEOMETRY);
@@ -457,8 +477,9 @@ trace_caustic_ray( Ray ray, int surface_medium )
 	uint rayFlags = gl_RayFlagsCullBackFacingTrianglesEXT | gl_RayFlagsOpaqueEXT | gl_RayFlagsSkipProceduralPrimitives;
 	uint instance_mask = AS_FLAG_TRANSPARENT;
 
-	traceRayEXT(topLevelAS[TLAS_INDEX_GEOMETRY], rayFlags, instance_mask, SBT_RCHIT_GEOMETRY, 0, SBT_RMISS_EMPTY,
-			ray.origin, ray.t_min, ray.direction, ray.t_max, RT_PAYLOAD_GEOMETRY);
+	if (ray_ok(ray))
+		traceRayEXT(topLevelAS[TLAS_INDEX_GEOMETRY], rayFlags, instance_mask, SBT_RCHIT_GEOMETRY, 0, SBT_RMISS_EMPTY,
+				ray.origin, ray.t_min, ray.direction, ray.t_max, RT_PAYLOAD_GEOMETRY);
 
 	float extinction_distance = ray.t_max - ray.t_min;
 	vec3 throughput = vec3(1);

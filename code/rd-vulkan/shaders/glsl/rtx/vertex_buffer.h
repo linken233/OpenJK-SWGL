@@ -493,6 +493,16 @@ store_triangle(Triangle t, uint buffer_idx, uint prim_id)
 
 	if (buffer_idx == VERTEX_BUFFER_INSTANCED)
 	{
+		// A NaN or an infinity in a BLAS input can hang the GPU. A NaN X makes the triangle inactive (Vulkan spec).
+		bool finite = true;
+		for (int vert = 0; vert < 3; vert++)
+			finite = finite && !any(isnan(t.positions[vert])) && !any(isinf(t.positions[vert]));
+		if (!finite)
+		{
+			const vec3 inactive = vec3(uintBitsToFloat(0x7fc00000u), 0, 0);
+			t.positions = mat3(inactive, inactive, inactive);
+		}
+
 		for (int vert = 0; vert < 3; vert++)
 		{
 			for (int axis = 0; axis < 3; axis++)
