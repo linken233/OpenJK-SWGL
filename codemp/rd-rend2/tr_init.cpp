@@ -281,6 +281,7 @@ cvar_t	*r_dynamicGlowBloom;
 
 cvar_t *r_debugContext;
 cvar_t *r_debugWeather;
+cvar_t *r_debugSsao;
 
 cvar_t	*r_aspectCorrectFonts;
 
@@ -1482,6 +1483,7 @@ void R_Register( void )
 
 	r_debugContext						= ri.Cvar_Get( "r_debugContext",			"0",		CVAR_LATCH, "" );
 	r_debugWeather						= ri.Cvar_Get( "r_debugWeather",			"0",		CVAR_ARCHIVE, "" );
+	r_debugSsao							= ri.Cvar_Get( "r_debugSsao",				"0",		CVAR_CHEAT, "Show the SSAO images at the top of the screen" );
 
 	r_picmip = ri.Cvar_Get ("r_picmip", "0", CVAR_ARCHIVE | CVAR_LATCH, "" );
 	ri.Cvar_CheckRange( r_picmip, 0, 16, qtrue );

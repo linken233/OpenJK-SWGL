@@ -2959,6 +2959,7 @@ extern cvar_t	*r_dynamicGlowBloom;
 
 extern cvar_t	*r_debugContext;
 extern cvar_t	*r_debugWeather;
+extern cvar_t	*r_debugSsao;
 
 //====================================================================
 
