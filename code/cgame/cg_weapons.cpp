@@ -2963,7 +2963,7 @@ void CG_NPC_NextWeapon_f(void) {
 		nextWeaponIndex = (nextWeaponIndex == weaponCount - 1) ? 1 : nextWeaponIndex + 1;
 	} while (!weaponData[nextWeaponIndex].classname 
 		|| !weaponData[nextWeaponIndex].classname[0]
-		|| (!weaponData[nextWeaponIndex].playerUsable && strcmp(weaponData[nextWeaponIndex].classname, "weapon_clonerandom") )
+		|| (!weaponData[nextWeaponIndex].playerUsable && strcmp(weaponData[nextWeaponIndex].classname, "weapon_clonerandom") && strcmp(weaponData[nextWeaponIndex].classname, "weapon_clonerandom_noz6"))
 	);
 	cgi_Cvar_Set("ui_npc_weapon", weaponData[nextWeaponIndex].classname);
 	CG_NPC_UpdateLabel();
@@ -2980,7 +2980,7 @@ void CG_NPC_PrevWeapon_f(void) {
 		prevWeaponIndex = (prevWeaponIndex == 1) ? weaponCount - 1 : prevWeaponIndex - 1;
 	} while (!weaponData[prevWeaponIndex].classname
 		|| !weaponData[prevWeaponIndex].classname[0]
-		|| (!weaponData[prevWeaponIndex].playerUsable && strcmp(weaponData[prevWeaponIndex].classname, "weapon_clonerandom"))
+		|| (!weaponData[prevWeaponIndex].playerUsable && strcmp(weaponData[prevWeaponIndex].classname, "weapon_clonerandom") && strcmp(weaponData[prevWeaponIndex].classname, "weapon_clonerandom_noz6"))
 		);
 	cgi_Cvar_Set("ui_npc_weapon",weaponData[prevWeaponIndex].classname);
 	CG_NPC_UpdateLabel();
