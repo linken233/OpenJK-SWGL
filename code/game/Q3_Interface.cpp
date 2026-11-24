@@ -11332,8 +11332,9 @@ int		CQuake3GameInterface::GetString( int entID, const char *name, char **value 
 		break;
 	//The below cannot be gotten
 	case SET_NAVGOAL://## %s="NULL" # *Move to this navgoal then continue script
-		DebugPrint( WL_WARNING, "GetString: SET_NAVGOAL not implemented\n" );
-		return false;
+		//DebugPrint( WL_WARNING, "GetString: SET_NAVGOAL not implemented\n" );
+		*value = ent->NPC->goalEntity ? ent->NPC->goalEntity->target : NULL;
+		//return false;
 		break;
 	case SET_VIEWTARGET://## %s="NULL" # Set angles toward ent by targetname
 		DebugPrint( WL_WARNING, "GetString: SET_VIEWTARGET not implemented\n" );
